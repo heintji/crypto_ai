@@ -1,0 +1,23 @@
+ts_utc,event_type,symbol,message,extra
+2026-01-25 22:35:06,TEST,SYSTEM,logger werkt,
+2026-01-25 22:36:24,SCAN_1H,BTCUSDT,SCAN_1H | score=55.0 | rsi14=24.31 | trend=DOWN,"{'tf': '1h', 'last': 86461.91, 'score': 55.0, 'rsi': 24.31142143188569, 'confidence': 55.0}"
+2026-01-25 22:36:25,SCAN_1H,ETHUSDT,SCAN_1H | score=55.0 | rsi14=15.95 | trend=DOWN,"{'tf': '1h', 'last': 2801.68, 'score': 55.0, 'rsi': 15.950395552704762, 'confidence': 55.0}"
+2026-01-26 20:59:49,WHATSAPP_IN,USER,whatsapp:+31614767396: HELP,
+2026-01-26 20:59:49,WHATSAPP_HELP,SYSTEM,help requested by whatsapp:+31614767396,
+2026-01-26 21:00:23,WHATSAPP_IN,USER,whatsapp:+31614767396: YES 10,
+2026-01-26 21:00:23,BUY_APPROVED_NO_PENDING,USER,BTCUSDT €10 (no pending prebuy found),
+2026-01-27 11:25:38,WHATSAPP_IN,USER,whatsapp:+31614767396: YES 10 PREBUY-TEST-001,
+2026-01-28 20:20:00,PREBUY_NONE,SYSTEM,Dagelijkse analyse uitgevoerd — geen setup voldoet aan de handelsstandaard.,
+2026-01-29 10:42:32,PREBUY_CREATED,ETHUSDT,setup=A id=PB-1769683352-ETHUSDT score=70.0 (kans gemiddeld),
+2026-01-29 10:42:32,WHATSAPP_SKIPPED,SYSTEM,"(geen Twilio env vars) 🟦 PRE-BUY (A)
+ID: PB-1769683352-ETHUSDT
+Coin: ETHUSDT
+Score: 70.0 (kans gemiddeld)
+Entry: 2946.6300
+Stop-loss: 2905.9300
+Koersdoel: 3028.0300
+Geldig tot: 2026-01-29T14:42:32Z
+
+Antwoord met: YES 10 / YES 20 / YES 30 / YES 100  of  NO",
+2026-01-29 10:42:32,SHADOW_CREATED,ETHUSDT,setup=A shadow for PB-1769683352-ETHUSDT,
+2026-01-29 10:42:32,AI_ADVISOR_RUN,SYSTEM,cmd=C:\Users\heint\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe C:\Users\heint\crypto_ai\ai_advisor.py --input C:\Users\heint\crypto_ai\logs\prebuy_payload_PB-1769683352-ETHUSDT.json,

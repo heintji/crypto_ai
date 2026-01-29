@@ -1,0 +1,23 @@
+{
+  "setup": "A",
+  "coin": "ETHUSDT",
+  "timestamp": "2026-01-29T10:42:32Z",
+  "timeframe_primary": "4h",
+  "timeframe_entry": "1h",
+  "score_pct": 70,
+  "setup_type": "trend_continuation",
+  "trend_4h": "up",
+  "trend_1h": "down",
+  "rr": 2.0,
+  "structure_notes": "Auto: 4h filter (SMA20>SMA50 + RSI-range) met 1h context. (Later uitbreiden met echte structuur/levels).",
+  "nearby_levels": "Auto: nog niet berekend.",
+  "rsi_4h": 50.86,
+  "rsi_1h": 24.05,
+  "winrate_setup": null,
+  "news_risk": "unknown",
+  "levels": {
+    "entry": 2946.63,
+    "stop_loss": 2905.93,
+    "target": 3028.03
+  }
+}

@@ -1,0 +1,7 @@
+utc_time,coin,score_pct,setup_type,verdict,confidence_pct,market_regime,notes
+2026-01-28T16:12:05.274197+00:00,BTCUSDT,78,trend_continuation,,,,
+2026-01-28T16:18:07.729859+00:00,BTCUSDT,2026-01-28 14:30,4h,1h,78,trend_continuation,up,pullback,2.1,B,75,ok,trend,False,,4h trend duidelijk up met hogere lows|1h timeframe pullback naar support zone|Redelijke risk-reward ratio van 2.1|Lage nieuwsrisico's,"Weerstand vlak boven huidige prijs kan remmend werken|RSI op 1h vlakbij neutraal niveau, weinig momentum|Winrate van deze setup is gemiddeld (62%)|Mogelijke volatiliteit tijdens pullback in 1h timeframe",Verlies van higher lows structuur op 4h|Verlies van supportzone op 1h timeframe|Sterke beweging onder 1h support,"Setup toont een nette pullback binnen een opgaande trend, maar aanval op weerstand verhoogt risico. Overweeg bevestiging op momentumniveaus.",
+2026-01-29T10:42:41.577631+00:00,ETHUSDT,2026-01-29T10:42:32Z,4h,1h,70,trend_continuation,up,down,2.0,,,,,,,,,,,invalid_json
+2026-01-29T11:38:44.428060+00:00,BNBUSDT,85,trend_continuation,B,55,unknown,"AI disabled/failed, fallback used."
+2026-01-29T13:09:48.183172+00:00,BNBUSDT,75,trend_continuation,B,55,unknown,"AI disabled/failed, fallback used."
+2026-01-29T13:19:00.679457+00:00,BNBUSDT,75,trend_continuation,B,55,unknown,"AI disabled/failed, fallback used."

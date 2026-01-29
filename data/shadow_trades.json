@@ -1,0 +1,11 @@
+[
+  {
+    "id": "PB-1769683352-ETHUSDT",
+    "symbol": "ETHUSDT",
+    "entry": 2946.63,
+    "stop": 2905.93,
+    "target": 3028.03,
+    "status": "OPEN",
+    "opened_at": 1769683352
+  }
+]

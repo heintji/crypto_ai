@@ -1,0 +1,20 @@
+{
+  "balance": 990.0,
+  "positions": {
+    "BTCUSDT": 0.00011383358031425809,
+    "BTCUSDT_entry": 87847.54
+  },
+  "open_trades": [
+    {
+      "trade_id": "BTCUSDT-1769686825",
+      "symbol": "BTCUSDT",
+      "entry": 87847.54,
+      "stop_loss": 86090.58919999999,
+      "target": 91361.4416,
+      "qty": 0.00011383358031425809,
+      "side": "LONG",
+      "prebuy_id": "PB-TEST-001",
+      "opened_at": 1769686825
+    }
+  ]
+}

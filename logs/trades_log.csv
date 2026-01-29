@@ -1,0 +1,2 @@
+ts_utc,trade_id,symbol,side,action,price,qty,reason,confidence,pnl_pct,extra
+2026-01-25 22:35:06,TEST-1,BTCUSDT,LONG,ENTRY,42000.0,1.0,test entry,80.0,,

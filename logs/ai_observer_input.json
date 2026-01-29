@@ -1,0 +1,22 @@
+{
+  "generated_at": "2026-01-28T20:50:21.955886+00:00",
+  "mode": "AI_OBSERVER_READ_ONLY",
+  "description": "ChatGPT kijkt mee — analyse & advies, geen controle",
+  "data": {
+    "pending_approvals": [
+      {
+        "id": "PB-TEST-001",
+        "coin": "BTCUSDT",
+        "status": "PENDING",
+        "expires_at": 1999999999
+      }
+    ],
+    "shadow_trades": [],
+    "paper_trades": null
+  },
+  "summary": {
+    "pending_prebuys": 1,
+    "open_shadow_trades": 0,
+    "note": "Gebruik dit bestand voor AI-advies over filters, timing en kwaliteit."
+  }
+}
