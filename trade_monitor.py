@@ -27,6 +27,78 @@ STRUCT_LIMIT = 50
 # Hoe vaak monitor draait (voor info/logging)
 DEFAULT_SLEEP_SECONDS = 30 * 60  # 30 min
 
+
+# =========================
+# ✅ WhatsApp (Twilio) helpers
+# =========================
+def _get_env(name: str, default: str = "") -> str:
+    v = os.getenv(name, "")
+    return v.strip() if isinstance(v, str) else default
+
+
+TWILIO_ACCOUNT_SID = _get_env("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = _get_env("TWILIO_AUTH_TOKEN")
+TWILIO_WHATSAPP_FROM = _get_env("TWILIO_WHATSAPP_FROM")  # bv: "whatsapp:+14155238886"
+MY_WHATSAPP_TO = _get_env("MY_WHATSAPP_TO")              # bv: "whatsapp:+316xxxxxxx"
+
+
+def send_whatsapp(message: str) -> bool:
+    """
+    Stuurt WhatsApp via Twilio.
+    Als env vars ontbreken: logt alleen en return False (bot blijft doorwerken).
+    """
+    msg = (message or "").strip()
+    if not msg:
+        return False
+
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM and MY_WHATSAPP_TO):
+        print("ℹ️ WhatsApp melding overgeslagen (Twilio env vars ontbreken).", flush=True)
+        return False
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+    data = {
+        "From": TWILIO_WHATSAPP_FROM,
+        "To": MY_WHATSAPP_TO,
+        "Body": msg,
+    }
+
+    try:
+        r = requests.post(url, data=data, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN), timeout=20)
+        if r.status_code >= 200 and r.status_code < 300:
+            print("✅ WhatsApp SELL melding verstuurd.", flush=True)
+            return True
+        print(f"⚠️ Twilio send failed: {r.status_code} {r.text[:200]}", flush=True)
+        return False
+    except Exception as e:
+        print(f"⚠️ Twilio send error: {e}", flush=True)
+        return False
+
+
+def reason_nl(code: str) -> str:
+    mapping = {
+        "STOP_LOSS_BEFORE_1R": "Stop-loss geraakt vóór 1R (100% close).",
+        "STRUCTURE_LOWER_LOW": "STRUCTUUR-MODE: eerste lower-low (100% close).",
+        "UNDER_1R_3X_CLOSE_REST": "Na >1R: 3x onder 1R gebleven → rest sluiten (100% close).",
+        "NO_POSITION_FOUND": "Geen positie gevonden (administratief gesloten).",
+    }
+    return mapping.get(code, code)
+
+
+def format_sell_message(symbol: str, exit_price: Optional[float], pnl: Optional[float], r_multiple: Optional[float], reason_code: str) -> str:
+    ep = f"{exit_price:.6f}" if isinstance(exit_price, (int, float)) else "?"
+    pn = f"{pnl:.2f}" if isinstance(pnl, (int, float)) else "?"
+    rm = f"{r_multiple:.2f}" if isinstance(r_multiple, (int, float)) else "?"
+    return (
+        "🔴 TRADE GESLOTEN (100%)\n\n"
+        f"Coin: {symbol}\n"
+        f"Exit prijs: {ep}\n"
+        f"Resultaat (PnL): {pn} EUR\n"
+        f"R-multiple: {rm}\n\n"
+        f"Reden: {reason_nl(reason_code)}\n"
+        f"Tijd: {time.strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+
 # =========================
 # Helpers
 # =========================
@@ -93,6 +165,7 @@ def _find_trade(open_trades: List[Dict[str, Any]], symbol: str) -> Optional[Dict
 def _print(msg: str):
     print(msg, flush=True)
 
+
 # =========================
 # Core rules (jouw set)
 # =========================
@@ -132,14 +205,25 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     # ====== RULE 1: Stop-loss vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
-        sell(symbol, 1.0)
+        res = sell(symbol, 1.0)
+
+        # alleen melding als SELL ok is
+        if isinstance(res, dict) and res.get("ok"):
+            msg = format_sell_message(
+                symbol=symbol,
+                exit_price=res.get("price"),
+                pnl=res.get("pnl"),
+                r_multiple=r,
+                reason_code="STOP_LOSS_BEFORE_1R",
+            )
+            send_whatsapp(msg)
+
         trade["status"] = "CLOSED"
         trade["closed_reason"] = "STOP_LOSS_BEFORE_1R"
         trade["closed_at"] = now_ts()
         return True
 
-    # ====== BONUS ROUTE: target reached => send message + STRUCTUUR-MODE
-    # (we loggen hier alleen; later kun je WhatsApp push toevoegen als je wil)
+    # ====== BONUS ROUTE: target reached => STRUCTUUR-MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -152,8 +236,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         try:
             lows = get_klines_lows(symbol)
             if len(lows) >= 3:
-                # simpele "higher-lows" tracker:
-                # we nemen de low van de laatst gesloten candle (1 candle terug)
                 last_closed_low = lows[-2]
 
                 trailing = trade.get("struct_trailing_low")
@@ -162,14 +244,23 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                     _print(f"🧱 {symbol} STRUCTUUR init trailing_low={last_closed_low:.6f}")
                 else:
                     trailing = float(trailing)
-                    # hogere low? dan trailing omhoog
                     if last_closed_low > trailing:
                         trade["struct_trailing_low"] = last_closed_low
                         _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f}")
-                    # lagere low? exit
                     elif last_closed_low < trailing:
                         _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100%")
-                        sell(symbol, 1.0)
+                        res = sell(symbol, 1.0)
+
+                        if isinstance(res, dict) and res.get("ok"):
+                            msg = format_sell_message(
+                                symbol=symbol,
+                                exit_price=res.get("price"),
+                                pnl=res.get("pnl"),
+                                r_multiple=r,
+                                reason_code="STRUCTURE_LOWER_LOW",
+                            )
+                            send_whatsapp(msg)
+
                         trade["status"] = "CLOSED"
                         trade["closed_reason"] = "STRUCTURE_LOWER_LOW"
                         trade["closed_at"] = now_ts()
@@ -177,12 +268,10 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         except Exception as e:
             _print(f"⚠️ STRUCTUUR fetch error {symbol}: {e}")
 
-        # In STRUCTUUR-MODE doen we verder geen 1R/40% regels meer.
         trade["last_check"] = now_ts()
         return False
 
-    # ====== RULE 2: als >1R -> wachten (niets verkopen)
-    # (dus geen actie zolang hij >1R blijft)
+    # ====== RULE 2: als >1R -> wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
@@ -198,23 +287,33 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         return False
 
     # ====== RULE 4: als 3 checks/candles onder 1R blijven -> SELL remaining 60%
-    # (we tellen monitor-cycles als 'candles' omdat jij elke 30 min draait)
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
         if trade["below_1r_count"] >= 3:
             _print(f"🔚 {symbol} 3x onder 1R gebleven -> SELL 100% (rest sluiten)")
-            sell(symbol, 1.0)
+            res = sell(symbol, 1.0)
+
+            if isinstance(res, dict) and res.get("ok"):
+                msg = format_sell_message(
+                    symbol=symbol,
+                    exit_price=res.get("price"),
+                    pnl=res.get("pnl"),
+                    r_multiple=r,
+                    reason_code="UNDER_1R_3X_CLOSE_REST",
+                )
+                send_whatsapp(msg)
+
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "UNDER_1R_3X_CLOSE_REST"
             trade["closed_at"] = now_ts()
             return True
     else:
-        # terug boven 1R? reset count (al wordt dit pad meestal eerder afgevangen)
         trade["below_1r_count"] = 0
 
     trade["last_check"] = now_ts()
     return False
+
 
 # =========================
 # Main loop
@@ -234,7 +333,6 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         if only_symbol and symbol != only_symbol:
             continue
 
-        # Als er geen positie (meer) is, sluiten we trade administratief
         positions = state.get("positions", {})
         if float(positions.get(symbol, 0.0)) <= 0:
             trade["status"] = "CLOSED"
@@ -247,7 +345,6 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         if closed:
             closed_symbols.append(symbol)
 
-    # remove closed trades
     if closed_symbols:
         state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") not in closed_symbols]
         save_state(state)
@@ -280,4 +377,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
