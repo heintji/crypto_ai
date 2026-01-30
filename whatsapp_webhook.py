@@ -21,10 +21,16 @@ from trading.paper_trader import buy_eur, get_price  # noqa: E402
 app = Flask(__name__)
 
 # =========================================
-# PATHS
+# PATHS  ✅ (lokaal + Render-proof)
 # =========================================
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
+DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+DEFAULT_PENDING_PATH = os.path.join(DEFAULT_DATA_DIR, "pending_approvals.json")
+
+# ✅ Als Render env var bestaat, pak die. Anders local default.
+PENDING_PATH = os.getenv("PENDING_PATH", DEFAULT_PENDING_PATH)
+
+# ✅ DATA_DIR altijd laten matchen met PENDING_PATH
+DATA_DIR = os.path.dirname(PENDING_PATH)
 
 # =========================================
 # SETTINGS
@@ -169,6 +175,8 @@ def whatsapp():
         sender = (request.values.get("From") or "").strip()
 
         log_event("WHATSAPP_IN", {"from": sender, "body": body})
+        # ✅ Extra debug (handig op Render): zie meteen welk bestand hij gebruikt
+        log_event("PENDING_PATH_USED", {"path": PENDING_PATH})
 
         if not body:
             return twiml("Leeg bericht. Stuur HELP.")
@@ -305,5 +313,6 @@ def whatsapp():
 if __name__ == "__main__":
     # LET OP: voor productie later debug=False + via ngrok/twilio
     app.run(host="0.0.0.0", port=5000, debug=False)
+
 
 
