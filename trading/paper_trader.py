@@ -22,6 +22,44 @@ HTTP_TIMEOUT = 15
 
 
 # =========================================
+# WhatsApp (Twilio)
+# =========================================
+def twilio_ready() -> bool:
+    return all([
+        os.getenv("TWILIO_ACCOUNT_SID"),
+        os.getenv("TWILIO_AUTH_TOKEN"),
+        os.getenv("TWILIO_WHATSAPP_FROM"),
+        os.getenv("TWILIO_WHATSAPP_TO"),
+    ])
+
+def send_whatsapp(message: str) -> bool:
+    """
+    Stuurt WhatsApp bericht via Twilio. Als env vars ontbreken: silent skip + print.
+    """
+    if not twilio_ready():
+        print("📭 WhatsApp melding overgeslagen (Twilio env vars ontbreken).", flush=True)
+        return False
+
+    sid = os.getenv("TWILIO_ACCOUNT_SID")
+    token = os.getenv("TWILIO_AUTH_TOKEN")
+    wa_from = os.getenv("TWILIO_WHATSAPP_FROM")
+    wa_to = os.getenv("TWILIO_WHATSAPP_TO")
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+    data = {"From": wa_from, "To": wa_to, "Body": message}
+
+    try:
+        r = requests.post(url, data=data, auth=(sid, token), timeout=HTTP_TIMEOUT)
+        if r.status_code >= 400:
+            print(f"⚠️ Twilio send failed ({r.status_code}): {r.text[:200]}", flush=True)
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Twilio send exception: {e}", flush=True)
+        return False
+
+
+# =========================================
 # MARKET DATA
 # =========================================
 def get_price(symbol: str) -> float:
@@ -191,25 +229,20 @@ def buy_eur(
     save_state(state)
     log_trade(symbol, "BUY", price, qty, state["balance"], meta=f"prebuy={prebuy_id}")
 
-    # =========================
-    # 📩 BUY BEVESTIGING (tekst)
-    # =========================
-    buy_message = (
-        f"✅ BUY CONFIRMATIE\n\n"
-        f"Coin: {symbol}\n"
-        f"Inleg: €{amount_eur:.2f}\n"
-        f"Entry prijs: {price:.6f}\n"
-        f"Stop-loss: {stop_loss}\n"
-        f"Target: {target}\n\n"
-        f"Trade ID: {trade_id}\n"
-        f"Prebuy ID: {prebuy_id}\n"
-        f"Status: ACTIEF"
-    )
-
-    print("📨 BUY MELDING:")
-    print(buy_message)
-
     print(f"✅ BUY OK | {symbol} €{amount_eur:.2f} | price={price:.6f}")
+
+    # ✅ WhatsApp BUY bevestiging (wat jij wilde)
+    msg = (
+        f"✅ BUY uitgevoerd ({symbol})\n"
+        f"Inzet: €{amount_eur:.2f}\n"
+        f"Entry: {price:.6f}\n"
+        f"Stop: {stop_loss:.6f}\n"
+        f"Target: {target:.6f}\n"
+        f"Trade ID: {trade_id}\n"
+        f"Pre-BUY ID: {prebuy_id}\n"
+        f"Saldo: €{state['balance']:.2f}"
+    )
+    send_whatsapp(msg)
 
     return {
         "ok": True,
