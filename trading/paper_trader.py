@@ -191,6 +191,24 @@ def buy_eur(
     save_state(state)
     log_trade(symbol, "BUY", price, qty, state["balance"], meta=f"prebuy={prebuy_id}")
 
+    # =========================
+    # 📩 BUY BEVESTIGING (tekst)
+    # =========================
+    buy_message = (
+        f"✅ BUY CONFIRMATIE\n\n"
+        f"Coin: {symbol}\n"
+        f"Inleg: €{amount_eur:.2f}\n"
+        f"Entry prijs: {price:.6f}\n"
+        f"Stop-loss: {stop_loss}\n"
+        f"Target: {target}\n\n"
+        f"Trade ID: {trade_id}\n"
+        f"Prebuy ID: {prebuy_id}\n"
+        f"Status: ACTIEF"
+    )
+
+    print("📨 BUY MELDING:")
+    print(buy_message)
+
     print(f"✅ BUY OK | {symbol} €{amount_eur:.2f} | price={price:.6f}")
 
     return {
