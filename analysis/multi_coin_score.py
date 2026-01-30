@@ -477,3 +477,53 @@ if __name__ == "__main__":
     main()
 
 
+import os
+import time
+import json
+
+def force_test_prebuy():
+    # 1 simpele, veilige test-prebuy (alleen om de flow te testen)
+    test = {
+        "id": f"PB-TEST-{int(time.time())}",
+        "coin": "BTCUSDT",
+        "setup": "TEST",
+        "score": 99.0,
+        "kans": "test",
+        "entry": 100.0,
+        "stop_loss": 95.0,
+        "target": 110.0,
+        "status": "PENDING",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "expires_at": int(time.time()) + 4 * 60 * 60
+    }
+
+    path = "data/pending_approvals.json"
+
+    # file lezen
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            arr = json.load(f)
+            if not isinstance(arr, list):
+                arr = []
+    except FileNotFoundError:
+        arr = []
+
+    # voorkom spam: max 1 test prebuy tegelijk
+    if any(x.get("setup") == "TEST" and x.get("status") == "PENDING" for x in arr):
+        print("🟡 TEST prebuy bestaat al (PENDING) — geen nieuwe gemaakt.")
+        return
+
+    arr.insert(0, test)
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(arr, f, indent=2)
+
+    print(f"✅ TEST PRE-BUY gemaakt: {test['id']} (PENDING)")
+
+if __name__ == "__main__":
+    # jouw normale run blijft eerst draaien
+    # (dus je bestaande logic blijft bestaan)
+
+    # 🔥 Force-test alleen als env var aan staat
+    if os.getenv("FORCE_TEST_PREBUY", "0") == "1":
+        force_test_prebuy()
