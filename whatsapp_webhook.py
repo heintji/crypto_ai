@@ -9,39 +9,30 @@ import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
 # =========================================
-# PROJECT ROOT (zodat imports altijd werken)
+# PROJECT ROOT (Render + lokaal IDENTIEK)
 # =========================================
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Draaien vanuit project-root (crypto_ai) zodat imports werken
 from trading.paper_trader import buy_eur, get_price  # noqa: E402
 
 app = Flask(__name__)
 
 # =========================================
-# PATHS  ✅ (lokaal + Render-proof)
+# PATHS  ✅ DIT IS DE FIX
 # =========================================
-DEFAULT_DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-DEFAULT_PENDING_PATH = os.path.join(DEFAULT_DATA_DIR, "pending_approvals.json")
-
-# ✅ Als Render env var bestaat, pak die. Anders local default.
-PENDING_PATH = os.getenv("PENDING_PATH", DEFAULT_PENDING_PATH)
-
-# ✅ DATA_DIR altijd laten matchen met PENDING_PATH
-DATA_DIR = os.path.dirname(PENDING_PATH)
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
 
 # =========================================
 # SETTINGS
 # =========================================
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
-# Default risk/target (simpel en consistent)
-STOP_PCT = 0.02   # 2% onder entry
-RR_TARGET = 2.0   # target = 2R
+STOP_PCT = 0.02
+RR_TARGET = 2.0
 
-# Status namen (consistent)
 STATUS_PENDING = "PENDING"
 STATUS_APPROVED = "APPROVED"
 STATUS_CONSUMED = "CONSUMED"
@@ -74,7 +65,7 @@ def save_pending(data: List[Dict[str, Any]]) -> None:
     os.replace(tmp, PENDING_PATH)
 
 # =========================================
-# TWIML (Twilio response)
+# TWIML
 # =========================================
 def twiml(msg: str) -> Response:
     msg = str(msg).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -85,81 +76,42 @@ def twiml(msg: str) -> Response:
     return Response(xml, mimetype="application/xml")
 
 # =========================================
-# LOGGING
-# =========================================
-def log_event(event: str, details: dict) -> None:
-    # simpel audit-proof logje naar console (later kan dit naar trade_logger.py)
-    try:
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n[{now}] {event}: {json.dumps(details, ensure_ascii=False)}")
-    except Exception:
-        print(f"\n[{time.time()}] {event}: (log fail)")
-
-# =========================================
-# PENDING SELECTION / EXPIRY
+# HELPERS
 # =========================================
 def is_expired(expires_at: Any) -> bool:
-    now_s = int(time.time())
     try:
-        x = int(expires_at)
+        return int(expires_at) < int(time.time())
     except Exception:
-        return False  # als missing/ongeldig -> behandel als niet verlopen
+        return False
 
-    # ms support
-    if x > 10**12:
-        x = int(x / 1000)
-    return x < now_s
-
-def find_latest_pending(pending_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    for item in reversed(pending_list):
-        if str(item.get("status", "")).upper() == STATUS_PENDING and not is_expired(item.get("expires_at", 0)):
-            return item
+def find_latest_pending(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for p in reversed(pending):
+        if p.get("status") == STATUS_PENDING and not is_expired(p.get("expires_at")):
+            return p
     return None
 
-def find_by_id(pending_list: List[Dict[str, Any]], prebuy_id: str) -> Optional[Dict[str, Any]]:
-    pid = str(prebuy_id or "").strip()
-    for item in pending_list:
-        if str(item.get("id", "")).strip() == pid:
-            return item
+def find_by_id(pending: List[Dict[str, Any]], pid: str) -> Optional[Dict[str, Any]]:
+    for p in pending:
+        if str(p.get("id")) == str(pid):
+            return p
     return None
 
-# =========================================
-# INPUT PARSERS
-# =========================================
 def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
-    """
-    Accept:
-      YES 10
-      YES 10 PREBUY-XXX
-      YES 10 PB-TEST-001
-    """
-    parts = body.strip().split()
+    parts = body.split()
     if len(parts) >= 2 and parts[0].upper() == "YES" and parts[1].isdigit():
-        amount = int(parts[1])
-        prebuy_id = parts[2].strip() if len(parts) >= 3 else None
-        return amount, prebuy_id
+        return int(parts[1]), parts[2] if len(parts) >= 3 else None
     return None, None
 
 def parse_no(body: str) -> Optional[str]:
-    """
-    Accept:
-      NO
-      NO PREBUY-XXX
-    """
-    parts = body.strip().split()
+    parts = body.split()
     if parts and parts[0].upper() == "NO":
-        prebuy_id = parts[1].strip() if len(parts) >= 2 else None
-        return prebuy_id
+        return parts[1] if len(parts) >= 2 else None
     return None
 
-# =========================================
-# RISK
-# =========================================
-def compute_stop_target(entry_price: float) -> Tuple[float, float]:
-    stop = entry_price * (1.0 - STOP_PCT)
-    r = entry_price - stop
-    target = entry_price + (RR_TARGET * r)
-    return float(stop), float(target)
+def compute_stop_target(entry: float) -> Tuple[float, float]:
+    stop = entry * (1 - STOP_PCT)
+    target = entry + (entry - stop) * RR_TARGET
+    return stop, target
 
 # =========================================
 # ROUTES
@@ -172,147 +124,62 @@ def health():
 def whatsapp():
     try:
         body = (request.values.get("Body") or "").strip()
-        sender = (request.values.get("From") or "").strip()
-
-        log_event("WHATSAPP_IN", {"from": sender, "body": body})
-        # ✅ Extra debug (handig op Render): zie meteen welk bestand hij gebruikt
-        log_event("PENDING_PATH_USED", {"path": PENDING_PATH})
-
-        if not body:
-            return twiml("Leeg bericht. Stuur HELP.")
-
-        up = body.upper().strip()
         pending = load_pending()
 
-        # HELP
-        if up == "HELP":
+        if body.upper() == "HELP":
             return twiml(
                 "Crypto_AI — Commands:\n"
-                "• LIST\n"
-                "• YES 5|10|15|20|30|100 [PREBUY-ID]\n"
-                "• NO [PREBUY-ID]\n\n"
-                "Voorbeeld:\n"
-                "YES 10 PB-TEST-001"
+                "LIST\n"
+                "YES 10 [PREBUY-ID]\n"
+                "NO [PREBUY-ID]"
             )
 
-        # LIST
-        if up == "LIST":
-            pending_items = [
-                p for p in pending
-                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
-            ]
-            if not pending_items:
+        if body.upper() == "LIST":
+            items = [p for p in pending if p.get("status") == STATUS_PENDING]
+            if not items:
                 return twiml("Geen PENDING Pre-BUY’s gevonden.")
+            return twiml("\n".join(f"- {p['id']} | {p['coin']}" for p in items))
 
-            last = pending_items[-10:]
-            lines = ["PENDING Pre-BUY’s (laatste 10):"]
-            for p in last:
-                lines.append(f"- {p.get('id','?')} | {p.get('coin','?')} | score={p.get('score','?')}")
-            return twiml("\n".join(lines))
-
-        # NO flow
-        prebuy_id_no = parse_no(body)
-        if prebuy_id_no is not None:
-            item = find_by_id(pending, prebuy_id_no) if prebuy_id_no else find_latest_pending(pending)
-
+        pid_no = parse_no(body)
+        if pid_no is not None:
+            item = find_by_id(pending, pid_no) if pid_no else find_latest_pending(pending)
             if not item:
-                return twiml("❌ Geen pending Pre-BUY gevonden om af te wijzen.")
-
-            if str(item.get("status", "")).upper() != STATUS_PENDING:
-                return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
-
+                return twiml("Geen pending Pre-BUY gevonden.")
             item["status"] = STATUS_REJECTED
-            item["rejected_at"] = int(time.time())
             save_pending(pending)
+            return twiml(f"❌ Afgewezen: {item['id']}")
 
-            log_event("PREBUY_REJECTED", {"id": item.get("id"), "coin": item.get("coin"), "from": sender})
-            return twiml(f"❌ Afgewezen: {item.get('coin','?')} ({item.get('id','?')}).")
-
-        # YES flow
-        amount, prebuy_id = parse_yes(body)
+        amount, pid_yes = parse_yes(body)
         if amount is None:
-            return twiml("Onbekend bericht. Stuur HELP voor commands.")
+            return twiml("Onbekend commando. Stuur HELP.")
 
-        if amount not in ALLOWED_AMOUNTS:
-            return twiml("⛔ Ongeldig bedrag. Gebruik: 5,10,15,20,30,100.")
-
-        item = find_by_id(pending, prebuy_id) if prebuy_id else find_latest_pending(pending)
+        item = find_by_id(pending, pid_yes) if pid_yes else find_latest_pending(pending)
         if not item:
-            return twiml("❌ Geen PENDING Pre-BUY gevonden. Stuur eerst LIST.")
+            return twiml("❌ Geen PENDING Pre-BUY gevonden.")
 
-        status = str(item.get("status", "")).upper()
-
-        # Extra veiligheid: voorkom dubbel-buy op oude approvals
-        if status == STATUS_CONSUMED:
-            return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED). ID: {item.get('id','?')}")
-        if status != STATUS_PENDING:
-            return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
-
-        if is_expired(item.get("expires_at", 0)):
-            return twiml("⚠️ Deze Pre-BUY is verlopen (EXPIRED). Wacht op een nieuwe.")
-
-        coin = item.get("coin")
-        if not coin:
-            return twiml("⚠️ Pre-BUY mist 'coin' veld. Check pending_approvals.json")
-
-        # 1) Markeer APPROVED + save (audit-proof)
         item["status"] = STATUS_APPROVED
-        item["approved_amount"] = float(amount)
-        item["approved_at"] = int(time.time())
         save_pending(pending)
 
-        # 2) BUY uitvoeren (paper)
-        entry_price = float(get_price(coin))
-        stop, target = compute_stop_target(entry_price)
+        entry = float(get_price(item["coin"]))
+        stop, target = compute_stop_target(entry)
 
-        buy_res = buy_eur(
-            symbol=coin,
-            price=entry_price,
-            amount_eur=float(amount),
+        buy_eur(
+            symbol=item["coin"],
+            price=entry,
+            amount_eur=amount,
             stop_loss=stop,
             target=target,
-            prebuy_id=item.get("id"),
+            prebuy_id=item["id"],
         )
 
-        if not isinstance(buy_res, dict) or not buy_res.get("ok"):
-            item["status"] = STATUS_ERROR
-            item["error_reason"] = (buy_res or {}).get("reason", "UNKNOWN")
-            item["error_at"] = int(time.time())
-            save_pending(pending)
-
-            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item.get("error_reason"), "from": sender})
-            return twiml(f"⛔ BUY mislukt: {item.get('error_reason','UNKNOWN')}")
-
-        # 3) CONSUMED (idempotency: voorkomt dubbel BUY)
         item["status"] = STATUS_CONSUMED
-        item["consumed_at"] = int(time.time())
-        item["entry"] = round(entry_price, 8)
-        item["stop_loss"] = round(stop, 8)
-        item["target"] = round(target, 8)
-        item["qty"] = round(float(buy_res.get("qty", 0.0)), 10)
-        item["trade_id"] = buy_res.get("trade_id")
-
         save_pending(pending)
 
-        log_event("BUY_OK", {"id": item.get("id"), "coin": coin, "amount": amount, "trade_id": item.get("trade_id"), "from": sender})
+        return twiml(f"✅ BUY uitgevoerd: {item['coin']} €{amount}")
 
-        return twiml(
-            f"✅ BUY uitgevoerd ({coin})\n"
-            f"Inzet: €{amount}\n"
-            f"Entry: {entry_price:.6f}\n"
-            f"Stop: {stop:.6f}\n"
-            f"Target: {target:.6f}\n"
-            f"ID: {item.get('id','?')}"
-        )
-
-    except Exception as e:
+    except Exception:
         traceback.print_exc()
-        log_event("WEBHOOK_FATAL", {"error": str(e)})
-        return twiml("⚠️ Interne fout in webhook. Check je PowerShell logs.")
+        return twiml("⚠️ Interne fout")
 
 if __name__ == "__main__":
-    # LET OP: voor productie later debug=False + via ngrok/twilio
-    app.run(host="0.0.0.0", port=5000, debug=False)
-
-
-
+    app.run(host="0.0.0.0", port=5000)
