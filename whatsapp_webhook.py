@@ -8,32 +8,34 @@ import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
-# =========================================
-# PROJECT ROOT (Render + lokaal IDENTIEK)
-# =========================================
+# ==========================================================
+# PROJECT ROOT (whatsapp_webhook.py staat in project-root)
+# ==========================================================
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+# Paper trader alleen hier gebruiken voor BUY (jouw structuur)
 from trading.paper_trader import buy_eur, get_price  # noqa: E402
 
 app = Flask(__name__)
 
-# =========================================
-# ENV / SECURITY
-# =========================================
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()
+# ==========================================================
+# ENV
+# ==========================================================
+INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()  # moet op Render gezet worden (Web Service)
 
-# =========================================
-# PATHS (Web Service storage)
-# =========================================
+# ==========================================================
+# PATHS (alleen binnen deze Web Service container)
+# ==========================================================
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
 
-# =========================================
+# ==========================================================
 # SETTINGS
-# =========================================
+# ==========================================================
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
+
 STOP_PCT = 0.02
 RR_TARGET = 2.0
 
@@ -43,9 +45,9 @@ STATUS_CONSUMED = "CONSUMED"
 STATUS_REJECTED = "REJECTED"
 STATUS_ERROR = "ERROR"
 
-# =========================================
+# ==========================================================
 # FILE HELPERS
-# =========================================
+# ==========================================================
 def ensure_file() -> None:
     os.makedirs(DATA_DIR, exist_ok=True)
     if not os.path.isfile(PENDING_PATH):
@@ -68,9 +70,9 @@ def save_pending(data: List[Dict[str, Any]]) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, PENDING_PATH)
 
-# =========================================
+# ==========================================================
 # TWIML
-# =========================================
+# ==========================================================
 def twiml(msg: str) -> Response:
     msg = str(msg).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -79,22 +81,29 @@ def twiml(msg: str) -> Response:
 </Response>"""
     return Response(xml, mimetype="application/xml")
 
-# =========================================
-# HELPERS
-# =========================================
-def log(msg: str) -> None:
-    now = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{now}] {msg}", flush=True)
+# ==========================================================
+# LOGGING
+# ==========================================================
+def log_event(event: str, details: dict) -> None:
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n[{now}] {event}: {json.dumps(details, ensure_ascii=False)}")
+    except Exception:
+        print(f"\n[{time.time()}] {event}: (log fail)")
 
+# ==========================================================
+# HELPERS
+# ==========================================================
 def is_expired(expires_at: Any) -> bool:
+    now_s = int(time.time())
     try:
         x = int(expires_at)
-        # ms support
-        if x > 10**12:
-            x = int(x / 1000)
-        return x < int(time.time())
     except Exception:
         return False
+    # ms support
+    if x > 10**12:
+        x = int(x / 1000)
+    return x < now_s
 
 def find_latest_pending(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     for p in reversed(pending):
@@ -113,8 +122,8 @@ def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
     parts = body.strip().split()
     if len(parts) >= 2 and parts[0].upper() == "YES" and parts[1].isdigit():
         amount = int(parts[1])
-        prebuy_id = parts[2].strip() if len(parts) >= 3 else None
-        return amount, prebuy_id
+        pid = parts[2].strip() if len(parts) >= 3 else None
+        return amount, pid
     return None, None
 
 def parse_no(body: str) -> Optional[str]:
@@ -129,83 +138,94 @@ def compute_stop_target(entry: float) -> Tuple[float, float]:
     target = entry + (RR_TARGET * r)
     return float(stop), float(target)
 
-def require_internal_token(req) -> bool:
-    token = (req.headers.get("X-Internal-Token") or "").strip()
-    return bool(INTERNAL_TOKEN) and token == INTERNAL_TOKEN
-
-# =========================================
-# ROUTES
-# =========================================
-@app.get("/")
-def health():
-    return "OK - crypto_ai web service running", 200
-
-# --- INTERNAL: Pre-BUY PUSH endpoint (van Cron -> Web Service) ---
+# ==========================================================
+# INTERNAL ENDPOINT (hier komt multi_coin_score binnen)
+# ==========================================================
 @app.post("/internal/prebuy")
 def internal_prebuy():
+    """
+    multi_coin_score.py -> POST /internal/prebuy
+    Header: X-Internal-Token: <INTERNAL_TOKEN>
+    JSON body: prebuy dict
+    """
     try:
-        if not require_internal_token(request):
+        token = (request.headers.get("X-Internal-Token") or "").strip()
+        if not INTERNAL_TOKEN:
+            return jsonify({"ok": False, "error": "INTERNAL_TOKEN not set on web service"}), 500
+        if token != INTERNAL_TOKEN:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-        payload = request.get_json(silent=True) or {}
-        if not isinstance(payload, dict):
-            return jsonify({"ok": False, "error": "invalid_json"}), 400
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict):
+            return jsonify({"ok": False, "error": "invalid json"}), 400
 
-        # minimale velden
-        pid = str(payload.get("id", "")).strip()
-        coin = str(payload.get("coin", "")).strip()
+        # basisvalidatie
+        pid = str(data.get("id", "")).strip()
+        coin = str(data.get("coin", "")).strip()
+        status = str(data.get("status", "PENDING")).upper().strip()
+        expires_at = data.get("expires_at", 0)
 
         if not pid or not coin:
             return jsonify({"ok": False, "error": "missing id/coin"}), 400
 
-        # default velden
-        payload.setdefault("status", STATUS_PENDING)
-        payload["status"] = str(payload.get("status", STATUS_PENDING)).upper()
-
-        # expires_at default: 4 uur
-        if "expires_at" not in payload:
-            payload["expires_at"] = int(time.time()) + 4 * 60 * 60
+        if status not in {STATUS_PENDING, STATUS_APPROVED, STATUS_CONSUMED, STATUS_REJECTED, STATUS_ERROR}:
+            status = STATUS_PENDING
 
         pending = load_pending()
 
-        # voorkom dubbele id
-        if any(str(x.get("id", "")).strip() == pid for x in pending):
-            log(f"INTERNAL_PREBUY duplicate ignored: {pid}")
-            return jsonify({"ok": True, "duplicate": True, "id": pid}), 200
+        # voorkom duplicates (idempotent)
+        exists = any(str(p.get("id", "")).strip() == pid for p in pending)
+        if exists:
+            log_event("INTERNAL_PREBUY_DUPLICATE", {"id": pid, "coin": coin})
+            return jsonify({"ok": True, "duplicate": True}), 200
 
-        pending.insert(0, payload)
+        # force velden netjes
+        data["status"] = status
+        if "created_at" not in data:
+            data["created_at"] = int(time.time())
+
+        # expiry check: als missing, geef default 4 uur
+        try:
+            ex = int(expires_at)
+        except Exception:
+            ex = int(time.time()) + 4 * 60 * 60
+        data["expires_at"] = ex
+
+        pending.append(data)
         save_pending(pending)
 
-        log(f"INTERNAL_PREBUY saved: {pid} | {coin} | status={payload.get('status')}")
-        return jsonify({"ok": True, "id": pid}), 200
+        log_event("INTERNAL_PREBUY_SAVED", {"id": pid, "coin": coin, "pending_file": PENDING_PATH})
+        return jsonify({"ok": True}), 200
 
     except Exception as e:
         traceback.print_exc()
         return jsonify({"ok": False, "error": str(e)}), 500
 
-# --- INTERNAL: debug endpoint (handig om te zien of Web Service pending heeft) ---
-@app.get("/internal/pending")
-def internal_pending():
-    if not require_internal_token(request):
-        return jsonify({"ok": False, "error": "unauthorized"}), 401
-    pending = load_pending()
-    return jsonify({"ok": True, "count": len(pending), "data": pending[:20], "path": PENDING_PATH}), 200
+# ==========================================================
+# HEALTH
+# ==========================================================
+@app.get("/")
+def health():
+    return "OK - whatsapp_webhook running", 200
 
-# --- TWILIO WHATSAPP WEBHOOK ---
+# ==========================================================
+# WHATSAPP WEBHOOK (Twilio -> POST /whatsapp)
+# ==========================================================
 @app.post("/whatsapp")
 def whatsapp():
     try:
         body = (request.values.get("Body") or "").strip()
         sender = (request.values.get("From") or "").strip()
-        up = body.upper().strip()
 
-        pending = load_pending()
-
-        log(f"WHATSAPP_IN from={sender} body={body!r} pending_count={len(pending)} path={PENDING_PATH}")
+        log_event("WHATSAPP_IN", {"from": sender, "body": body, "pending_file": PENDING_PATH})
 
         if not body:
             return twiml("Leeg bericht. Stuur HELP.")
 
+        up = body.upper().strip()
+        pending = load_pending()
+
+        # HELP
         if up == "HELP":
             return twiml(
                 "Crypto_AI — Commands:\n"
@@ -216,6 +236,7 @@ def whatsapp():
                 "YES 10 PB-TEST-001"
             )
 
+        # LIST
         if up == "LIST":
             items = [
                 p for p in pending
@@ -224,7 +245,7 @@ def whatsapp():
             if not items:
                 return twiml(f"Geen PENDING Pre-BUY’s gevonden.\n(ik lees: {PENDING_PATH})")
 
-            last = items[:10]
+            last = items[-10:]
             lines = ["PENDING Pre-BUY’s (laatste 10):"]
             for p in last:
                 lines.append(f"- {p.get('id','?')} | {p.get('coin','?')} | score={p.get('score','?')}")
@@ -235,20 +256,22 @@ def whatsapp():
         if pid_no is not None:
             item = find_by_id(pending, pid_no) if pid_no else find_latest_pending(pending)
             if not item:
-                return twiml("❌ Geen pending Pre-BUY gevonden om af te wijzen.")
+                return twiml("❌ Geen PENDING Pre-BUY gevonden om af te wijzen. Stuur LIST.")
 
             if str(item.get("status", "")).upper() != STATUS_PENDING:
-                return twiml(f"⚠️ Niet meer PENDING ({item.get('status','?')}).")
+                return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
 
             item["status"] = STATUS_REJECTED
             item["rejected_at"] = int(time.time())
             save_pending(pending)
+
+            log_event("PREBUY_REJECTED", {"id": item.get("id"), "coin": item.get("coin"), "from": sender})
             return twiml(f"❌ Afgewezen: {item.get('coin','?')} ({item.get('id','?')}).")
 
         # YES
         amount, pid_yes = parse_yes(body)
         if amount is None:
-            return twiml("Onbekend commando. Stuur HELP.")
+            return twiml("Onbekend bericht. Stuur HELP voor commands.")
 
         if amount not in ALLOWED_AMOUNTS:
             return twiml("⛔ Ongeldig bedrag. Gebruik: 5,10,15,20,30,100.")
@@ -257,26 +280,27 @@ def whatsapp():
         if not item:
             return twiml("❌ Geen PENDING Pre-BUY gevonden. Stuur eerst LIST.")
 
+        status = str(item.get("status", "")).upper()
+
+        if status == STATUS_CONSUMED:
+            return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED). ID: {item.get('id','?')}")
+        if status != STATUS_PENDING:
+            return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
+
         if is_expired(item.get("expires_at", 0)):
             return twiml("⚠️ Deze Pre-BUY is verlopen. Wacht op een nieuwe.")
 
-        status = str(item.get("status", "")).upper()
-        if status == STATUS_CONSUMED:
-            return twiml(f"⚠️ Al gebruikt (CONSUMED). ID: {item.get('id','?')}")
-        if status != STATUS_PENDING:
-            return twiml(f"⚠️ Niet meer PENDING ({item.get('status','?')}).")
-
-        coin = item.get("coin")
+        coin = str(item.get("coin") or "").strip()
         if not coin:
-            return twiml("⚠️ Pre-BUY mist 'coin' veld. Check pending_approvals.json")
+            return twiml("⚠️ Pre-BUY mist 'coin'. Check storage.")
 
-        # 1) APPROVED opslaan
+        # 1) APPROVED opslaan (audit-proof)
         item["status"] = STATUS_APPROVED
         item["approved_amount"] = float(amount)
         item["approved_at"] = int(time.time())
         save_pending(pending)
 
-        # 2) BUY uitvoeren
+        # 2) BUY uitvoeren (paper)
         entry = float(get_price(coin))
         stop, target = compute_stop_target(entry)
 
@@ -294,6 +318,8 @@ def whatsapp():
             item["error_reason"] = (buy_res or {}).get("reason", "UNKNOWN")
             item["error_at"] = int(time.time())
             save_pending(pending)
+
+            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item.get("error_reason"), "from": sender})
             return twiml(f"⛔ BUY mislukt: {item.get('error_reason','UNKNOWN')}")
 
         # 3) CONSUMED
@@ -306,6 +332,8 @@ def whatsapp():
         item["trade_id"] = buy_res.get("trade_id")
         save_pending(pending)
 
+        log_event("BUY_OK", {"id": item.get("id"), "coin": coin, "amount": amount, "trade_id": item.get("trade_id"), "from": sender})
+
         return twiml(
             f"✅ BUY uitgevoerd ({coin})\n"
             f"Inzet: €{amount}\n"
@@ -315,11 +343,15 @@ def whatsapp():
             f"ID: {item.get('id','?')}"
         )
 
-    except Exception:
+    except Exception as e:
         traceback.print_exc()
+        log_event("WEBHOOK_FATAL", {"error": str(e)})
         return twiml("⚠️ Interne fout in webhook. Check Render logs.")
 
+# ==========================================================
+# TEST ONDERAAN LATEN STAAN (zoals jij wil)
+# ==========================================================
 if __name__ == "__main__":
-    # lokaal testen
-    port = int(os.getenv("PORT", "5000"))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # In Render draait dit via start command (gunicorn/uvicorn of python)
+    # Lokaal kan dit prima:
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
