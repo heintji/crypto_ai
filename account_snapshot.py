@@ -94,8 +94,7 @@ def write_snapshot():
 
 if __name__ == "__main__":
     write_snapshot()
-if os.getenv("OPENAI_API_KEY"):
-    # laad snapshot
-    # geef het als input aan ai_advisor / OpenAI
-    # laat AI een korte observatie genereren
-    # sla op in: data/account_snapshot_ai.json
+
+    if os.getenv("OPENAI_API_KEY"):
+        pass  # AI-analyse komt later
+
