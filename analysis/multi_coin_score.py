@@ -4,158 +4,181 @@ import os
 import sys
 import json
 import time
-import csv
-import traceback
-from datetime import datetime, timezone
+import math
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-# ============================================================
-# PROJECT ROOT (zodat imports + paths altijd kloppen)
-# multi_coin_score.py staat in crypto_ai/analysis/
-# -> project root is 1 map omhoog: crypto_ai/
-# -> /opt/render/project/src (Render)
-# ============================================================
+# =========================================================
+# PROJECT ROOT FIX
+# - dit bestand zit in /analysis/
+# - root is dus 1 map omhoog
+# =========================================================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# ============================================================
-# PATHS
-# ============================================================
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
+# =========================================================
+# PATHS (BELANGRIJK)
+# 1) Standaard: <project_root>/data/pending_approvals.json
+# 2) Override mogelijk via ENV: PENDING_FILE
+# =========================================================
+DEFAULT_PENDING = os.path.join(PROJECT_ROOT, "data", "pending_approvals.json")
+PENDING_FILE = os.getenv("PENDING_FILE", DEFAULT_PENDING)
 
-PENDING_FILE = os.path.join(DATA_DIR, "pending_approvals.json")
-AI_ADVICE_LOG = os.path.join(LOGS_DIR, "ai_advice.csv")  # simpel logje
-PREBUY_PAYLOAD_LOG = os.path.join(LOGS_DIR, "prebuy_payload.json")
-PREBUY_STATE_LOG = os.path.join(LOGS_DIR, "prebuy_state.json")
+DEFAULT_LOG_DIR = os.path.join(PROJECT_ROOT, "logs")
+LOG_DIR = os.getenv("LOG_DIR", DEFAULT_LOG_DIR)
+AI_ADVICE_LOG = os.path.join(LOG_DIR, "ai_advice.csv")
 
-# ============================================================
+# =========================================================
 # SETTINGS
-# ============================================================
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+# =========================================================
+BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 
 COINS = [
     "BTCUSDT",
     "ETHUSDT",
-    # voeg gerust meer toe
+    "BNBUSDT",
+    "XRPUSDT",
+    "ADAUSDT",
+    "DOGEUSDT",
+    "SOLUSDT",
 ]
 
-INTERVAL_4H = "4h"
-INTERVAL_1H = "1h"
-KLINES_LIMIT = 200
+TF_MAIN = os.getenv("TF_MAIN", "4h")   # hoofd timeframe voor score
+TF_CTX = os.getenv("TF_CTX", "1h")     # context timeframe
+LIMIT_MAIN = int(os.getenv("LIMIT_MAIN", "200"))
+LIMIT_CTX = int(os.getenv("LIMIT_CTX", "200"))
 
-MAX_PREBUY_PER_RUN = 3               # safety
-PREBUY_EXPIRES_SECONDS = 4 * 60 * 60 # 4 uur
+MAX_PREBUY_PER_RUN = int(os.getenv("MAX_PREBUY_PER_RUN", "1"))   # veilig: max 1 per run
+PREBUY_TTL_SECONDS = int(os.getenv("PREBUY_TTL_SECONDS", str(4 * 60 * 60)))  # 4 uur
 
-# Force test prebuy via Render env var:
-# FORCE_TEST_PREBUY=1  -> maakt 1 test PENDING prebuy aan (en daarna niet nog 100x)
+MIN_SCORE_TO_NOTIFY = float(os.getenv("MIN_SCORE_TO_NOTIFY", "80"))
+
+# Test switch (Render env var: FORCE_TEST_PREBUY=1)
 FORCE_TEST_PREBUY = os.getenv("FORCE_TEST_PREBUY", "0") == "1"
 
-# ============================================================
+# =========================================================
+# DATA STRUCTURES
+# =========================================================
+@dataclass
+class Candle:
+    t: int
+    o: float
+    h: float
+    l: float
+    c: float
+    v: float
+
+
+# =========================================================
 # UTILS
-# ============================================================
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# =========================================================
+def utc_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
 
 def ensure_dirs() -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(PENDING_FILE), exist_ok=True)
+    os.makedirs(LOG_DIR, exist_ok=True)
 
-def load_json_list(path: str) -> List[Dict[str, Any]]:
-    ensure_dirs()
-    if not os.path.isfile(path):
-        return []
+
+def safe_float(x: Any) -> float:
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        return float(x)
+    except Exception:
+        return float("nan")
+
+
+# =========================================================
+# FILE IO
+# =========================================================
+def load_pending() -> List[Dict[str, Any]]:
+    ensure_dirs()
+    if not os.path.isfile(PENDING_FILE):
+        with open(PENDING_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f, indent=2)
+        return []
+
+    try:
+        with open(PENDING_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
     except Exception:
         return []
 
-def save_json_list(path: str, data: List[Dict[str, Any]]) -> None:
+
+def save_pending(items: List[Dict[str, Any]]) -> None:
     ensure_dirs()
-    tmp = path + ".tmp"
+    tmp = PENDING_FILE + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
+        json.dump(items, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, PENDING_FILE)
 
-def save_json(path: str, data: Dict[str, Any]) -> None:
-    ensure_dirs()
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
 
-def append_csv_row(path: str, row: Dict[str, Any], fieldnames: List[str]) -> None:
-    ensure_dirs()
-    file_exists = os.path.isfile(path)
-    with open(path, "a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
+def pending_has_test_pending(items: List[Dict[str, Any]]) -> bool:
+    for it in items:
+        if it.get("setup") == "TEST" and str(it.get("status", "")).upper() == "PENDING":
+            return True
+    return False
 
-def now_s() -> int:
-    return int(time.time())
 
-def is_expired(expires_at: Any) -> bool:
-    try:
-        x = int(expires_at)
-    except Exception:
-        return False
-    if x > 10**12:
-        x = int(x / 1000)
-    return x < now_s()
-
-def normalize_status(x: Any) -> str:
-    return str(x or "").strip().upper()
-
-# ============================================================
-# BINANCE DATA
-# ============================================================
-def fetch_klines(symbol: str, interval: str, limit: int = 200) -> List[List[Any]]:
+# =========================================================
+# BINANCE FETCH
+# =========================================================
+def fetch_klines(symbol: str, interval: str, limit: int) -> List[Candle]:
     params = {"symbol": symbol, "interval": interval, "limit": limit}
-    r = requests.get(BINANCE_KLINES_URL, params=params, timeout=20)
+    r = requests.get(BINANCE_KLINES, params=params, timeout=20)
     r.raise_for_status()
-    return r.json()
-
-def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    # kline[4] is close
-    out: List[float] = []
-    for k in klines:
-        try:
-            out.append(float(k[4]))
-        except Exception:
-            continue
+    raw = r.json()
+    out: List[Candle] = []
+    for row in raw:
+        # row = [openTime, open, high, low, close, volume, closeTime, ...]
+        out.append(
+            Candle(
+                t=int(row[0]),
+                o=float(row[1]),
+                h=float(row[2]),
+                l=float(row[3]),
+                c=float(row[4]),
+                v=float(row[5]),
+            )
+        )
     return out
 
-def sma(values: List[float], period: int) -> Optional[float]:
-    if len(values) < period:
-        return None
-    return sum(values[-period:]) / float(period)
 
-def rsi(values: List[float], period: int = 14) -> Optional[float]:
-    if len(values) < period + 1:
+# =========================================================
+# INDICATORS (SMA + RSI)
+# =========================================================
+def sma(values: List[float], length: int) -> Optional[float]:
+    if len(values) < length or length <= 0:
         return None
+    return sum(values[-length:]) / float(length)
+
+
+def rsi(values: List[float], length: int = 14) -> Optional[float]:
+    if len(values) < length + 1:
+        return None
+
     gains = 0.0
     losses = 0.0
-    for i in range(-period, 0):
+    for i in range(-length, 0):
         diff = values[i] - values[i - 1]
         if diff >= 0:
             gains += diff
         else:
             losses += abs(diff)
+
     if losses == 0:
         return 100.0
     rs = gains / losses
     return 100.0 - (100.0 / (1.0 + rs))
 
-# ============================================================
-# SCORE / PREBUY LOGIC (simpel, stabiel, audit-proof)
-# ============================================================
+
+# =========================================================
+# SCORING LOGIC (simpel, stabiel, debugbaar)
+# =========================================================
 def trend_label(sma20: Optional[float], sma50: Optional[float]) -> str:
     if sma20 is None or sma50 is None:
         return "UNKNOWN"
@@ -165,92 +188,133 @@ def trend_label(sma20: Optional[float], sma50: Optional[float]) -> str:
         return "DOWN"
     return "FLAT"
 
-def compute_score(
-    sma20_4h: Optional[float],
-    sma50_4h: Optional[float],
-    rsi_4h: Optional[float],
-    sma20_1h: Optional[float],
-    sma50_1h: Optional[float],
-    rsi_1h: Optional[float],
-) -> Tuple[float, str]:
-    """
-    Score 0..100.
-    Dit is bewust simpel en voorspelbaar (geen magie).
-    """
-    score = 50.0
 
-    # Trend 4h
-    if sma20_4h is not None and sma50_4h is not None:
-        if sma20_4h > sma50_4h:
-            score += 20
-        elif sma20_4h < sma50_4h:
-            score -= 20
+def score_symbol(candles_main: List[Candle], candles_ctx: List[Candle]) -> Tuple[float, Dict[str, Any]]:
+    closes_main = [c.c for c in candles_main]
+    closes_ctx = [c.c for c in candles_ctx]
 
-    # Trend 1h
-    if sma20_1h is not None and sma50_1h is not None:
-        if sma20_1h > sma50_1h:
-            score += 10
-        elif sma20_1h < sma50_1h:
-            score -= 10
+    sma20 = sma(closes_main, 20)
+    sma50 = sma(closes_main, 50)
+    rsi14 = rsi(closes_main, 14)
 
-    # RSI filters
-    if rsi_4h is not None:
-        if 45 <= rsi_4h <= 65:
-            score += 10
-        elif rsi_4h > 75:
-            score -= 10
+    sma20_ctx = sma(closes_ctx, 20)
+    sma50_ctx = sma(closes_ctx, 50)
 
-    if rsi_1h is not None:
-        if 45 <= rsi_1h <= 65:
-            score += 5
-        elif rsi_1h > 75:
-            score -= 5
+    t_main = trend_label(sma20, sma50)
+    t_ctx = trend_label(sma20_ctx, sma50_ctx)
 
-    # clamp
+    score = 50.0  # baseline
+
+    # Trend bonus
+    if t_main == "UP":
+        score += 20
+    elif t_main == "DOWN":
+        score -= 20
+
+    # Context bonus
+    if t_ctx == "UP":
+        score += 10
+    elif t_ctx == "DOWN":
+        score -= 10
+
+    # RSI heuristics
+    if rsi14 is not None:
+        if 45 <= rsi14 <= 65:
+            score += 10  # “gezond”
+        elif rsi14 < 35:
+            score -= 5   # zwak / risk
+        elif rsi14 > 75:
+            score -= 5   # oververhit
+
+    # Clamp 0..100
     score = max(0.0, min(100.0, score))
 
-    if score >= 90:
-        label = "kans groot"
-    elif score >= 80:
-        label = "kans boven gemiddeld"
-    elif score >= 70:
-        label = "kans gemiddeld"
-    else:
-        label = "laag"
-    return score, label
+    debug = {
+        "sma20": sma20,
+        "sma50": sma50,
+        "rsi14": rsi14,
+        "trend_main": t_main,
+        "trend_ctx": t_ctx,
+        "last_close": closes_main[-1] if closes_main else None,
+    }
+    return score, debug
 
-def make_prebuy(symbol: str, score: float, label: str, entry: float) -> Dict[str, Any]:
-    pb_id = f"PB-{symbol}-{int(time.time())}"
+
+# =========================================================
+# PRE-BUY CREATION
+# =========================================================
+def make_prebuy(symbol: str, score: float, debug: Dict[str, Any]) -> Dict[str, Any]:
+    now_s = int(time.time())
+    expires = now_s + PREBUY_TTL_SECONDS
+
+    entry = float(debug.get("last_close") or 0.0)
+    # simpele placeholders; jouw trade_monitor/exit logica bepaalt later de echte regels
+    stop_loss = entry * 0.98 if entry > 0 else 0.0
+    target = entry * 1.04 if entry > 0 else 0.0
+
+    prebuy_id = f"PB-{symbol}-{now_s}"
+
     return {
-        "id": pb_id,
+        "id": prebuy_id,
         "coin": symbol,
-        "setup": "SYSTEM",
-        "score": round(score, 2),
-        "kans": label,
+        "setup": "SCORE",
+        "score": round(float(score), 2),
+        "kans": "hoog" if score >= 90 else "boven_gemiddeld" if score >= 80 else "gemiddeld" if score >= 70 else "laag",
         "entry": round(entry, 8),
-        "stop_loss": None,
-        "target": None,
+        "stop_loss": round(stop_loss, 8),
+        "target": round(target, 8),
         "status": "PENDING",
-        "created_at": utc_now_iso(),
-        "expires_at": now_s() + PREBUY_EXPIRES_SECONDS,
+        "created_at": utc_iso(),
+        "expires_at": expires,
+        "debug": debug,
     }
 
-def already_has_test_pending(pending: List[Dict[str, Any]]) -> bool:
-    for p in pending:
-        if str(p.get("setup")) == "TEST" and normalize_status(p.get("status")) == "PENDING" and not is_expired(p.get("expires_at", 0)):
-            return True
-    return False
 
-def create_test_prebuy(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """
-    Maakt 1 test-prebuy aan, maar alleen als er nog geen actieve TEST pending bestaat.
-    """
-    if already_has_test_pending(pending):
+def append_prebuy(prebuy: Dict[str, Any]) -> None:
+    items = load_pending()
+    items.insert(0, prebuy)
+    save_pending(items)
+
+
+# =========================================================
+# AI ADVICE LOG (simpel CSV)
+# =========================================================
+def append_ai_log(symbol: str, score: float, debug: Dict[str, Any]) -> None:
+    ensure_dirs()
+    header_needed = not os.path.isfile(AI_ADVICE_LOG)
+
+    line = (
+        f"{utc_iso()},"
+        f"{symbol},"
+        f"{score:.2f},"
+        f"{debug.get('trend_main','')},"
+        f"{debug.get('trend_ctx','')},"
+        f"{'' if debug.get('rsi14') is None else round(float(debug['rsi14']), 2)}\n"
+    )
+
+    if header_needed:
+        with open(AI_ADVICE_LOG, "w", encoding="utf-8") as f:
+            f.write("utc,symbol,score,trend_main,trend_ctx,rsi14\n")
+            f.write(line)
+    else:
+        with open(AI_ADVICE_LOG, "a", encoding="utf-8") as f:
+            f.write(line)
+
+
+# =========================================================
+# TEST PRE-BUY (via env FORCE_TEST_PREBUY=1)
+# =========================================================
+def force_test_prebuy() -> None:
+    items = load_pending()
+
+    # voorkom spam: max 1 PENDING TEST tegelijk
+    if pending_has_test_pending(items):
         print("🟡 TEST prebuy bestaat al (PENDING) — geen nieuwe gemaakt.")
-        return None
+        return
 
+    now_s = int(time.time())
     test = {
-        "id": f"PB-TEST-{int(time.time())}",
+        "id": f"PB-TEST-{now_s}",
         "coin": "BTCUSDT",
         "setup": "TEST",
         "score": 99.0,
@@ -259,102 +323,65 @@ def create_test_prebuy(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]
         "stop_loss": 95.0,
         "target": 110.0,
         "status": "PENDING",
-        "created_at": utc_now_iso(),
-        "expires_at": now_s() + PREBUY_EXPIRES_SECONDS,
+        "created_at": utc_iso(),
+        "expires_at": now_s + PREBUY_TTL_SECONDS,
     }
-    pending.append(test)
-    return test
 
-# ============================================================
+    items.insert(0, test)
+    save_pending(items)
+
+    print(f"✅ TEST PRE-BUY gemaakt: {test['id']} (PENDING)")
+
+
+# =========================================================
 # MAIN
-# ============================================================
+# =========================================================
 def main() -> None:
     ensure_dirs()
-    print(f"🚀 multi_coin_score gestart (Pre-BUY only)")
-    print(f"UTC time: {utc_now_iso()}")
-    print(f"Pending file: {PENDING_FILE}")
-    print(f"AI log: {AI_ADVICE_LOG}")
 
-    pending = load_json_list(PENDING_FILE)
-    created_prebuys: List[Dict[str, Any]] = []
-    debug_payload: Dict[str, Any] = {"run_at": utc_now_iso(), "items": []}
+    print("📌 multi_coin_score gestart (Pre-BUY only)")
+    print(f"🕒 UTC time: {utc_iso()}")
+    print(f"📌 Pending file: {PENDING_FILE}")
+    print(f"📌 AI log: {AI_ADVICE_LOG}")
 
-    # 1) FORCE TEST PREBUY (alleen voor flow test)
-    if FORCE_TEST_PREBUY:
-        test = create_test_prebuy(pending)
-        if test:
-            save_json_list(PENDING_FILE, pending)
-            print(f"✅ TEST PRE-BUY gemaakt: {test['id']} (PENDING)")
-        else:
-            # bestaat al → niets doen
-            pass
-
-    # 2) Normale analyse
+    # 1) Run echte scoring (mag 0 prebuys opleveren)
     new_prebuys = 0
-    for symbol in COINS:
-        if new_prebuys >= MAX_PREBUY_PER_RUN:
-            break
+    scored: List[Tuple[str, float, Dict[str, Any]]] = []
 
+    for sym in COINS:
         try:
-            k4h = fetch_klines(symbol, INTERVAL_4H, KLINES_LIMIT)
-            k1h = fetch_klines(symbol, INTERVAL_1H, KLINES_LIMIT)
-            c4h = closes_from_klines(k4h)
-            c1h = closes_from_klines(k1h)
+            candles_main = fetch_klines(sym, TF_MAIN, LIMIT_MAIN)
+            candles_ctx = fetch_klines(sym, TF_CTX, LIMIT_CTX)
 
-            sma20_4h = sma(c4h, 20)
-            sma50_4h = sma(c4h, 50)
-            rsi_4h = rsi(c4h, 14)
+            score, debug = score_symbol(candles_main, candles_ctx)
+            scored.append((sym, score, debug))
 
-            sma20_1h = sma(c1h, 20)
-            sma50_1h = sma(c1h, 50)
-            rsi_1h = rsi(c1h, 14)
-
-            score, label = compute_score(sma20_4h, sma50_4h, rsi_4h, sma20_1h, sma50_1h, rsi_1h)
-            entry = float(c1h[-1]) if c1h else (float(c4h[-1]) if c4h else 0.0)
-
-            debug_payload["items"].append({
-                "symbol": symbol,
-                "score": score,
-                "label": label,
-                "entry": entry,
-                "trend_4h": trend_label(sma20_4h, sma50_4h),
-                "trend_1h": trend_label(sma20_1h, sma50_1h),
-                "rsi_4h": rsi_4h,
-                "rsi_1h": rsi_1h,
-            })
-
-            # Voorbeeld: alleen prebuy vanaf 80
-            if score >= 80 and entry > 0:
-                pb = make_prebuy(symbol, score, label, entry)
-                pending.append(pb)
-                created_prebuys.append(pb)
-                new_prebuys += 1
-
-                append_csv_row(
-                    AI_ADVICE_LOG,
-                    {
-                        "utc_time": utc_now_iso(),
-                        "prebuy_id": pb["id"],
-                        "symbol": symbol,
-                        "score": round(score, 2),
-                        "label": label,
-                        "entry": round(entry, 8),
-                    },
-                    fieldnames=["utc_time", "prebuy_id", "symbol", "score", "label", "entry"],
-                )
+            append_ai_log(sym, score, debug)
 
         except Exception as e:
-            print(f"⚠️ {symbol} fout: {e}")
-            traceback.print_exc()
+            print(f"⚠️ {sym} fout: {e}")
 
-    # 3) Save pending
-    save_json_list(PENDING_FILE, pending)
+    # beste eerst
+    scored.sort(key=lambda x: x[1], reverse=True)
 
-    # 4) Save payload/state debug
-    save_json(PREBUY_PAYLOAD_LOG, debug_payload)
-    save_json(PREBUY_STATE_LOG, {"utc_time": utc_now_iso(), "new_prebuys": new_prebuys})
+    for sym, score, debug in scored:
+        if new_prebuys >= MAX_PREBUY_PER_RUN:
+            break
+        if score < MIN_SCORE_TO_NOTIFY:
+            continue
+
+        prebuy = make_prebuy(sym, score, debug)
+        append_prebuy(prebuy)
+        new_prebuys += 1
+
+        print(f"✅ Pre-BUY toegevoegd: {prebuy['id']} | {sym} | score={score:.2f}")
 
     print(f"✅ Pre-BUY run klaar — {new_prebuys} nieuwe Pre-BUY(s).")
+
+    # 2) Force test prebuy (alleen als env aan staat)
+    if FORCE_TEST_PREBUY:
+        force_test_prebuy()
+
 
 if __name__ == "__main__":
     main()
