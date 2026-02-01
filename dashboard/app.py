@@ -1,96 +1,96 @@
-import json
 import os
-from datetime import datetime
-
-import pandas as pd
+import json
+import time
+import hmac
+import hashlib
+import requests
 import streamlit as st
-import plotly.express as px
 
-# ======================
-# PAGINA INSTELLING
-# ======================
-st.set_page_config(
-    page_title="Crypto AI Dashboard",
-    layout="wide"
-)
+# ===============================
+# Config
+# ===============================
+API_KEY = os.getenv("BITVAVO_API_KEY")
+API_SECRET = os.getenv("BITVAVO_API_SECRET")
+SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
 
+BASE_URL = "https://api.bitvavo.com/v2"
+
+st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
 st.title("📊 Crypto AI Dashboard")
 st.caption("Live overzicht van saldo, assets en bot-status")
 
-# ======================
-# DATA PAD
-# ======================
-SNAPSHOT_PATH = os.path.join(
-    os.getcwd(),
-    "data",
-    "account_snapshot.json"
-)
+# ===============================
+# Bitvavo helper
+# ===============================
+def bitvavo_request(path):
+    timestamp = str(int(time.time() * 1000))
+    message = timestamp + "GET" + path
+    signature = hmac.new(
+        API_SECRET.encode(),
+        message.encode(),
+        hashlib.sha256
+    ).hexdigest()
 
-# ======================
-# DATA LADEN
-# ======================
-if not os.path.exists(SNAPSHOT_PATH):
-    st.error("❌ account_snapshot.json niet gevonden")
+    headers = {
+        "Bitvavo-Access-Key": API_KEY,
+        "Bitvavo-Access-Signature": signature,
+        "Bitvavo-Access-Timestamp": timestamp,
+        "Bitvavo-Access-Window": "10000"
+    }
+
+    r = requests.get(BASE_URL + path, headers=headers, timeout=10)
+    r.raise_for_status()
+    return r.json()
+
+# ===============================
+# Snapshot maken
+# ===============================
+def create_snapshot():
+    balances = bitvavo_request("/balance")
+    snapshot = {
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "balances": balances
+    }
+
+    os.makedirs(os.path.dirname(SNAPSHOT_PATH), exist_ok=True)
+    with open(SNAPSHOT_PATH, "w") as f:
+        json.dump(snapshot, f, indent=2)
+
+    return snapshot
+
+# ===============================
+# Snapshot laden of maken
+# ===============================
+try:
+    if not os.path.exists(SNAPSHOT_PATH):
+        st.info("📥 Snapshot niet gevonden, wordt nu aangemaakt...")
+        data = create_snapshot()
+    else:
+        with open(SNAPSHOT_PATH, "r") as f:
+            data = json.load(f)
+
+except Exception as e:
+    st.error("❌ Fout bij ophalen snapshot")
+    st.exception(e)
     st.stop()
 
-with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
-    snapshot = json.load(f)
+# ===============================
+# Weergave
+# ===============================
+st.success(f"✅ Snapshot geladen ({data['timestamp']})")
 
-# ======================
-# BASIS INFO
-# ======================
-timestamp = datetime.fromtimestamp(snapshot["timestamp"])
-status = snapshot.get("status", "UNKNOWN")
-eur_available = snapshot.get("eur_available", 0.0)
-assets = snapshot.get("assets", {})
-open_orders = snapshot.get("open_orders", 0)
+balances = data.get("balances", [])
+non_zero = [b for b in balances if float(b.get("available", 0)) > 0]
 
-# ======================
-# BOVENSTE CARDS
-# ======================
-col1, col2, col3, col4 = st.columns(4)
-
-col1.metric("💶 EUR beschikbaar", f"€ {eur_available:,.2f}")
-col2.metric("📦 Assets", len(assets))
-col3.metric("📑 Open orders", open_orders)
-col4.metric("⚙️ Status", status)
-
-st.divider()
-
-# ======================
-# ASSETS TABEL
-# ======================
-if assets:
-    df_assets = pd.DataFrame(
-        [{"Asset": k, "Aantal": v} for k, v in assets.items()]
-    )
-
-    st.subheader("📋 Assets overzicht")
-    st.dataframe(df_assets, use_container_width=True)
-
-    # ======================
-    # BAR CHART
-    # ======================
-    st.subheader("📊 Asset verdeling")
-
-    fig = px.bar(
-        df_assets,
-        x="Asset",
-        y="Aantal",
-        text="Aantal",
-        height=400
-    )
-    fig.update_traces(textposition="outside")
-
-    st.plotly_chart(fig, use_container_width=True)
-
+if not non_zero:
+    st.warning("Geen assets met saldo gevonden.")
 else:
-    st.info("Geen assets gevonden")
-
-st.divider()
-
-# ======================
-# FOOTER
-# ======================
-st.caption(f"Laatst bijgewerkt: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-
+    st.subheader("💰 Assets")
+    st.table([
+        {
+            "Asset": b["symbol"],
+            "Beschikbaar": b["available"],
+            "In orders": b["inOrder"]
+        }
+        for b in non_zero
+    ])
