@@ -3,213 +3,128 @@ import json
 import time
 import hmac
 import hashlib
+import base64
 import requests
 import streamlit as st
 
 # =========================
 # Config
 # =========================
-API_KEY = os.getenv("BITVAVO_API_KEY")
-API_SECRET = os.getenv("BITVAVO_API_SECRET")
-
-# Render disk mount (jij hebt disk op /data gezet)
-SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
+API_KEY = (os.getenv("BITVAVO_API_KEY") or "").strip()
+API_SECRET = (os.getenv("BITVAVO_API_SECRET") or "").strip()
 
 BASE_URL = "https://api.bitvavo.com/v2"
+TIME_WINDOW = "10000"  # ms, standaard prima
 
+st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
+st.title("📊 Crypto AI Dashboard")
+st.caption("Live overzicht van saldo, assets en bot-status")
 
 # =========================
-# Helpers
+# Bitvavo signing helper
 # =========================
-def bitvavo_request(path: str, method: str = "GET", body: str = ""):
+def bitvavo_request(method: str, path: str, body: str = ""):
     """
-    Signed request naar Bitvavo private endpoints.
+    method: 'GET' / 'POST' etc.
+    path: '/balance' etc (MOET beginnen met '/')
+    body: string JSON (bij GET meestal '')
     """
     if not API_KEY or not API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt (Environment Variables).")
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Environment Variables.")
 
-    ts = str(int(time.time() * 1000))
-    message = ts + method.upper() + path + body
+    timestamp = str(int(time.time() * 1000))
+    method = method.upper()
+
+    # Bitvavo signing: timestamp + method + path + body
+    message = f"{timestamp}{method}{path}{body}"
 
     signature = hmac.new(
         API_SECRET.encode("utf-8"),
         message.encode("utf-8"),
         hashlib.sha256
-    ).hexdigest()
+    ).digest()
+    signature_b64 = base64.b64encode(signature).decode("utf-8")
 
     headers = {
-        "bitvavo-access-key": API_KEY,
-        "bitvavo-access-signature": signature,
-        "bitvavo-access-timestamp": ts,
-        "bitvavo-access-window": "10000",
+        "Bitvavo-Access-Key": API_KEY,
+        "Bitvavo-Access-Signature": signature_b64,
+        "Bitvavo-Access-Timestamp": timestamp,
+        "Bitvavo-Access-Window": TIME_WINDOW,
         "Content-Type": "application/json",
     }
 
-    url = BASE_URL + path
-    r = requests.request(method.upper(), url, headers=headers, data=body, timeout=20)
+    url = f"{BASE_URL}{path}"
+    r = requests.request(method, url, headers=headers, data=body, timeout=15)
 
     if r.status_code >= 400:
-        # Probeer wat extra info te geven
+        # geef Bitvavo error terug zodat jij exact ziet wat er misgaat
         try:
-            err = r.json()
+            err_json = r.json()
         except Exception:
-            err = r.text
-        raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
+            err_json = {"raw": r.text}
+        raise RuntimeError(f"Bitvavo error {r.status_code}: {err_json}")
 
     return r.json()
-
-
-def create_snapshot():
-    """
-    Maakt een nieuwe snapshot en schrijft hem weg.
-    """
-    balances = bitvavo_request("/balance")
-
-    snapshot = {
-        "status": "OK",
-        "timestamp": int(time.time()),
-        "balances": balances,
-    }
-
-    # Zorg dat map bestaat (bij /data is dat normaal al zo, maar veilig)
-    folder = os.path.dirname(SNAPSHOT_PATH) or "."
-    os.makedirs(folder, exist_ok=True)
-
-    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2)
-
-    return snapshot
-
-
-def load_snapshot():
-    """
-    Leest snapshot. Bestaat hij niet? Dan maken we hem eerst aan.
-    """
-    if not os.path.exists(SNAPSHOT_PATH):
-        return create_snapshot()
-
-    with open(SNAPSHOT_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def eur_available_from_balances(balances):
-    """
-    Probeert EUR free/available uit Bitvavo balances te halen.
-    Bitvavo geeft velden zoals: symbol, available, inOrder
-    """
-    for b in balances:
-        if str(b.get("symbol", "")).upper() == "EUR":
-            # available kan string zijn
-            try:
-                return float(b.get("available", 0))
-            except Exception:
-                return b.get("available", 0)
-    return 0.0
-
-
-def nonzero_assets(balances, min_amount=0.00000001):
-    """
-    Filtert assets met available+inOrder > 0
-    """
-    out = []
-    for b in balances:
-        sym = str(b.get("symbol", "")).upper()
-        try:
-            available = float(b.get("available", 0))
-        except Exception:
-            available = 0.0
-        try:
-            in_order = float(b.get("inOrder", 0))
-        except Exception:
-            in_order = 0.0
-
-        total = available + in_order
-        if sym and total > min_amount:
-            out.append({
-                "symbol": sym,
-                "available": available,
-                "inOrder": in_order,
-                "total": total
-            })
-    # Sort op grootste total
-    out.sort(key=lambda x: x["total"], reverse=True)
-    return out
 
 
 # =========================
 # UI
 # =========================
-st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
+col1, col2 = st.columns([1, 2])
 
-st.title("📊 Crypto AI Dashboard")
-st.caption("Live overzicht van saldo, assets en bot-status")
+with col1:
+    if st.button("🔄 Saldo nu verversen"):
+        st.session_state["refresh"] = True
 
-colA, colB, colC = st.columns([1, 1, 2])
+with col2:
+    st.info(
+        "Tip: Als je eerder 'snapshot niet gevonden' zag, kwam dat doordat je dashboard een file zocht.\n"
+        "We doen nu LIVE Bitvavo ophalen (betrouwbaarder op Render)."
+    )
 
-with colA:
-    st.write("**Snapshot pad**")
-    st.code(SNAPSHOT_PATH)
+# automatisch refresh 1x bij load
+if "refresh" not in st.session_state:
+    st.session_state["refresh"] = True
 
-with colB:
-    if st.button("🔄 Snapshot nu verversen"):
-        try:
-            snap = create_snapshot()
-            st.success("Snapshot vernieuwd ✅")
-        except Exception as e:
-            st.error(f"Verversen mislukt: {e}")
-            st.stop()
+if st.session_state["refresh"]:
+    st.session_state["refresh"] = False
 
-with colC:
-    st.info("Tip: Als je ooit weer 'snapshot niet gevonden' ziet, betekent dat meestal dat er nog nooit een snapshot is aangemaakt. Dit script maakt hem nu automatisch aan.")
+    try:
+        balances = bitvavo_request("GET", "/balance")
 
+        # Maak overzicht
+        eur_available = 0.0
+        assets = []
 
-# Snapshot laden (of aanmaken)
-try:
-    snapshot = load_snapshot()
-except Exception as e:
-    st.error(f"Kan snapshot niet laden/maken: {e}")
-    st.stop()
+        for b in balances:
+            symbol = b.get("symbol")
+            available = float(b.get("available", "0") or "0")
+            in_order = float(b.get("inOrder", "0") or "0")
+            total = available + in_order
 
-# Als snapshot status ERROR is (als jij dat later zo opslaat), laten we het zien
-if snapshot.get("status") and snapshot.get("status") != "OK":
-    st.warning(f"Snapshot status: {snapshot.get('status')}")
-    if snapshot.get("error"):
-        st.code(snapshot.get("error"))
+            if symbol == "EUR":
+                eur_available = available
 
-balances = snapshot.get("balances", [])
-if not balances:
-    st.error("Geen balances gevonden in snapshot.")
-    st.stop()
+            if total > 0:
+                assets.append({
+                    "symbol": symbol,
+                    "available": available,
+                    "inOrder": in_order,
+                    "total": total
+                })
 
-# KPI's
-eur_av = eur_available_from_balances(balances)
-assets = nonzero_assets(balances)
+        st.success("✅ Bitvavo saldo opgehaald")
 
-k1, k2, k3 = st.columns(3)
-k1.metric("EUR beschikbaar", f"{eur_av:,.2f}")
-k2.metric("Aantal assets > 0", f"{len(assets)}")
-ts = snapshot.get("timestamp", 0)
-if ts:
-    readable = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-else:
-    readable = "onbekend"
-k3.metric("Laatste snapshot", readable)
+        st.metric("EUR beschikbaar", f"€ {eur_available:,.2f}")
 
-st.divider()
+        st.subheader("Assets (alleen > 0)")
+        if assets:
+            st.dataframe(assets, use_container_width=True)
+        else:
+            st.write("Geen assets met saldo > 0 gevonden.")
 
-# Assets tabel
-st.subheader("Assets")
-if len(assets) == 0:
-    st.write("Geen assets (behalve EUR) gevonden.")
-else:
-    st.dataframe(assets, use_container_width=True)
+    except Exception as e:
+        st.error(f"Kan Bitvavo saldo niet ophalen: {e}")
 
 st.divider()
-
-# Debug sectie (uitklapbaar)
-with st.expander("🔍 Debug (handig bij fouten)"):
-    st.write("**Environment checks**")
-    st.write(f"API_KEY gezet: {'JA' if bool(API_KEY) else 'NEE'}")
-    st.write(f"API_SECRET gezet: {'JA' if bool(API_SECRET) else 'NEE'}")
-    st.write("**Ruwe snapshot JSON**")
-    st.json(snapshot)
+st.caption("Volgende stap: als dit werkt, koppelen we je monitoring/trade logs eronder.")
