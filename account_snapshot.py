@@ -11,20 +11,36 @@ import requests
 BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
 BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
 
-BASE_URL = "https://api.bitvavo.com/v2"
+# Let op: BASE_URL is ZONDER /v2
+BASE_URL = "https://api.bitvavo.com"
 
-DATA_DIR = os.path.join(os.getcwd(), "data")
+# Data map (netjes en stabiel op Render)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 SNAPSHOT_PATH = os.path.join(DATA_DIR, "account_snapshot.json")
 
 TIMEOUT = 10
 
 
 # ======================
-# AUTH
+# AUTH (signing)
 # ======================
 def _auth_headers(method: str, path: str, body: str = "") -> dict:
+    """
+    Kinderlijk simpel:
+    - method = "GET"
+    - path = "/v2/balance"  (BELANGRIJK: /v2 moet erin)
+    - body = "" bij GET
+    """
+    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+        raise RuntimeError("Missing BITVAVO_API_KEY or BITVAVO_API_SECRET in env vars")
+
+    method = method.upper()
     timestamp = str(int(time.time() * 1000))
+
+    # SIGNING: timestamp + method + path + body
     message = timestamp + method + path + body
+
     signature = hmac.new(
         BITVAVO_API_SECRET.encode(),
         message.encode(),
@@ -35,7 +51,8 @@ def _auth_headers(method: str, path: str, body: str = "") -> dict:
         "Bitvavo-Access-Key": BITVAVO_API_KEY,
         "Bitvavo-Access-Signature": signature,
         "Bitvavo-Access-Timestamp": timestamp,
-        "Content-Type": "application/json"
+        "Bitvavo-Access-Window": "10000",
+        "Content-Type": "application/json",
     }
 
 
@@ -43,7 +60,8 @@ def _auth_headers(method: str, path: str, body: str = "") -> dict:
 # API CALLS
 # ======================
 def get_balances():
-    path = "/balance"
+    # ✅ Belangrijk: path bevat /v2
+    path = "/v2/balance"
     url = BASE_URL + path
     headers = _auth_headers("GET", path)
 
@@ -56,8 +74,9 @@ def get_balances():
     assets = {}
 
     for item in data:
-        symbol = item["symbol"]
-        available = float(item["available"])
+        symbol = item.get("symbol")
+        available = float(item.get("available", "0") or 0)
+
         if symbol == "EUR":
             eur_available = available
         elif available > 0:
@@ -67,14 +86,16 @@ def get_balances():
 
 
 def get_open_orders_count():
-    path = "/ordersOpen"
+    # ✅ Ook hier: /v2 moet erin
+    path = "/v2/ordersOpen"
     url = BASE_URL + path
     headers = _auth_headers("GET", path)
 
     r = requests.get(url, headers=headers, timeout=TIMEOUT)
     r.raise_for_status()
 
-    return len(r.json())
+    data = r.json()
+    return len(data) if isinstance(data, list) else 0
 
 
 # ======================
@@ -88,7 +109,7 @@ def write_snapshot():
         "status": "OK",
         "eur_available": 0.0,
         "assets": {},
-        "open_orders": 0
+        "open_orders": 0,
     }
 
     try:
