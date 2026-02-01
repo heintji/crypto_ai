@@ -3,392 +3,367 @@ import json
 import time
 import hmac
 import hashlib
+from datetime import datetime, timezone
+
 import requests
-import streamlit as st
 import pandas as pd
-from datetime import datetime
+import streamlit as st
 
-# ============================================================
-# CONFIG (via Render Environment Variables)
-# ============================================================
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
 
+# =========================
+# Config
+# =========================
+API_KEY = os.getenv("BITVAVO_API_KEY", "")
+API_SECRET = os.getenv("BITVAVO_API_SECRET", "")
 SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
 
-# Optioneel (als je dit later koppelt)
-PAPER_TRADES_PATH = os.getenv("PAPER_TRADES_PATH", "/data/paper_trades.csv")
-PAPER_STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
-PENDING_APPROVALS_PATH = os.getenv("PENDING_APPROVALS_PATH", "/data/pending_approvals.json")
-BOT_LOG_PATH = os.getenv("BOT_LOG_PATH", "/data/bot_log.json")
-
 BASE_URL = "https://api.bitvavo.com/v2"
+ACCESS_WINDOW_MS = "10000"  # Bitvavo access window
 
-# ============================================================
-# STREAMLIT PAGE
-# ============================================================
-st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
-st.title("📊 Crypto AI Dashboard")
-st.caption("Live overzicht van saldo, assets, trades en bot-status (Render-proof)")
+# Files (Render disk/logs)
+PENDING_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
+PAPER_STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
+PAPER_TRADES_CSV = os.getenv("PAPER_TRADES_CSV", "/logs/paper_trades.csv")
+AI_USAGE_PATH = os.getenv("AI_USAGE_PATH", "/logs/ai_usage.json")
+PREBUY_STATE_PATH = os.getenv("PREBUY_STATE_PATH", "/logs/prebuy_state.json")
+PREBUY_PAYLOAD_PATH = os.getenv("PREBUY_PAYLOAD_PATH", "/logs/prebuy_payload.json")
 
-# ============================================================
-# HELPERS
-# ============================================================
-def now_ts():
-    return int(time.time())
 
-def fmt_dt(ts: int):
-    try:
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        return "-"
+# =========================
+# Helpers
+# =========================
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
+
+def ensure_parent_dir(path: str):
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
 
 def safe_read_json(path: str):
     try:
-        if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except Exception:
-        return None
-    return None
+        if not os.path.exists(path):
+            return None, f"Bestand niet gevonden: {path}"
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f), None
+    except Exception as e:
+        return None, f"JSON leesfout ({path}): {e}"
 
 def safe_read_csv(path: str):
     try:
-        if os.path.exists(path):
-            return pd.read_csv(path)
-    except Exception:
-        return None
-    return None
+        if not os.path.exists(path):
+            return None, f"CSV niet gevonden: {path}"
+        df = pd.read_csv(path)
+        return df, None
+    except Exception as e:
+        return None, f"CSV leesfout ({path}): {e}"
 
-def bitvavo_request(path: str):
+def file_meta(path: str):
+    if not os.path.exists(path):
+        return {"exists": False, "path": path}
+    stat = os.stat(path)
+    return {
+        "exists": True,
+        "path": path,
+        "size_kb": round(stat.st_size / 1024, 2),
+        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+    }
+
+def bitvavo_request(method: str, path: str, body: str = ""):
     """
-    GET-request naar Bitvavo v2 met HMAC signature.
+    Bitvavo private request:
+    headers:
+      Bitvavo-Access-Key
+      Bitvavo-Access-Signature
+      Bitvavo-Access-Timestamp
+      Bitvavo-Access-Window
+    signature = HMAC_SHA256(secret, timestamp + method + path + body)
+
+    NB: path is '/balance' etc. (BASE_URL bevat al '/v2')
     """
-    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
-        raise Exception("BITVAVO_API_KEY / BITVAVO_API_SECRET ontbreken in Render env.")
+    if not API_KEY or not API_SECRET:
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Render Environment.")
 
     timestamp = str(int(time.time() * 1000))
-    message = timestamp + "GET" + path
-
+    message = f"{timestamp}{method.upper()}{path}{body}"
     signature = hmac.new(
-        BITVAVO_API_SECRET.encode("utf-8"),
+        API_SECRET.encode("utf-8"),
         message.encode("utf-8"),
-        hashlib.sha256,
+        hashlib.sha256
     ).hexdigest()
 
     headers = {
-        "Bitvavo-Access-Key": BITVAVO_API_KEY,
+        "Bitvavo-Access-Key": API_KEY,
         "Bitvavo-Access-Signature": signature,
         "Bitvavo-Access-Timestamp": timestamp,
-        "Bitvavo-Access-Window": "10000",
+        "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
+        "Content-Type": "application/json",
     }
 
-    r = requests.get(BASE_URL + path, headers=headers, timeout=15)
-    r.raise_for_status()
+    url = f"{BASE_URL}{path}"
+    if method.upper() == "GET":
+        r = requests.get(url, headers=headers, timeout=20)
+    elif method.upper() == "POST":
+        r = requests.post(url, headers=headers, data=body, timeout=20)
+    else:
+        raise ValueError("Alleen GET/POST geïmplementeerd.")
+
+    if r.status_code >= 400:
+        # Geef zo veel mogelijk info terug (Bitvavo stuurt vaak JSON met errorCode)
+        try:
+            err = r.json()
+        except Exception:
+            err = {"error": r.text}
+        raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
+
     return r.json()
 
-def write_snapshot(path: str, balances):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def build_snapshot():
+    """
+    Haal balans op en schrijf snapshot naar Render Disk.
+    """
+    balances = bitvavo_request("GET", "/balance")
+
+    # Normalize: alleen assets > 0 tonen
+    assets = []
+    eur_available = 0.0
+    for row in balances:
+        symbol = row.get("symbol")
+        available = float(row.get("available", 0) or 0)
+        in_order = float(row.get("inOrder", 0) or 0)
+        total = available + in_order
+
+        if symbol == "EUR":
+            eur_available = available
+
+        if total > 0:
+            assets.append({
+                "symbol": symbol,
+                "available": available,
+                "inOrder": in_order,
+                "total": total
+            })
+
     snapshot = {
         "status": "OK",
-        "timestamp": now_ts(),
-        "balances": balances
+        "ts": now_iso(),
+        "eur_available": eur_available,
+        "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
     }
-    with open(path, "w", encoding="utf-8") as f:
+
+    ensure_parent_dir(SNAPSHOT_PATH)
+    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2)
 
-def compute_drawdown(equity_series: pd.Series):
-    """
-    equity_series: reeks met equity/saldo waarden
-    return: max drawdown in %
-    """
-    if equity_series is None or len(equity_series) < 2:
-        return None
-    peak = equity_series.cummax()
-    dd = (equity_series - peak) / peak
-    return float(dd.min() * 100)
+    return snapshot
 
-# ============================================================
-# LAYOUT: 3 tabs
-# ============================================================
-tab1, tab2, tab3 = st.tabs(["💶 Saldo & Assets", "📈 Trades & Performance", "🤖 Bot Status / Masterlijst"])
 
-# ============================================================
-# TAB 1: SALDO & ASSETS
-# ============================================================
-with tab1:
-    colA, colB = st.columns([2, 1])
+# =========================
+# UI
+# =========================
+st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
+st.title("📊 Crypto AI Dashboard")
+st.caption("Live overzicht van saldo, assets, trades, performance en bot-status (Render-proof)")
 
-    with colA:
+tabs = st.tabs(["💶 Saldo & Assets", "📈 Trades & Performance", "🧠 Bot Status / Masterlijst"])
+
+# =========================
+# TAB 1: Saldo & Assets
+# =========================
+with tabs[0]:
+    colL, colR = st.columns([2, 1])
+
+    with colL:
         st.subheader("Snapshot instellingen")
         st.write("Snapshot pad (Render Disk):")
-        st.code(SNAPSHOT_PATH)
+        st.code(SNAPSHOT_PATH, language="text")
 
-    with colB:
+        meta = file_meta(SNAPSHOT_PATH)
+        if meta["exists"]:
+            st.success(f"Snapshot gevonden ✅  | Laatst aangepast: {meta['modified']} | Grootte: {meta['size_kb']} KB")
+        else:
+            st.warning("Nog geen snapshot gevonden. Klik op **Snapshot (saldo) verversen**.")
+
+    with colR:
         st.subheader("Actie")
-        if st.button("🔄 Snapshot (saldo) verversen"):
+        if st.button("🔄 Snapshot (saldo) verversen", use_container_width=True):
             try:
-                balances = bitvavo_request("/balance")
-                write_snapshot(SNAPSHOT_PATH, balances)
-                st.success("Snapshot bijgewerkt ✅")
+                snap = build_snapshot()
+                st.success("Snapshot aangemaakt/ververst ✅")
+                st.json(snap)
             except Exception as e:
                 st.error(f"Snapshot fout: {e}")
 
-    snapshot = safe_read_json(SNAPSHOT_PATH)
+    snap, err = safe_read_json(SNAPSHOT_PATH)
+    st.divider()
 
-    if not snapshot:
-        st.warning("Nog geen snapshot gevonden. Klik op **Snapshot (saldo) verversen**.")
-        st.stop()
-
-    if snapshot.get("status") != "OK":
-        st.error(f"Snapshot status is niet OK: {snapshot}")
-        st.stop()
-
-    ts = snapshot.get("timestamp", 0)
-    balances = snapshot.get("balances", [])
-
-    st.success(f"✅ Snapshot geladen (laatste update: {fmt_dt(ts)})")
-
-    # balances -> dataframe
-    rows = []
-    for b in balances:
-        try:
-            available = float(b.get("available", 0))
-            in_order = float(b.get("inOrder", 0))
-            total = available + in_order
-            if total > 0:
-                rows.append({
-                    "symbol": b.get("symbol", "-"),
-                    "available": available,
-                    "inOrder": in_order,
-                    "total": total
-                })
-        except Exception:
-            continue
-
-    df_assets = pd.DataFrame(rows)
-
-    # EUR metric
-    eur_total = 0.0
-    if not df_assets.empty and "symbol" in df_assets.columns:
-        eur_row = df_assets[df_assets["symbol"] == "EUR"]
-        if not eur_row.empty:
-            eur_total = float(eur_row["total"].iloc[0])
-
-    st.metric("💶 EUR beschikbaar", f"€ {eur_total:,.2f}")
-
-    st.subheader("Assets (alleen > 0)")
-    st.dataframe(df_assets, use_container_width=True)
-
-    st.subheader("📊 Assetverdeling (%)")
-    if not df_assets.empty:
-        df_assets["percentage"] = (df_assets["total"] / df_assets["total"].sum()) * 100
-        chart_df = df_assets.set_index("symbol")["percentage"]
-        st.bar_chart(chart_df)
+    if err:
+        st.warning(err)
     else:
-        st.info("Geen assets gevonden (>0).")
+        if snap and snap.get("status") == "OK":
+            st.success("Bitvavo saldo opgehaald ✅")
+            st.metric("EUR beschikbaar", f"€ {snap.get('eur_available', 0):.2f}")
 
-# ============================================================
-# TAB 2: TRADES & PERFORMANCE
-# ============================================================
-with tab2:
-    st.subheader("Trade history (paper trades)")
-
-    st.write("Pad paper_trades.csv:")
-    st.code(PAPER_TRADES_PATH)
-
-    trades_df = safe_read_csv(PAPER_TRADES_PATH)
-
-    if trades_df is None:
-        st.warning("paper_trades.csv niet gevonden. (Nog geen trades gelogd of pad klopt niet.)")
-        st.info("Tip: Zorg dat paper_trader.py trades naar /data/paper_trades.csv schrijft (Render Disk).")
-    else:
-        st.success(f"✅ Trades geladen: {len(trades_df)} rijen")
-
-        st.dataframe(trades_df, use_container_width=True)
-
-        # ---------- Basic normalisatie (werkt met verschillende kolomnamen) ----------
-        # We proberen generiek te zijn. Als je kolommen anders heten, werkt het alsnog zo goed mogelijk.
-        # Verwachte kolommen (voorbeeld): timestamp, symbol, side, price, qty, pnl, r_multiple, balance
-        # Maar we checken veilig.
-
-        # Timestamp -> datetime
-        if "timestamp" in trades_df.columns:
-            try:
-                trades_df["dt"] = pd.to_datetime(trades_df["timestamp"], unit="s", errors="coerce")
-            except Exception:
-                trades_df["dt"] = pd.to_datetime(trades_df["timestamp"], errors="coerce")
-        elif "time" in trades_df.columns:
-            trades_df["dt"] = pd.to_datetime(trades_df["time"], errors="coerce")
+            assets = snap.get("assets", [])
+            if assets:
+                df_assets = pd.DataFrame(assets)
+                st.subheader("Assets (alleen > 0)")
+                st.dataframe(df_assets, use_container_width=True, hide_index=True)
+            else:
+                st.info("Geen assets gevonden (of alles is 0).")
         else:
-            trades_df["dt"] = pd.NaT
+            st.warning("Snapshot bestaat, maar status is niet OK.")
 
-        # KPI’s: PnL kolom zoeken
+    st.info(
+        "Let op: als je in je browser naar `https://api.bitvavo.com/v2/balance` gaat, krijg je altijd een auth-fout. "
+        "Dat is normaal — private endpoints werken alleen met headers/signature vanuit je code."
+    )
+
+# =========================
+# TAB 2: Trades & Performance
+# =========================
+with tabs[1]:
+    st.subheader("Trades & Performance (Paper)")
+    df_trades, err = safe_read_csv(PAPER_TRADES_CSV)
+
+    left, right = st.columns([2, 1])
+
+    with right:
+        st.write("Bronbestand:")
+        st.code(PAPER_TRADES_CSV, language="text")
+        meta = file_meta(PAPER_TRADES_CSV)
+        if meta["exists"]:
+            st.success(f"Trades CSV gevonden ✅ | Laatst aangepast: {meta['modified']}")
+        else:
+            st.warning("Trades CSV bestaat nog niet. Zodra je paper_trader trades logt, komt dit vanzelf.")
+
+    if err:
+        st.warning(err)
+    else:
+        # Verwachte kolommen (jouw CSV kan anders heten; we vangen dat netjes op)
+        st.dataframe(df_trades.tail(50), use_container_width=True)
+
+        # Probeer basis-metrics te berekenen met tolerant gedrag
+        cols = [c.lower() for c in df_trades.columns]
+        colmap = {c.lower(): c for c in df_trades.columns}
+
+        # Zoek handige kolommen
         pnl_col = None
-        for c in ["pnl", "PnL", "profit", "profit_eur"]:
-            if c in trades_df.columns:
-                pnl_col = c
+        for candidate in ["pnl", "profit", "pnl_eur", "pnl_usdt"]:
+            if candidate in cols:
+                pnl_col = colmap[candidate]
                 break
 
-        # Balance kolom zoeken
-        balance_col = None
-        for c in ["balance", "Balance", "equity", "eur_balance"]:
-            if c in trades_df.columns:
-                balance_col = c
+        ts_col = None
+        for candidate in ["timestamp", "time", "ts", "date"]:
+            if candidate in cols:
+                ts_col = colmap[candidate]
                 break
 
-        # R multiple kolom zoeken
-        r_col = None
-        for c in ["r_multiple", "R", "r", "r_mult"]:
-            if c in trades_df.columns:
-                r_col = c
-                break
-
-        # Side kolom zoeken
-        side_col = None
-        for c in ["side", "action", "type"]:
-            if c in trades_df.columns:
-                side_col = c
-                break
-
-        # ---------- Performance blok ----------
-        st.subheader("📌 Performance (wat kan op basis van je CSV)")
-
-        total_trades = len(trades_df)
-        total_pnl = None
-        winrate = None
-        avg_r = None
-        max_dd = None
-
+        # Netto PnL & winrate
         if pnl_col:
-            try:
-                pnl_series = pd.to_numeric(trades_df[pnl_col], errors="coerce").fillna(0.0)
-                total_pnl = float(pnl_series.sum())
-                wins = (pnl_series > 0).sum()
-                losses = (pnl_series <= 0).sum()
-                if (wins + losses) > 0:
-                    winrate = (wins / (wins + losses)) * 100
-            except Exception:
-                pass
+            pnl_series = pd.to_numeric(df_trades[pnl_col], errors="coerce").fillna(0)
+            total_pnl = float(pnl_series.sum())
+            wins = int((pnl_series > 0).sum())
+            losses = int((pnl_series < 0).sum())
+            n = int(len(pnl_series))
+            winrate = (wins / n * 100) if n else 0.0
 
-        if r_col:
-            try:
-                r_series = pd.to_numeric(trades_df[r_col], errors="coerce").dropna()
-                if len(r_series) > 0:
-                    avg_r = float(r_series.mean())
-            except Exception:
-                pass
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Totaal PnL", f"{total_pnl:.2f}")
+            c2.metric("Trades", f"{n}")
+            c3.metric("Winrate", f"{winrate:.1f}%")
+            c4.metric("W/L", f"{wins}/{losses}")
 
-        if balance_col:
-            try:
-                eq = pd.to_numeric(trades_df[balance_col], errors="coerce").dropna()
-                if len(eq) > 1:
-                    max_dd = compute_drawdown(eq)
-            except Exception:
-                pass
+            # Equity curve (cumulatieve PnL)
+            equity = pnl_series.cumsum()
+            st.subheader("Equity curve (cumulatieve PnL)")
+            st.line_chart(equity)
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Trades", f"{total_trades}")
-        c2.metric("Totaal PnL", "-" if total_pnl is None else f"{total_pnl:,.2f}")
-        c3.metric("Winrate", "-" if winrate is None else f"{winrate:.1f}%")
-        c4.metric("Max drawdown", "-" if max_dd is None else f"{max_dd:.1f}%")
-
-        # ---------- Grafieken ----------
-        st.subheader("📈 Grafieken")
-
-        if balance_col:
-            try:
-                eq_df = trades_df[[balance_col]].copy()
-                eq_df[balance_col] = pd.to_numeric(eq_df[balance_col], errors="coerce")
-                eq_df = eq_df.dropna()
-                if len(eq_df) > 1:
-                    st.write("Equity curve (saldo over tijd)")
-                    st.line_chart(eq_df[balance_col])
-            except Exception:
-                st.info("Equity curve kan niet worden gemaakt (balance kolom niet bruikbaar).")
+            # Daily PnL (als er timestamps zijn)
+            if ts_col:
+                try:
+                    tmp = df_trades.copy()
+                    tmp["_ts"] = pd.to_datetime(tmp[ts_col], errors="coerce", utc=True)
+                    tmp["_date"] = tmp["_ts"].dt.date
+                    daily = tmp.groupby("_date")[pnl_col].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
+                    st.subheader("Daily PnL")
+                    st.line_chart(daily)
+                except Exception:
+                    st.info("Daily PnL kon niet opgebouwd worden (timestamp formaat wijkt af).")
         else:
-            st.info("Geen balance/equity kolom gevonden in je CSV → equity curve kan nog niet.")
+            st.info(
+                "Ik kan nog geen PnL grafieken maken, omdat je CSV geen herkenbare PnL kolom heeft. "
+                "Tip: zorg dat `paper_trades.csv` een kolom heeft zoals `pnl` of `profit`."
+            )
 
-        if pnl_col:
-            try:
-                pnl_series = pd.to_numeric(trades_df[pnl_col], errors="coerce").fillna(0.0)
-                st.write("PnL per trade")
-                st.bar_chart(pnl_series)
-            except Exception:
-                st.info("PnL chart kan niet worden gemaakt.")
-        else:
-            st.info("Geen pnl kolom gevonden → PnL grafiek kan nog niet.")
+# =========================
+# TAB 3: Bot Status / Masterlijst
+# =========================
+with tabs[2]:
+    st.subheader("Bot Status / Masterlijst (wat we willen zien + of het al werkt)")
 
-# ============================================================
-# TAB 3: BOT STATUS / MASTERLIJST
-# ============================================================
-with tab3:
-    st.subheader("🤖 Bot status (health & bestanden)")
-
-    # Snel overzicht: bestaan bestanden?
-    checks = [
-        ("Snapshot", SNAPSHOT_PATH),
-        ("Paper trades", PAPER_TRADES_PATH),
-        ("Paper state", PAPER_STATE_PATH),
-        ("Pending approvals", PENDING_APPROVALS_PATH),
-        ("Bot log", BOT_LOG_PATH),
-    ]
-
-    check_rows = []
-    for name, path in checks:
-        check_rows.append({
-            "item": name,
-            "path": path,
-            "exists": "✅" if os.path.exists(path) else "❌"
-        })
-
-    st.dataframe(pd.DataFrame(check_rows), use_container_width=True)
-
-    st.subheader("📌 Masterlijst (wat we willen meten & tonen)")
-    st.write("""
-Hier is jouw **masterlijst** die we stap voor stap in dit dashboard gaan vullen (grafieken + tabellen):
-
-### A) Account & Portfolio
-- EUR beschikbaar + total account value
-- Asset verdeling (%) + ontwikkeling over tijd
-- Open orders (als je die later toevoegt)
-- Fees betaald (per week/maand)
-
-### B) Signals (Pre-BUY)
-- Aantal Pre-BUY’s per dag/week
-- Score verdeling (70-79 / 80-89 / 90+)
-- Welke coins komen het meest terug
-- Conversion rate: Pre-BUY → YES → BUY (in %)
-
-### C) Trades (paper/real)
-- Open trades vs gesloten trades
-- Entry/stop/target per trade
-- R-multiple per trade (R-resultaat)
-- Partial sells (40% / 60% / 100%) status
-
-### D) Performance KPI’s
-- Winrate (%)
-- Profit factor
-- Average R
-- Max drawdown
-- Equity curve
-- Best/worst coin
-- Best/worst timeframe (4h setups)
-
-### E) Execution & Monitoring
-- Bot uptime/status (OK/ERROR)
-- Laatste run multi_coin_score
-- Laatste run trade_monitor
-- Laatste WhatsApp approval binnen
-- Error log (laatste 20 errors)
-
-### F) Learning layer (jouw roadmap)
-- WHY-tags per trade
-- Decision vs system comparison
-- MFE/MAE tracking
-- Timing metrics
-- Context labels
-- Weekly report snapshot
+    st.markdown("""
+**Dit is de masterlijst die jij wilde (dashboard moet dit uiteindelijk allemaal kunnen tonen):**
+- ✅ **Saldo & Assets** (Bitvavo snapshot)
+- ✅ **Pending approvals** (Pre-BUY wachtrij + expiry + gekozen bedrag)
+- ✅ **Open posities** (paper_state / live later)
+- ✅ **Trades history** (paper_trades.csv)
+- ✅ **Performance metrics** (PnL, winrate, equity, drawdown, streaks)
+- ✅ **Bot health** (laatste run per service/script + errors)
+- ✅ **AI usage** (calls per dag/maand + kosten-guardrails)
+- ✅ **Signal kwaliteit** (scores, welke methode/filters, hitrate per score-band)
+- ✅ **R-metrics** (R bij exit, partials 40/60, STRUCTUUR-MODE activaties)
+- ✅ **Shadow trades** (later stap: alles loggen ook als je ‘NO’ zegt)
+- ✅ **Weekly reporting** (later stap: weekoverzicht + learnings)
 """)
 
-    st.info("Zodra de bestanden/CSV’s bestaan, kunnen we elk blok 1 voor 1 aanzetten en visualiseren.")
+    st.write("### Bestandsstatus (Render Disk + logs)")
+    paths = [
+        ("Snapshot (Bitvavo)", SNAPSHOT_PATH),
+        ("Pending approvals", PENDING_PATH),
+        ("Paper state", PAPER_STATE_PATH),
+        ("Paper trades CSV", PAPER_TRADES_CSV),
+        ("AI usage", AI_USAGE_PATH),
+        ("Prebuy state", PREBUY_STATE_PATH),
+        ("Prebuy payload", PREBUY_PAYLOAD_PATH),
+    ]
+
+    status_rows = []
+    for name, p in paths:
+        m = file_meta(p)
+        status_rows.append({
+            "item": name,
+            "exists": m.get("exists", False),
+            "path": p,
+            "modified": m.get("modified", ""),
+            "size_kb": m.get("size_kb", ""),
+        })
+    st.dataframe(pd.DataFrame(status_rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # Pending approvals preview
+    st.write("### Pending approvals (preview)")
+    pending, err = safe_read_json(PENDING_PATH)
+    if err:
+        st.info(err)
+    else:
+        # pending kan dict of list zijn, we tonen netjes
+        st.json(pending)
+
+    st.write("### Paper state (preview)")
+    pstate, err = safe_read_json(PAPER_STATE_PATH)
+    if err:
+        st.info(err)
+    else:
+        st.json(pstate)
+
+    st.write("### AI usage (preview)")
+    aiu, err = safe_read_json(AI_USAGE_PATH)
+    if err:
+        st.info(err)
+    else:
+        st.json(aiu)
+
+    st.success("👉 Dit tabblad is jouw controlepaneel: je ziet direct welke onderdelen al data wegschrijven en welke nog leeg zijn.")
