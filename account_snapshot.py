@@ -6,15 +6,16 @@ import hashlib
 import requests
 
 # ======================
-# CONFIG
+# CONFIG (kinderlijk simpel)
 # ======================
+# Deze 2 komen uit Render Environment Variables
 BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
 BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
 
-# Let op: BASE_URL is ZONDER /v2
+# Bitvavo base URL (ZONDER /v2)
 BASE_URL = "https://api.bitvavo.com"
 
-# Data map (netjes en stabiel op Render)
+# Opslaan in ./data/account_snapshot.json naast dit bestand
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 SNAPSHOT_PATH = os.path.join(DATA_DIR, "account_snapshot.json")
@@ -23,14 +24,13 @@ TIMEOUT = 10
 
 
 # ======================
-# AUTH (signing)
+# AUTH (SIGNING)
 # ======================
 def _auth_headers(method: str, path: str, body: str = "") -> dict:
     """
-    Kinderlijk simpel:
-    - method = "GET"
-    - path = "/v2/balance"  (BELANGRIJK: /v2 moet erin)
-    - body = "" bij GET
+    BELANGRIJK:
+    - path moet '/v2/...' zijn
+    - signing message = timestamp + method + path + body
     """
     if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
         raise RuntimeError("Missing BITVAVO_API_KEY or BITVAVO_API_SECRET in env vars")
@@ -38,7 +38,6 @@ def _auth_headers(method: str, path: str, body: str = "") -> dict:
     method = method.upper()
     timestamp = str(int(time.time() * 1000))
 
-    # SIGNING: timestamp + method + path + body
     message = timestamp + method + path + body
 
     signature = hmac.new(
@@ -60,7 +59,7 @@ def _auth_headers(method: str, path: str, body: str = "") -> dict:
 # API CALLS
 # ======================
 def get_balances():
-    # ✅ Belangrijk: path bevat /v2
+    # ✅ Hier zat jouw fout eerder: '/v2' moet in de path staan
     path = "/v2/balance"
     url = BASE_URL + path
     headers = _auth_headers("GET", path)
@@ -86,7 +85,6 @@ def get_balances():
 
 
 def get_open_orders_count():
-    # ✅ Ook hier: /v2 moet erin
     path = "/v2/ordersOpen"
     url = BASE_URL + path
     headers = _auth_headers("GET", path)
@@ -94,8 +92,8 @@ def get_open_orders_count():
     r = requests.get(url, headers=headers, timeout=TIMEOUT)
     r.raise_for_status()
 
-    data = r.json()
-    return len(data) if isinstance(data, list) else 0
+    orders = r.json()
+    return len(orders) if isinstance(orders, list) else 0
 
 
 # ======================
@@ -109,7 +107,7 @@ def write_snapshot():
         "status": "OK",
         "eur_available": 0.0,
         "assets": {},
-        "open_orders": 0,
+        "open_orders": 0
     }
 
     try:
