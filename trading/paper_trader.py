@@ -7,18 +7,27 @@ from typing import Any, Dict, List, Optional
 import requests
 
 # =========================================
-# PATHS (altijd correct, ook vanuit andere map)
+# RENDER DISK PATHS (belangrijk!)
 # =========================================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Op Render is /data de enige plek die blijft bestaan.
+# Dashboard leest ook uit /data.
+STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
+APPROVALS_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
+LOG_PATH = os.getenv("PAPER_TRADES_CSV", "/data/paper_trades.csv")
 
-LOG_PATH = os.path.join(PROJECT_ROOT, "logs", "paper_trades.csv")
-STATE_PATH = os.path.join(PROJECT_ROOT, "data", "paper_state.json")
-APPROVALS_PATH = os.path.join(PROJECT_ROOT, "data", "pending_approvals.json")
-
-START_BALANCE = 1000.0
+START_BALANCE = float(os.getenv("START_BALANCE", "1000.0"))
 
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 HTTP_TIMEOUT = 15
+
+
+# =========================================
+# Helpers
+# =========================================
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
 
 
 # =========================================
@@ -31,6 +40,7 @@ def twilio_ready() -> bool:
         os.getenv("TWILIO_WHATSAPP_FROM"),
         os.getenv("TWILIO_WHATSAPP_TO"),
     ])
+
 
 def send_whatsapp(message: str) -> bool:
     """
@@ -93,12 +103,11 @@ def load_state() -> Dict[str, Any]:
     s.setdefault("balance", base["balance"])
     s.setdefault("positions", base["positions"])
     s.setdefault("open_trades", base["open_trades"])
-
     return s
 
 
 def save_state(state: Dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(STATE_PATH), exist_ok=True)
+    ensure_parent_dir(STATE_PATH)
     tmp = STATE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
@@ -122,27 +131,30 @@ def load_approvals() -> List[Dict[str, Any]]:
         return []
     try:
         with open(APPROVALS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, list) else []
     except Exception:
         return []
 
 
 def save_approvals(data: List[Dict[str, Any]]) -> None:
-    os.makedirs(os.path.dirname(APPROVALS_PATH), exist_ok=True)
-    with open(APPROVALS_PATH, "w", encoding="utf-8") as f:
+    ensure_parent_dir(APPROVALS_PATH)
+    tmp = APPROVALS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+    os.replace(tmp, APPROVALS_PATH)
 
 
 def consume_approval(prebuy_id: str) -> bool:
     """
-    🔐 VERWIJDERT approval DEFINITIEF na BUY
+    🔐 Verwijdert approval definitief na BUY
     → voorkomt dubbele trades na restart
     """
     approvals = load_approvals()
-    new_list = []
-    consumed = False
-
     now = int(time.time())
+
+    new_list: List[Dict[str, Any]] = []
+    consumed = False
 
     for a in approvals:
         if a.get("id") == prebuy_id:
@@ -161,10 +173,18 @@ def consume_approval(prebuy_id: str) -> bool:
 
 
 # =========================================
-# LOGGING
+# LOGGING (CSV)
 # =========================================
-def log_trade(symbol: str, side: str, price: float, qty: float, balance: float, pnl: float = 0.0, meta: str = "") -> None:
-    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+def log_trade(
+    symbol: str,
+    side: str,
+    price: float,
+    qty: float,
+    balance: float,
+    pnl: float = 0.0,
+    meta: str = ""
+) -> None:
+    ensure_parent_dir(LOG_PATH)
     exists = os.path.isfile(LOG_PATH)
 
     with open(LOG_PATH, "a", encoding="utf-8") as f:
@@ -229,9 +249,8 @@ def buy_eur(
     save_state(state)
     log_trade(symbol, "BUY", price, qty, state["balance"], meta=f"prebuy={prebuy_id}")
 
-    print(f"✅ BUY OK | {symbol} €{amount_eur:.2f} | price={price:.6f}")
+    print(f"✅ BUY OK | {symbol} €{amount_eur:.2f} | price={price:.6f}", flush=True)
 
-    # ✅ WhatsApp BUY bevestiging (wat jij wilde)
     msg = (
         f"✅ BUY uitgevoerd ({symbol})\n"
         f"Inzet: €{amount_eur:.2f}\n"
@@ -283,17 +302,17 @@ def sell(symbol: str, fraction: float = 1.0) -> Dict[str, Any]:
     if qty_left <= 1e-12:
         positions.pop(symbol, None)
         positions.pop(f"{symbol}_entry", None)
-        state["open_trades"] = [t for t in open_trades if t["symbol"] != symbol]
+        state["open_trades"] = [t for t in open_trades if t.get("symbol") != symbol]
     else:
         positions[symbol] = qty_left
         for t in open_trades:
-            if t["symbol"] == symbol:
+            if t.get("symbol") == symbol:
                 t["qty"] = qty_left
 
     save_state(state)
     log_trade(symbol, "SELL", price, qty_sell, state["balance"], pnl=pnl, meta=f"fraction={fraction}")
 
-    print(f"💰 SELL | {symbol} {fraction*100:.0f}% | pnl={pnl:.2f}")
+    print(f"💰 SELL | {symbol} {fraction*100:.0f}% | pnl={pnl:.2f}", flush=True)
 
     return {
         "ok": True,
@@ -307,5 +326,7 @@ def sell(symbol: str, fraction: float = 1.0) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    print("✅ paper_trader klaar")
-    print(f"Balance: €{get_balance():.2f}")
+    print("✅ paper_trader klaar", flush=True)
+    print(f"STATE_PATH: {STATE_PATH}", flush=True)
+    print(f"LOG_PATH:   {LOG_PATH}", flush=True)
+    print(f"Balance: €{get_balance():.2f}", flush=True)
