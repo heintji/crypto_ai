@@ -7,6 +7,7 @@ import requests
 
 # =========================
 # ✅ Project-root fix (imports werken altijd)
+# trade_monitor.py staat in project-root
 # =========================
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
@@ -15,11 +16,12 @@ if PROJECT_ROOT not in sys.path:
 from trading.paper_trader import sell  # noqa: E402
 
 # =========================
-# ✅ Absolute paths (Render-proof)
+# ✅ Render Disk paths (belangrijk!)
 # =========================
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
-STATE_PATH = os.path.join(DATA_DIR, "paper_state.json")
+STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
+
+# lock file voor force exit test (ook op /data)
+FORCE_EXIT_LOCK_PATH = os.getenv("FORCE_EXIT_LOCK_PATH", "/data/force_test_exit.lock")
 
 # =========================
 # Binance endpoints
@@ -33,28 +35,22 @@ STRUCT_INTERVAL = "1h"
 STRUCT_LIMIT = 50
 
 # Hoe vaak monitor draait (voor info/logging)
-DEFAULT_SLEEP_SECONDS = 30 * 60  # 30 min
+DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
 
 # =========================
 # ✅ FORCE EXIT (1x veilig testen)
 # =========================
 FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
-FORCE_EXIT_LOCK_PATH = os.path.join(DATA_DIR, "force_test_exit.lock")
 
 # =========================
-# WhatsApp (Twilio)
-# LET OP: gebruikt NU de juiste env keys:
-#   TWILIO_ACCOUNT_SID
-#   TWILIO_AUTH_TOKEN
-#   WHATSAPP_FROM
-#   WHATSAPP_TO
+# WhatsApp (Twilio) — zelfde keys als paper_trader ✅
 # =========================
 def twilio_ready() -> bool:
     return all([
         os.getenv("TWILIO_ACCOUNT_SID"),
         os.getenv("TWILIO_AUTH_TOKEN"),
-        os.getenv("WHATSAPP_FROM"),
-        os.getenv("WHATSAPP_TO"),
+        os.getenv("TWILIO_WHATSAPP_FROM"),
+        os.getenv("TWILIO_WHATSAPP_TO"),
     ])
 
 def send_whatsapp(message: str) -> bool:
@@ -62,13 +58,13 @@ def send_whatsapp(message: str) -> bool:
     Stuurt WhatsApp bericht via Twilio. Als env vars ontbreken: log + skip.
     """
     if not twilio_ready():
-        _print("📭 WhatsApp melding overgeslagen (Twilio/WhatsApp env vars ontbreken).")
+        _print("📭 WhatsApp melding overgeslagen (Twilio env vars ontbreken).")
         return False
 
     sid = os.getenv("TWILIO_ACCOUNT_SID")
     token = os.getenv("TWILIO_AUTH_TOKEN")
-    wa_from = os.getenv("WHATSAPP_FROM")
-    wa_to = os.getenv("WHATSAPP_TO")
+    wa_from = os.getenv("TWILIO_WHATSAPP_FROM")
+    wa_to = os.getenv("TWILIO_WHATSAPP_TO")
 
     url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
     data = {"From": wa_from, "To": wa_to, "Body": message}
@@ -86,25 +82,32 @@ def send_whatsapp(message: str) -> bool:
 # =========================
 # Helpers
 # =========================
-def _ensure_dirs():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    os.makedirs(LOGS_DIR, exist_ok=True)
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
 
 def load_state() -> Dict[str, Any]:
-    _ensure_dirs()
+    ensure_parent_dir(STATE_PATH)
     if not os.path.isfile(STATE_PATH):
         return {"balance": 1000.0, "positions": {}, "open_trades": []}
-    with open(STATE_PATH, "r", encoding="utf-8") as f:
-        s = json.load(f)
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            s = json.load(f)
+    except Exception:
+        return {"balance": 1000.0, "positions": {}, "open_trades": []}
+
     s.setdefault("balance", 1000.0)
     s.setdefault("positions", {})
     s.setdefault("open_trades", [])
     return s
 
-def save_state(state: Dict[str, Any]):
-    _ensure_dirs()
-    with open(STATE_PATH, "w", encoding="utf-8") as f:
+def save_state(state: Dict[str, Any]) -> None:
+    ensure_parent_dir(STATE_PATH)
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, STATE_PATH)
 
 def get_price(symbol: str) -> float:
     r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
@@ -180,12 +183,11 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     Forceer 1x SELL 100% van de eerste open trade (veilig), puur om exit-meldingen te testen.
     - Alleen als FORCE_TEST_EXIT aanstaat
     - Gebruikt lock-file zodat het niet blijft herhalen
-    Return True als er een forced exit is uitgevoerd (en we dus kunnen stoppen).
     """
     if not FORCE_TEST_EXIT:
         return False
 
-    _ensure_dirs()
+    ensure_parent_dir(FORCE_EXIT_LOCK_PATH)
 
     if os.path.exists(FORCE_EXIT_LOCK_PATH):
         _print("FORCE_TEST_EXIT=ON maar lock bestaat al → geen tweede forced exit.")
@@ -212,7 +214,6 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
         _print(f"FORCE_TEST_EXIT: geen positie gevonden voor {symbol} (qty<=0).")
         return False
 
-    # Pak huidige prijs (voor melding/R)
     try:
         price = get_price(symbol)
     except Exception as e:
@@ -222,15 +223,12 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
-
     sell_res = sell(symbol, 1.0)
 
-    # Markeer trade als gesloten in state (audit-proof)
     trade["status"] = "CLOSED"
     trade["closed_reason"] = "FORCE_TEST_EXIT"
     trade["closed_at"] = now_ts()
 
-    # WhatsApp melding (close)
     _send_sell_close_message(
         symbol=symbol,
         reason="FORCE TEST EXIT (debug)",
@@ -241,11 +239,9 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
         sell_result=sell_res,
     )
 
-    # Verwijder trade uit open_trades + save
     state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") != symbol]
     save_state(state)
 
-    # Lock file zetten (zodat het 1x blijft)
     with open(FORCE_EXIT_LOCK_PATH, "w", encoding="utf-8") as f:
         f.write(str(now_ts()))
 
@@ -271,7 +267,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     price = float(test_price) if test_price is not None else get_price(symbol)
     r = calc_r_multiple(price, entry, stop_loss)
 
-    # Init velden (stateful logic)
     trade.setdefault("mode", "NORMAL")  # NORMAL / STRUCTUUR
     trade.setdefault("status", "OPEN")
     trade.setdefault("max_r", 0.0)
@@ -281,14 +276,13 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     trade.setdefault("target_reached_notified", False)
     trade.setdefault("last_check", now_ts())
 
-    # Update max_r / flags
     trade["max_r"] = max(float(trade.get("max_r", 0.0)), r)
     if r >= 1.0:
         trade["had_over_1r"] = True
 
     _print(f"📊 {symbol} | price={price:.6f} | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
-    # ====== RULE 1: Stop-loss vóór 1R => SELL 100%
+    # RULE 1: Stop-loss vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
         sell_res = sell(symbol, 1.0)
@@ -308,7 +302,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         )
         return True
 
-    # ====== BONUS ROUTE: target reached => send message + STRUCTUUR-MODE
+    # BONUS ROUTE: target reached => message + STRUCTUUR-MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -323,7 +317,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             f"Mode: STRUCTUUR-MODE"
         )
 
-    # ====== STRUCTUUR-MODE: follow higher lows; first lower low => SELL 100%
+    # STRUCTUUR-MODE
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows = get_klines_lows(symbol)
@@ -363,13 +357,13 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # ====== RULE 2: als >1R -> wachten
+    # RULE 2: als >1R -> wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
         return False
 
-    # ====== RULE 3: na >1R, zakt hij <1R -> SELL 40%
+    # RULE 3: na >1R, zakt hij <1R -> SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
         sell(symbol, 0.40)
@@ -378,7 +372,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # ====== RULE 4: als 3 checks onder 1R blijven -> SELL remaining (rest sluiten)
+    # RULE 4: 3 checks onder 1R -> SELL rest
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
@@ -413,24 +407,22 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
     state = load_state()
 
     # ✅ FORCE EXIT check (1x)
-    # Als dit True teruggeeft, dan is forced exit uitgevoerd en stoppen we voor deze run.
     if _force_exit_once_if_enabled(state):
         return
 
-    open_trades = state.get("open_trades", [])
-
+    open_trades = state.get("open_trades", []) or []
     if not open_trades:
         _print("ℹ️ Geen open_trades gevonden. Niets te monitoren.")
         return
 
-    closed_symbols = []
+    closed_symbols: List[str] = []
 
     for trade in list(open_trades):
         symbol = trade.get("symbol")
         if only_symbol and symbol != only_symbol:
             continue
 
-        positions = state.get("positions", {})
+        positions = state.get("positions", {}) or {}
         if float(positions.get(symbol, 0.0)) <= 0:
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "NO_POSITION_FOUND"
