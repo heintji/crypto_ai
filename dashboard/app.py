@@ -13,20 +13,26 @@ import streamlit as st
 # =========================
 # Config
 # =========================
-API_KEY = os.getenv("BITVAVO_API_KEY", "")
-API_SECRET = os.getenv("BITVAVO_API_SECRET", "")
+# Strip voorkomt fouten door spaties/quotes in Render env vars
+API_KEY = (os.getenv("BITVAVO_API_KEY", "") or "").strip().strip('"').strip("'")
+API_SECRET = (os.getenv("BITVAVO_API_SECRET", "") or "").strip().strip('"').strip("'")
+
+# ✅ Render Disk snapshot path
 SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
 
-BASE_URL = "https://api.bitvavo.com/v2"
+# ✅ Bitvavo base URL ZONDER /v2
+BASE_URL = "https://api.bitvavo.com"
 ACCESS_WINDOW_MS = "10000"  # Bitvavo access window
 
-# Files (Render disk/logs)
+# ✅ Files (Render disk)
 PENDING_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
 PAPER_STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
-PAPER_TRADES_CSV = os.getenv("PAPER_TRADES_CSV", "/logs/paper_trades.csv")
-AI_USAGE_PATH = os.getenv("AI_USAGE_PATH", "/logs/ai_usage.json")
-PREBUY_STATE_PATH = os.getenv("PREBUY_STATE_PATH", "/logs/prebuy_state.json")
-PREBUY_PAYLOAD_PATH = os.getenv("PREBUY_PAYLOAD_PATH", "/logs/prebuy_payload.json")
+
+# 🚨 FIX: trades/logs ook op /data (persistent)
+PAPER_TRADES_CSV = os.getenv("PAPER_TRADES_CSV", "/data/paper_trades.csv")
+AI_USAGE_PATH = os.getenv("AI_USAGE_PATH", "/data/ai_usage.json")
+PREBUY_STATE_PATH = os.getenv("PREBUY_STATE_PATH", "/data/prebuy_state.json")
+PREBUY_PAYLOAD_PATH = os.getenv("PREBUY_PAYLOAD_PATH", "/data/prebuy_payload.json")
 
 
 # =========================
@@ -69,23 +75,28 @@ def file_meta(path: str):
         "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
     }
 
+
+# =========================
+# Bitvavo Private Request (SIGNING)
+# =========================
 def bitvavo_request(method: str, path: str, body: str = ""):
     """
     Bitvavo private request:
-    headers:
-      Bitvavo-Access-Key
-      Bitvavo-Access-Signature
-      Bitvavo-Access-Timestamp
-      Bitvavo-Access-Window
-    signature = HMAC_SHA256(secret, timestamp + method + path + body)
+    signature = HMAC_SHA256(secret, timestamp + METHOD + path + body)
 
-    NB: path is '/balance' etc. (BASE_URL bevat al '/v2')
+    ✅ path moet exact zijn, inclusief /v2
+    Voorbeeld: path = "/v2/balance"
     """
     if not API_KEY or not API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Render Environment.")
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Render Environment Variables.")
 
+    method_u = method.upper()
     timestamp = str(int(time.time() * 1000))
-    message = f"{timestamp}{method.upper()}{path}{body}"
+
+    # GET -> body altijd "" (leeg)
+    body = body or ""
+
+    message = f"{timestamp}{method_u}{path}{body}"
     signature = hmac.new(
         API_SECRET.encode("utf-8"),
         message.encode("utf-8"),
@@ -101,15 +112,15 @@ def bitvavo_request(method: str, path: str, body: str = ""):
     }
 
     url = f"{BASE_URL}{path}"
-    if method.upper() == "GET":
+
+    if method_u == "GET":
         r = requests.get(url, headers=headers, timeout=20)
-    elif method.upper() == "POST":
+    elif method_u == "POST":
         r = requests.post(url, headers=headers, data=body, timeout=20)
     else:
         raise ValueError("Alleen GET/POST geïmplementeerd.")
 
     if r.status_code >= 400:
-        # Geef zo veel mogelijk info terug (Bitvavo stuurt vaak JSON met errorCode)
         try:
             err = r.json()
         except Exception:
@@ -118,15 +129,17 @@ def bitvavo_request(method: str, path: str, body: str = ""):
 
     return r.json()
 
+
 def build_snapshot():
     """
-    Haal balans op en schrijf snapshot naar Render Disk.
+    Haal balans op en schrijf snapshot naar Render Disk (/data).
     """
-    balances = bitvavo_request("GET", "/balance")
+    # 🚨 FIX: path moet /v2/balance zijn (ook voor signature!)
+    balances = bitvavo_request("GET", "/v2/balance")
 
-    # Normalize: alleen assets > 0 tonen
     assets = []
     eur_available = 0.0
+
     for row in balances:
         symbol = row.get("symbol")
         available = float(row.get("available", 0) or 0)
@@ -153,7 +166,7 @@ def build_snapshot():
 
     ensure_parent_dir(SNAPSHOT_PATH)
     with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2)
+        json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
     return snapshot
 
@@ -166,6 +179,7 @@ st.title("📊 Crypto AI Dashboard")
 st.caption("Live overzicht van saldo, assets, trades, performance en bot-status (Render-proof)")
 
 tabs = st.tabs(["💶 Saldo & Assets", "📈 Trades & Performance", "🧠 Bot Status / Masterlijst"])
+
 
 # =========================
 # TAB 1: Saldo & Assets
@@ -193,6 +207,8 @@ with tabs[0]:
                 st.json(snap)
             except Exception as e:
                 st.error(f"Snapshot fout: {e}")
+                # Extra debug info (helpt bij env var issues)
+                st.caption(f"API_KEY len: {len(API_KEY)} | API_SECRET len: {len(API_SECRET)}")
 
     snap, err = safe_read_json(SNAPSHOT_PATH)
     st.divider()
@@ -219,6 +235,7 @@ with tabs[0]:
         "Dat is normaal — private endpoints werken alleen met headers/signature vanuit je code."
     )
 
+
 # =========================
 # TAB 2: Trades & Performance
 # =========================
@@ -235,19 +252,16 @@ with tabs[1]:
         if meta["exists"]:
             st.success(f"Trades CSV gevonden ✅ | Laatst aangepast: {meta['modified']}")
         else:
-            st.warning("Trades CSV bestaat nog niet. Zodra je paper_trader trades logt, komt dit vanzelf.")
+            st.warning("Trades CSV bestaat nog niet. Zodra paper_trader trades logt, komt dit vanzelf.")
 
     if err:
         st.warning(err)
     else:
-        # Verwachte kolommen (jouw CSV kan anders heten; we vangen dat netjes op)
         st.dataframe(df_trades.tail(50), use_container_width=True)
 
-        # Probeer basis-metrics te berekenen met tolerant gedrag
         cols = [c.lower() for c in df_trades.columns]
         colmap = {c.lower(): c for c in df_trades.columns}
 
-        # Zoek handige kolommen
         pnl_col = None
         for candidate in ["pnl", "profit", "pnl_eur", "pnl_usdt"]:
             if candidate in cols:
@@ -260,7 +274,6 @@ with tabs[1]:
                 ts_col = colmap[candidate]
                 break
 
-        # Netto PnL & winrate
         if pnl_col:
             pnl_series = pd.to_numeric(df_trades[pnl_col], errors="coerce").fillna(0)
             total_pnl = float(pnl_series.sum())
@@ -275,18 +288,18 @@ with tabs[1]:
             c3.metric("Winrate", f"{winrate:.1f}%")
             c4.metric("W/L", f"{wins}/{losses}")
 
-            # Equity curve (cumulatieve PnL)
             equity = pnl_series.cumsum()
             st.subheader("Equity curve (cumulatieve PnL)")
             st.line_chart(equity)
 
-            # Daily PnL (als er timestamps zijn)
             if ts_col:
                 try:
                     tmp = df_trades.copy()
                     tmp["_ts"] = pd.to_datetime(tmp[ts_col], errors="coerce", utc=True)
                     tmp["_date"] = tmp["_ts"].dt.date
-                    daily = tmp.groupby("_date")[pnl_col].apply(lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum())
+                    daily = tmp.groupby("_date")[pnl_col].apply(
+                        lambda s: pd.to_numeric(s, errors="coerce").fillna(0).sum()
+                    )
                     st.subheader("Daily PnL")
                     st.line_chart(daily)
                 except Exception:
@@ -296,6 +309,7 @@ with tabs[1]:
                 "Ik kan nog geen PnL grafieken maken, omdat je CSV geen herkenbare PnL kolom heeft. "
                 "Tip: zorg dat `paper_trades.csv` een kolom heeft zoals `pnl` of `profit`."
             )
+
 
 # =========================
 # TAB 3: Bot Status / Masterlijst
@@ -318,7 +332,7 @@ with tabs[2]:
 - ✅ **Weekly reporting** (later stap: weekoverzicht + learnings)
 """)
 
-    st.write("### Bestandsstatus (Render Disk + logs)")
+    st.write("### Bestandsstatus (Render Disk)")
     paths = [
         ("Snapshot (Bitvavo)", SNAPSHOT_PATH),
         ("Pending approvals", PENDING_PATH),
@@ -343,13 +357,11 @@ with tabs[2]:
 
     st.divider()
 
-    # Pending approvals preview
     st.write("### Pending approvals (preview)")
     pending, err = safe_read_json(PENDING_PATH)
     if err:
         st.info(err)
     else:
-        # pending kan dict of list zijn, we tonen netjes
         st.json(pending)
 
     st.write("### Paper state (preview)")
