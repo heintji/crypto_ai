@@ -12,33 +12,33 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 
-# =========================================================
-# Config (Render-proof)
-# =========================================================
+# =========================
+# Config
+# =========================
 API_KEY = (os.getenv("BITVAVO_API_KEY", "") or "").strip().strip('"').strip("'")
 API_SECRET = (os.getenv("BITVAVO_API_SECRET", "") or "").strip().strip('"').strip("'")
 
-BASE_URL_PRIVATE = "https://api.bitvavo.com"   # private endpoints
-BASE_URL_PUBLIC = "https://api.bitvavo.com"    # public endpoints
-ACCESS_WINDOW_MS = "10000"
-
-# Render Disk paths (persistent)
+# Disk paths (Render)
 SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
-HISTORY_PATH = os.getenv("PORTFOLIO_HISTORY_PATH", "/data/portfolio_history.csv")
+PORTFOLIO_HISTORY_CSV = os.getenv("PORTFOLIO_HISTORY_CSV", "/data/portfolio_history.csv")
 
 PENDING_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
 PAPER_STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
 PAPER_TRADES_CSV = os.getenv("PAPER_TRADES_CSV", "/data/paper_trades.csv")
-
 AI_USAGE_PATH = os.getenv("AI_USAGE_PATH", "/data/ai_usage.json")
 PREBUY_STATE_PATH = os.getenv("PREBUY_STATE_PATH", "/data/prebuy_state.json")
 PREBUY_PAYLOAD_PATH = os.getenv("PREBUY_PAYLOAD_PATH", "/data/prebuy_payload.json")
 
+# Bitvavo endpoints
+PRIVATE_BASE_URL = "https://api.bitvavo.com"
+PUBLIC_BASE_URL_V2 = "https://api.bitvavo.com/v2"
+ACCESS_WINDOW_MS = "10000"
 
-# =========================================================
+
+# =========================
 # Helpers
-# =========================================================
-def now_iso() -> str:
+# =========================
+def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 def ensure_parent_dir(path: str):
@@ -75,20 +75,19 @@ def file_meta(path: str):
         "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
     }
 
-def to_float(x, default=0.0):
-    try:
-        return float(x)
-    except Exception:
-        return default
+def http_get_json(url: str, params: dict | None = None, timeout: int = 20):
+    r = requests.get(url, params=params, timeout=timeout)
+    r.raise_for_status()
+    return r.json()
 
 
-# =========================================================
+# =========================
 # Bitvavo Private Request (SIGNING)
-# =========================================================
-def bitvavo_request(method: str, path: str, body: str = ""):
+# =========================
+def bitvavo_private_request(method: str, path: str, body: str = ""):
     """
     signature = HMAC_SHA256(secret, timestamp + METHOD + path + body)
-    path moet exact zijn incl /v2 (bijv "/v2/balance")
+    path moet exact zijn inclusief /v2 (bijv: /v2/balance)
     """
     if not API_KEY or not API_SECRET:
         raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Render Environment Variables.")
@@ -112,7 +111,7 @@ def bitvavo_request(method: str, path: str, body: str = ""):
         "Content-Type": "application/json",
     }
 
-    url = f"{BASE_URL_PRIVATE}{path}"
+    url = f"{PRIVATE_BASE_URL}{path}"
 
     if method_u == "GET":
         r = requests.get(url, headers=headers, timeout=20)
@@ -131,275 +130,251 @@ def bitvavo_request(method: str, path: str, body: str = ""):
     return r.json()
 
 
-# =========================================================
-# Bitvavo Public Helpers (prijzen + candles)
-# =========================================================
-@st.cache_data(ttl=60)
-def get_price_eur(symbol: str) -> float:
+# =========================
+# Public prices (no signature)
+# =========================
+@st.cache_data(ttl=30, show_spinner=False)
+def get_all_market_prices():
     """
-    Haalt live prijs op via public endpoint:
-    /v2/ticker/price?market=BTC-EUR
+    Haalt ALLE prijzen op van Bitvavo public endpoint:
+    GET /v2/ticker/price  -> list met {market, price}
+    """
+    data = http_get_json(f"{PUBLIC_BASE_URL_V2}/ticker/price")
+    # map: "BTC-EUR" -> float(price)
+    prices = {}
+    for row in data:
+        m = row.get("market")
+        p = row.get("price")
+        try:
+            prices[m] = float(p)
+        except Exception:
+            continue
+    return prices
+
+def price_in_eur(symbol: str, prices: dict) -> tuple[float | None, str]:
+    """
+    Geeft (price_eur, route) terug.
+    Route:
+      1) SYMBOL-EUR
+      2) SYMBOL-USDT * USDT-EUR
+      3) SYMBOL-BTC  * BTC-EUR
     """
     if symbol == "EUR":
-        return 1.0
+        return 1.0, "EUR"
 
-    market = f"{symbol}-EUR"
-    url = f"{BASE_URL_PUBLIC}/v2/ticker/price"
-    r = requests.get(url, params={"market": market}, timeout=15)
+    m1 = f"{symbol}-EUR"
+    if m1 in prices:
+        return prices[m1], m1
 
-    if r.status_code >= 400:
-        return 0.0
+    # via USDT (meest voorkomend)
+    m2a = f"{symbol}-USDT"
+    m2b = "USDT-EUR"
+    if m2a in prices and m2b in prices:
+        return prices[m2a] * prices[m2b], f"{m2a} * {m2b}"
 
+    # via BTC (fallback)
+    m3a = f"{symbol}-BTC"
+    m3b = "BTC-EUR"
+    if m3a in prices and m3b in prices:
+        return prices[m3a] * prices[m3b], f"{m3a} * {m3b}"
+
+    return None, "NO_ROUTE"
+
+
+# =========================
+# Snapshot builder (+ EUR waardes)
+# =========================
+def append_portfolio_history(ts_iso: str, eur_available: float, crypto_assets_eur: float, total_portfolio_eur: float):
+    ensure_parent_dir(PORTFOLIO_HISTORY_CSV)
+
+    row = {
+        "ts": ts_iso,
+        "eur_available": eur_available,
+        "crypto_assets_eur": crypto_assets_eur,
+        "total_portfolio_eur": total_portfolio_eur,
+    }
+
+    if not os.path.exists(PORTFOLIO_HISTORY_CSV):
+        pd.DataFrame([row]).to_csv(PORTFOLIO_HISTORY_CSV, index=False)
+        return
+
+    df = pd.read_csv(PORTFOLIO_HISTORY_CSV)
+    # voorkom dubbele timestamps
+    if "ts" in df.columns and (df["ts"] == ts_iso).any():
+        return
+
+    df2 = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    # sort op tijd
     try:
-        data = r.json()
-        # verwacht: {"market":"BTC-EUR","price":"..."}
-        return to_float(data.get("price", 0.0), 0.0)
+        df2["_t"] = pd.to_datetime(df2["ts"], utc=True, errors="coerce")
+        df2 = df2.sort_values("_t").drop(columns=["_t"])
     except Exception:
-        return 0.0
+        pass
+    df2.to_csv(PORTFOLIO_HISTORY_CSV, index=False)
 
-
-@st.cache_data(ttl=120)
-def get_candles_eur(symbol: str, interval: str = "1h", limit: int = 240) -> pd.DataFrame:
-    """
-    Bitvavo public candles:
-    /v2/BTC-EUR/candles?interval=1h&limit=240
-    Return: [ [timestamp, open, high, low, close, volume], ... ]
-    """
-    market = f"{symbol}-EUR"
-    url = f"{BASE_URL_PUBLIC}/v2/{market}/candles"
-    r = requests.get(url, params={"interval": interval, "limit": limit}, timeout=20)
-    if r.status_code >= 400:
-        return pd.DataFrame()
-
-    try:
-        rows = r.json()
-        if not isinstance(rows, list) or not rows:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
-        df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-        for c in ["open", "high", "low", "close", "volume"]:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        df = df.dropna(subset=["ts", "open", "high", "low", "close"])
-        return df.sort_values("ts")
-    except Exception:
-        return pd.DataFrame()
-
-
-# =========================================================
-# Snapshot builder (balance -> enriched assets -> totals)
-# =========================================================
 def build_snapshot():
-    balances = bitvavo_request("GET", "/v2/balance")
+    """
+    1) private balance
+    2) public prijzen
+    3) bereken crypto assets € + total portfolio €
+    4) schrijf snapshot + append history
+    """
+    balances = bitvavo_private_request("GET", "/v2/balance")
+    prices = get_all_market_prices()
 
     assets = []
     eur_available = 0.0
+    crypto_assets_eur = 0.0
 
     for row in balances:
         symbol = row.get("symbol")
-        available = to_float(row.get("available", 0) or 0)
-        in_order = to_float(row.get("inOrder", 0) or 0)
+        available = float(row.get("available", 0) or 0)
+        in_order = float(row.get("inOrder", 0) or 0)
         total = available + in_order
 
         if symbol == "EUR":
             eur_available = available
 
-        if total > 0:
-            assets.append({
-                "symbol": symbol,
-                "available": available,
-                "inOrder": in_order,
-                "total": total
-            })
+        if total <= 0:
+            continue
 
-    # Verrijk: price_eur + eur_value per asset
-    enriched = []
-    crypto_assets_value = 0.0
+        p_eur, route = price_in_eur(symbol, prices)
+        if p_eur is None:
+            eur_value = 0.0
+        else:
+            eur_value = float(total) * float(p_eur)
 
-    for a in assets:
-        sym = a["symbol"]
-        price = get_price_eur(sym)
-        eur_value = (a["total"] * price) if sym != "EUR" else a["total"]
-        row = {**a, "price_eur": price, "eur_value": eur_value}
-        enriched.append(row)
+        if symbol != "EUR":
+            crypto_assets_eur += eur_value
 
-        if sym != "EUR":
-            crypto_assets_value += eur_value
+        assets.append({
+            "symbol": symbol,
+            "available": available,
+            "inOrder": in_order,
+            "total": total,
+            "price_eur": p_eur,           # kan None zijn
+            "eur_value": eur_value,       # altijd aanwezig (float)
+            "price_route": route,         # debug route
+        })
 
-    portfolio_total = eur_available + crypto_assets_value
+    total_portfolio_eur = eur_available + crypto_assets_eur
+    ts_iso = now_iso()
 
     snapshot = {
         "status": "OK",
-        "ts": now_iso(),
+        "ts": ts_iso,
         "eur_available": eur_available,
-        "crypto_assets_value": crypto_assets_value,
-        "portfolio_total": portfolio_total,
-        "assets": sorted(enriched, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
+        "crypto_assets_eur": crypto_assets_eur,
+        "total_portfolio_eur": total_portfolio_eur,
+        "assets": sorted(assets, key=lambda x: x["eur_value"], reverse=True),
     }
 
     ensure_parent_dir(SNAPSHOT_PATH)
     with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
-    # History wegschrijven (voor portfolio grafiek & % changes)
-    append_portfolio_history(snapshot)
-
+    append_portfolio_history(ts_iso, eur_available, crypto_assets_eur, total_portfolio_eur)
     return snapshot
 
 
-def append_portfolio_history(snapshot: dict):
-    ensure_parent_dir(HISTORY_PATH)
-    ts = snapshot.get("ts")
-    eur_available = snapshot.get("eur_available", 0.0)
-    crypto_assets_value = snapshot.get("crypto_assets_value", 0.0)
-    portfolio_total = snapshot.get("portfolio_total", 0.0)
-
-    row = pd.DataFrame([{
-        "ts": ts,
-        "eur_available": eur_available,
-        "crypto_assets_value": crypto_assets_value,
-        "portfolio_total": portfolio_total
-    }])
-
-    if os.path.exists(HISTORY_PATH):
-        try:
-            existing = pd.read_csv(HISTORY_PATH)
-            # voorkom dubbele timestamps
-            if "ts" in existing.columns and ts in set(existing["ts"].astype(str).tolist()):
-                return
-        except Exception:
-            pass
-        row.to_csv(HISTORY_PATH, mode="a", header=False, index=False)
-    else:
-        row.to_csv(HISTORY_PATH, index=False)
-
-
-def load_portfolio_history() -> pd.DataFrame:
-    if not os.path.exists(HISTORY_PATH):
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(HISTORY_PATH)
-        df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
-        df = df.dropna(subset=["ts"]).sort_values("ts")
-        for c in ["eur_available", "crypto_assets_value", "portfolio_total"]:
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
-        return df
-    except Exception:
-        return pd.DataFrame()
-
-
-def pct_change_from_history(hist: pd.DataFrame, days_back: int) -> float | None:
-    """
-    pctl = (now - value(days_back)) / value(days_back) * 100
-    """
-    if hist.empty or "portfolio_total" not in hist.columns:
-        return None
-
-    now_ts = hist["ts"].max()
-    target_ts = now_ts - timedelta(days=days_back)
-
-    # zoek dichtstbijzijnde punt <= target_ts
-    past = hist[hist["ts"] <= target_ts].tail(1)
-    if past.empty:
-        return None
-
-    past_val = float(past["portfolio_total"].iloc[0])
-    if past_val <= 0:
-        return None
-
-    now_val = float(hist[hist["portfolio_total"].notna()]["portfolio_total"].iloc[-1])
-    return (now_val - past_val) / past_val * 100.0
-
-
-# =========================================================
-# Trades helpers (markers op chart)
-# =========================================================
-def normalize_trades_df(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Probeer trades kolommen te herkennen zonder dat jij nu alles hoeft te hernoemen.
-    We zoeken o.a.: ts/timestamp/date, side/buy_sell, symbol/coin/market, price, amount/qty.
-    """
+# =========================
+# Portfolio analytics
+# =========================
+def load_portfolio_history():
+    df, err = safe_read_csv(PORTFOLIO_HISTORY_CSV)
+    if err:
+        return None, err
     if df is None or df.empty:
-        return pd.DataFrame()
+        return None, "Portfolio history is leeg."
+    if "ts" not in df.columns:
+        return None, "Portfolio history mist kolom 'ts'."
 
-    cols_lower = {c.lower(): c for c in df.columns}
+    df = df.copy()
+    df["ts_dt"] = pd.to_datetime(df["ts"], utc=True, errors="coerce")
+    df = df.dropna(subset=["ts_dt"]).sort_values("ts_dt")
+    return df, None
 
-    def pick(*names):
-        for n in names:
-            if n in cols_lower:
-                return cols_lower[n]
+def compute_change_pct(df_hist: pd.DataFrame, days: int):
+    """
+    % verandering over laatste X dagen op total_portfolio_eur
+    """
+    if df_hist is None or df_hist.empty:
         return None
 
-    col_ts = pick("timestamp", "time", "ts", "date", "datetime")
-    col_side = pick("side", "type", "action", "buy_sell")
-    col_symbol = pick("symbol", "coin", "market", "pair")
-    col_price = pick("price", "entry", "fill_price", "avg_price")
-    col_qty = pick("amount", "qty", "size", "volume")
+    end = df_hist["ts_dt"].max()
+    start = end - timedelta(days=days)
 
-    out = df.copy()
+    dfw = df_hist[df_hist["ts_dt"] >= start]
+    if len(dfw) < 2:
+        return None
 
-    if col_ts:
-        out["_ts"] = pd.to_datetime(out[col_ts], errors="coerce", utc=True)
+    first = float(dfw["total_portfolio_eur"].iloc[0])
+    last = float(dfw["total_portfolio_eur"].iloc[-1])
+    if first == 0:
+        return None
+
+    return (last - first) / first * 100.0
+
+def filter_history(df_hist: pd.DataFrame, window: str):
+    if df_hist is None or df_hist.empty:
+        return df_hist
+
+    end = df_hist["ts_dt"].max()
+    if window == "1D":
+        start = end - timedelta(days=1)
+    elif window == "7D":
+        start = end - timedelta(days=7)
+    elif window == "30D":
+        start = end - timedelta(days=30)
     else:
-        out["_ts"] = pd.NaT
+        return df_hist
 
-    out["_side"] = out[col_side].astype(str).str.upper() if col_side else ""
-    out["_symbol"] = out[col_symbol].astype(str).str.upper() if col_symbol else ""
-    out["_price"] = pd.to_numeric(out[col_price], errors="coerce") if col_price else None
-    out["_qty"] = pd.to_numeric(out[col_qty], errors="coerce") if col_qty else None
-
-    out = out.dropna(subset=["_ts"])
-    return out
+    return df_hist[df_hist["ts_dt"] >= start]
 
 
-def filter_trades_for_symbol(trades: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """
-    We matchen grof:
-    - als _symbol exact "BTC" of "BTC-EUR" of "BTCUSDT" etc bevat.
-    """
-    if trades is None or trades.empty:
-        return pd.DataFrame()
-    s = symbol.upper()
-    mask = trades["_symbol"].str.contains(s, na=False)
-    return trades[mask].copy()
-
-
-# =========================================================
+# =========================
 # UI
-# =========================================================
+# =========================
 st.set_page_config(page_title="Crypto AI Dashboard", layout="wide")
 st.title("📊 Crypto AI Dashboard")
 st.caption("Render-proof dashboard: Bitvavo saldo + portfolio waarde + grafieken + trades/monitoring.")
 
+
 tabs = st.tabs(["💶 Saldo & Portfolio", "📉 Koers & Trades", "📈 Trades & Performance", "🧠 Bot Status / Masterlijst"])
 
 
-# =========================================================
+# =========================
 # TAB 1: Saldo & Portfolio
-# =========================================================
+# =========================
 with tabs[0]:
-    colL, colR = st.columns([2, 1])
+    colL, colR = st.columns([2, 1], gap="large")
 
     with colL:
-        st.subheader("Snapshot (Bitvavo)")
-        st.write("Snapshot pad (Render Disk):")
-        st.code(SNAPSHOT_PATH, language="text")
-
         meta = file_meta(SNAPSHOT_PATH)
         if meta["exists"]:
             st.success(f"Snapshot gevonden ✅  | Laatst aangepast: {meta['modified']} | Grootte: {meta['size_kb']} KB")
         else:
             st.warning("Nog geen snapshot gevonden. Klik op **Snapshot verversen**.")
 
+        st.write("Snapshot pad (Render Disk):")
+        st.code(SNAPSHOT_PATH, language="text")
+
+        st.write("Portfolio history pad (Render Disk):")
+        st.code(PORTFOLIO_HISTORY_CSV, language="text")
+
     with colR:
         st.subheader("Acties")
-        if st.button("🔄 Snapshot verversen", use_container_width=True):
+        if st.button("🔄 Snapshot verversen (saldo + EUR waardes)", use_container_width=True):
             try:
                 snap = build_snapshot()
                 st.success("Snapshot aangemaakt/ververst ✅")
-                st.caption("Tip: dit bouwt ook automatisch je portfolio-historie op voor grafieken & %.")
-                st.json(snap)
+                st.caption("Tip: refresh de pagina (F5) als je direct alles wilt zien.")
+                st.json({
+                    "eur_available": snap.get("eur_available"),
+                    "crypto_assets_eur": snap.get("crypto_assets_eur"),
+                    "total_portfolio_eur": snap.get("total_portfolio_eur"),
+                    "ts": snap.get("ts")
+                })
             except Exception as e:
                 st.error(f"Snapshot fout: {e}")
                 st.caption(f"API_KEY len: {len(API_KEY)} | API_SECRET len: {len(API_SECRET)}")
@@ -411,163 +386,166 @@ with tabs[0]:
         st.warning(err)
     else:
         if snap and snap.get("status") == "OK":
-            eur_available = float(snap.get("eur_available", 0.0) or 0.0)
-            crypto_assets_value = float(snap.get("crypto_assets_value", 0.0) or 0.0)
-            portfolio_total = float(snap.get("portfolio_total", 0.0) or 0.0)
+            eur_available = float(snap.get("eur_available", 0) or 0)
+            crypto_assets_eur = float(snap.get("crypto_assets_eur", 0) or 0)
+            total_portfolio_eur = float(snap.get("total_portfolio_eur", 0) or 0)
 
-            # ✅ Dit zijn precies jouw Bitvavo waarden die je terug wil zien
+            # % changes (op basis van history)
+            df_hist, herr = load_portfolio_history()
+            d1 = compute_change_pct(df_hist, 1) if herr is None else None
+            d7 = compute_change_pct(df_hist, 7) if herr is None else None
+
             c1, c2, c3 = st.columns(3)
             c1.metric("Beschikbaar saldo (EUR)", f"€ {eur_available:.2f}")
-            c2.metric("Crypto assets", f"€ {crypto_assets_value:.2f}")
-            c3.metric("Totale waarde portfolio", f"€ {portfolio_total:.2f}")
+            c2.metric("Crypto assets", f"€ {crypto_assets_eur:.2f}", delta=(f"{d1:.2f}% (1D)" if d1 is not None else None))
+            c3.metric("Totale waarde portfolio", f"€ {total_portfolio_eur:.2f}", delta=(f"{d7:.2f}% (7D)" if d7 is not None else None))
 
-            assets = snap.get("assets", [])
-            df_assets = pd.DataFrame(assets) if assets else pd.DataFrame()
+            st.subheader("Assets (alleen > 0) — inclusief waarde in €")
+            assets = snap.get("assets", []) or []
+            df_assets = pd.DataFrame(assets)
 
-            if not df_assets.empty:
-                # nette volgorde + rounding
-                for c in ["available", "inOrder", "total", "price_eur", "eur_value"]:
-                    if c in df_assets.columns:
-                        df_assets[c] = pd.to_numeric(df_assets[c], errors="coerce").fillna(0)
+            # Zorg dat kolommen altijd bestaan (nooit KeyError)
+            for col in ["symbol", "available", "inOrder", "total", "price_eur", "eur_value", "price_route"]:
+                if col not in df_assets.columns:
+                    df_assets[col] = None
 
-                st.subheader("Assets (alleen > 0) — inclusief waarde in €")
-                show_cols = [c for c in ["symbol", "available", "inOrder", "total", "price_eur", "eur_value"] if c in df_assets.columns]
-                st.dataframe(df_assets[show_cols], use_container_width=True, hide_index=True)
+            # nette formatting
+            df_assets["price_eur"] = pd.to_numeric(df_assets["price_eur"], errors="coerce")
+            df_assets["eur_value"] = pd.to_numeric(df_assets["eur_value"], errors="coerce").fillna(0.0)
 
-                # Asset verdeling (pie chart) op eur_value (ex EUR)
-                df_pie = df_assets[df_assets["symbol"] != "EUR"].copy()
-                df_pie = df_pie[df_pie["eur_value"] > 0]
-                if not df_pie.empty:
-                    st.subheader("Asset-verdeling (op basis van € waarde)")
-                    fig_pie = px.pie(df_pie, names="symbol", values="eur_value", hole=0.45)
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                else:
-                    st.info("Geen crypto assets waarde beschikbaar voor pie chart (mogelijk geen EUR-paren of alles = 0).")
+            # toon tabel
+            st.dataframe(
+                df_assets[["symbol", "available", "inOrder", "total", "price_eur", "eur_value", "price_route"]],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            # pie chart verdeling (excl EUR)
+            df_pie = df_assets[(df_assets["symbol"] != "EUR") & (df_assets["eur_value"] > 0)].copy()
+            if not df_pie.empty:
+                st.subheader("Asset-verdeling (EUR waarde)")
+                fig_pie = px.pie(df_pie, names="symbol", values="eur_value")
+                st.plotly_chart(fig_pie, use_container_width=True)
             else:
-                st.info("Geen assets gevonden (of alles is 0).")
+                st.info("Nog geen EUR-waardes voor coins gevonden (of alles is 0).")
 
-            # Portfolio koersgrafiek (historie)
-            hist = load_portfolio_history()
-            if not hist.empty and "portfolio_total" in hist.columns:
-                st.subheader("Portfolio koersgrafiek (Bitvavo-stijl)")
+            # portfolio koersgrafiek (Bitvavo-style)
+            st.subheader("Portfolio koersgrafiek (history)")
+            if herr:
+                st.info(herr)
+            else:
+                window = st.radio("Periode", ["1D", "7D", "30D", "ALL"], horizontal=True)
+                dfw = filter_history(df_hist, window)
 
-                pct_1d = pct_change_from_history(hist, 1)
-                pct_7d = pct_change_from_history(hist, 7)
-
-                p1, p2 = st.columns(2)
-                p1.metric("% verandering (dag)", "-" if pct_1d is None else f"{pct_1d:+.2f}%")
-                p2.metric("% verandering (week)", "-" if pct_7d is None else f"{pct_7d:+.2f}%")
-
-                fig_line = go.Figure()
-                fig_line.add_trace(go.Scatter(
-                    x=hist["ts"], y=hist["portfolio_total"],
-                    mode="lines", name="Portfolio total (€)"
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=dfw["ts_dt"],
+                    y=dfw["total_portfolio_eur"],
+                    mode="lines",
+                    name="Total portfolio (€)"
                 ))
-                fig_line.update_layout(
-                    height=360,
+                fig.update_layout(
+                    height=420,
                     margin=dict(l=10, r=10, t=10, b=10),
-                    xaxis_title="Tijd",
                     yaxis_title="€",
-                    legend=dict(orientation="h")
+                    xaxis_title=""
                 )
-                st.plotly_chart(fig_line, use_container_width=True)
-                st.caption(f"Historie bestand: {HISTORY_PATH}")
-            else:
-                st.info("Nog geen portfolio-historie. Klik een paar keer op **Snapshot verversen** (bv. verspreid over tijd).")
+                st.plotly_chart(fig, use_container_width=True)
 
         else:
             st.warning("Snapshot bestaat, maar status is niet OK.")
 
     st.info(
-        "Let op: als je in je browser naar `https://api.bitvavo.com/v2/balance` gaat, krijg je altijd auth-fout. "
+        "Let op: als je in je browser naar `https://api.bitvavo.com/v2/balance` gaat, krijg je altijd een auth-fout. "
         "Dat is normaal — private endpoints werken alleen met headers/signature vanuit je code."
     )
 
 
-# =========================================================
-# TAB 2: Koers & Trades (coin chart + markers)
-# =========================================================
+# =========================
+# TAB 2: Koers & Trades
+# =========================
 with tabs[1]:
-    st.subheader("Koers & Trades")
+    st.subheader("Koers & Trades (portfolio + trade markers)")
 
-    snap, _ = safe_read_json(SNAPSHOT_PATH)
-    assets = (snap or {}).get("assets", [])
-    df_assets = pd.DataFrame(assets) if assets else pd.DataFrame()
-
-    # coin selector
-    coins = ["BTC", "ETH", "ADA", "SOL", "XRP", "BNB", "DOGE"]
-    if not df_assets.empty and "symbol" in df_assets.columns:
-        # zet coins uit je echte holdings bovenaan
-        holdings = [s for s in df_assets["symbol"].astype(str).tolist() if s and s != "EUR"]
-        coins = sorted(list(dict.fromkeys(holdings + coins)))
-
-    sel = st.selectbox("Kies coin voor koersgrafiek (EUR)", coins, index=0)
-    interval = st.selectbox("Interval", ["15m", "1h", "4h", "1d"], index=1)
-    limit = st.slider("Aantal candles", 60, 500, 240, 20)
-
-    df_c = get_candles_eur(sel, interval=interval, limit=limit)
-    if df_c.empty:
-        st.warning("Kon geen candles ophalen voor deze coin. (Bestaat het EUR-market op Bitvavo?)")
+    df_hist, herr = load_portfolio_history()
+    if herr:
+        st.info(herr)
     else:
-        fig = go.Figure(data=[go.Candlestick(
-            x=df_c["ts"],
-            open=df_c["open"],
-            high=df_c["high"],
-            low=df_c["low"],
-            close=df_c["close"],
-            name=f"{sel}-EUR"
-        )])
+        window = st.radio("Periode (koers)", ["1D", "7D", "30D", "ALL"], horizontal=True, key="window_koers")
+        dfw = filter_history(df_hist, window)
 
-        # trades markers (paper_trades.csv)
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=dfw["ts_dt"],
+            y=dfw["total_portfolio_eur"],
+            mode="lines",
+            name="Portfolio (€)"
+        ))
+
+        # trades markers (als paper_trades.csv bestaat en timestamp kolom herkend wordt)
         df_trades, terr = safe_read_csv(PAPER_TRADES_CSV)
-        if terr:
-            st.caption("Trades markers: paper_trades.csv nog niet gevonden of leeg.")
-        else:
-            tnorm = normalize_trades_df(df_trades)
-            tsel = filter_trades_for_symbol(tnorm, sel)
-            if not tsel.empty:
-                # alleen markers als we price hebben
-                has_price = tsel["_price"] is not None and tsel["_price"].notna().any()
-                if has_price:
-                    buys = tsel[tsel["_side"].str.contains("BUY", na=False)].copy()
-                    sells = tsel[tsel["_side"].str.contains("SELL", na=False)].copy()
+        if terr is None and df_trades is not None and not df_trades.empty:
+            cols = [c.lower() for c in df_trades.columns]
+            colmap = {c.lower(): c for c in df_trades.columns}
 
-                    if not buys.empty:
-                        fig.add_trace(go.Scatter(
-                            x=buys["_ts"], y=buys["_price"],
-                            mode="markers", name="BUY",
-                            marker=dict(symbol="triangle-up", size=10)
-                        ))
-                    if not sells.empty:
-                        fig.add_trace(go.Scatter(
-                            x=sells["_ts"], y=sells["_price"],
-                            mode="markers", name="SELL",
-                            marker=dict(symbol="triangle-down", size=10)
-                        ))
-                else:
-                    st.caption("Trades markers: ik zie geen herkenbare price-kolom in paper_trades.csv.")
-            else:
-                st.caption("Trades markers: geen trades gevonden voor deze coin (op basis van symbol/market match).")
+            ts_col = None
+            for candidate in ["timestamp", "time", "ts", "date", "datetime"]:
+                if candidate in cols:
+                    ts_col = colmap[candidate]
+                    break
+
+            side_col = None
+            for candidate in ["side", "action", "type"]:
+                if candidate in cols:
+                    side_col = colmap[candidate]
+                    break
+
+            if ts_col:
+                tmp = df_trades.copy()
+                tmp["_ts"] = pd.to_datetime(tmp[ts_col], errors="coerce", utc=True)
+                tmp = tmp.dropna(subset=["_ts"])
+
+                # plaats markers op de portfolio lijn (y = nearest portfolio value)
+                # simpel: y = laatste bekende portfolio waarde vóór trade tijd
+                df_port = df_hist[["ts_dt", "total_portfolio_eur"]].copy()
+
+                def nearest_port_value(t):
+                    before = df_port[df_port["ts_dt"] <= t]
+                    if before.empty:
+                        return None
+                    return float(before["total_portfolio_eur"].iloc[-1])
+
+                tmp["_y"] = tmp["_ts"].apply(nearest_port_value)
+                tmp = tmp.dropna(subset=["_y"])
+
+                label = tmp[side_col].astype(str) if side_col else pd.Series(["trade"] * len(tmp))
+                fig.add_trace(go.Scatter(
+                    x=tmp["_ts"],
+                    y=tmp["_y"],
+                    mode="markers",
+                    name="Trades",
+                    text=label,
+                    hovertemplate="Trade: %{text}<br>%{x}<br>€ %{y:.2f}<extra></extra>"
+                ))
 
         fig.update_layout(
-            height=520,
+            height=460,
             margin=dict(l=10, r=10, t=10, b=10),
-            xaxis_title="Tijd",
-            yaxis_title="Prijs (EUR)",
-            legend=dict(orientation="h")
+            yaxis_title="€",
+            xaxis_title=""
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        st.caption("Tip: als je wilt dat markers 100% werken, zorg dat paper_trades.csv kolommen heeft zoals: timestamp, side (BUY/SELL), symbol/coin/market, price.")
+    st.caption("Tip: wil je markers per coin (BUY/SELL) exact? Zet dan in paper_trades.csv altijd: timestamp, symbol, side, price, amount, pnl.")
 
 
-# =========================================================
-# TAB 3: Trades & Performance (Paper)
-# =========================================================
+# =========================
+# TAB 3: Trades & Performance
+# =========================
 with tabs[2]:
     st.subheader("Trades & Performance (Paper)")
-
     df_trades, err = safe_read_csv(PAPER_TRADES_CSV)
+
     left, right = st.columns([2, 1])
 
     with right:
@@ -633,35 +611,36 @@ with tabs[2]:
         else:
             st.info(
                 "Ik kan nog geen PnL grafieken maken, omdat je CSV geen herkenbare PnL kolom heeft. "
-                "Tip: voeg een kolom toe zoals `pnl` of `profit` in paper_trades.csv."
+                "Tip: zorg dat `paper_trades.csv` een kolom heeft zoals `pnl` of `profit`."
             )
 
 
-# =========================================================
+# =========================
 # TAB 4: Bot Status / Masterlijst
-# =========================================================
+# =========================
 with tabs[3]:
-    st.subheader("Bot Status / Masterlijst")
+    st.subheader("Bot Status / Masterlijst (wat we willen zien + of het al werkt)")
 
     st.markdown("""
-**Controlepaneel — dit is wat jouw bot/stack uiteindelijk moet kunnen tonen:**
-- ✅ **Saldo & Assets** (Bitvavo snapshot + € waardes)
-- ✅ **Portfolio total + % dag/week + grafiek**
-- ✅ **Asset-verdeling (pie)**
-- ✅ **Koersgrafiek + trades markers**
-- ✅ **Pending approvals** (Pre-BUY wachtrij + expiry + bedrag)
-- ✅ **Open posities** (paper_state / later live)
+**Dit is de masterlijst die jij wilde (dashboard moet dit uiteindelijk allemaal kunnen tonen):**
+- ✅ **Saldo & Assets** (Bitvavo snapshot + EUR-waardes)
+- ✅ **Portfolio history** (koersgrafiek + % verandering)
+- ✅ **Pending approvals** (Pre-BUY wachtrij + expiry + gekozen bedrag)
+- ✅ **Open posities** (paper_state / live later)
 - ✅ **Trades history** (paper_trades.csv)
-- ✅ **Performance metrics** (PnL, winrate, equity, daily PnL)
-- ✅ **Bot health** (files/laatste updates)
-- ✅ **AI usage** (calls + kosten-guardrails)
-- ✅ **Signal kwaliteit / R-metrics / STRUCTUUR-MODE / shadow trades** (volgende fases)
+- ✅ **Performance metrics** (PnL, winrate, equity, drawdown, streaks)
+- ✅ **Bot health** (laatste run per service/script + errors)
+- ✅ **AI usage** (calls per dag/maand + kosten-guardrails)
+- ✅ **Signal kwaliteit** (scores, welke methode/filters, hitrate per score-band)
+- ✅ **R-metrics** (R bij exit, partials 40/60, STRUCTUUR-MODE activaties)
+- ✅ **Shadow trades** (later stap: alles loggen ook als je ‘NO’ zegt)
+- ✅ **Weekly reporting** (later stap: weekoverzicht + learnings)
 """)
 
     st.write("### Bestandsstatus (Render Disk)")
     paths = [
         ("Snapshot (Bitvavo)", SNAPSHOT_PATH),
-        ("Portfolio history", HISTORY_PATH),
+        ("Portfolio history", PORTFOLIO_HISTORY_CSV),
         ("Pending approvals", PENDING_PATH),
         ("Paper state", PAPER_STATE_PATH),
         ("Paper trades CSV", PAPER_TRADES_CSV),
@@ -686,23 +665,14 @@ with tabs[3]:
 
     st.write("### Pending approvals (preview)")
     pending, err = safe_read_json(PENDING_PATH)
-    if err:
-        st.info(err)
-    else:
-        st.json(pending)
+    st.json(pending if err is None else {"info": err})
 
     st.write("### Paper state (preview)")
     pstate, err = safe_read_json(PAPER_STATE_PATH)
-    if err:
-        st.info(err)
-    else:
-        st.json(pstate)
+    st.json(pstate if err is None else {"info": err})
 
     st.write("### AI usage (preview)")
     aiu, err = safe_read_json(AI_USAGE_PATH)
-    if err:
-        st.info(err)
-    else:
-        st.json(aiu)
+    st.json(aiu if err is None else {"info": err})
 
-    st.success("✅ Dit dashboard is nu stabiel: geen matplotlib, geen KeyErrors, en alles draait Render-proof via /data.")
+    st.success("👉 Dit tabblad is jouw controlepaneel: je ziet direct welke onderdelen al data wegschrijven en welke nog leeg zijn.")
