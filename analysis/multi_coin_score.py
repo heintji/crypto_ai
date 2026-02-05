@@ -26,6 +26,10 @@ FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 
+# 🔑 DATA (Render Disk)
+DATA_DIR = os.getenv("DATA_DIR", "/data")
+PENDING_APPROVALS_FILE = os.path.join(DATA_DIR, "pending_approvals.json")
+
 # ==========================================================
 # MARKET SETTINGS
 # ==========================================================
@@ -52,6 +56,25 @@ def log(msg: str) -> None:
 
 def now_utc_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+def ensure_data_dir() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(PENDING_APPROVALS_FILE):
+        with open(PENDING_APPROVALS_FILE, "w", encoding="utf-8") as f:
+            json.dump({"items": []}, f, indent=2)
+
+def load_pending() -> Dict[str, Any]:
+    try:
+        with open(PENDING_APPROVALS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"items": []}
+
+def save_pending(data: Dict[str, Any]) -> None:
+    tmp = f"{PENDING_APPROVALS_FILE}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, PENDING_APPROVALS_FILE)
 
 # ==========================================================
 # BINANCE DATA
@@ -154,14 +177,13 @@ def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, 
 
     return {
         "id": f"PB-{symbol}-{created}",
-        "coin": symbol,
-        "setup": "LIVE",
+        "symbol": symbol,
         "score": score,
         "kans": label,
-        "status": "PENDING",
+        "status": "PENDING_APPROVAL",
         "created_at": created,
         "created_at_utc": now_utc_iso(),
-        "expires_at": created + PREBUY_VALID_SECONDS,
+        "expires_at_epoch": created + PREBUY_VALID_SECONDS,
         "entry": round(price, 8),
         "stop_loss": round(stop, 8),
         "target": round(target, 8),
@@ -169,44 +191,48 @@ def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, 
     }
 
 # ==========================================================
-# SEND TO WEBSERVICE (ENIGE JUISTE ROUTE OP RENDER)
+# SEND TO WEBSERVICE
 # ==========================================================
-def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
+def send_to_webservice(prebuy: Dict[str, Any]) -> None:
     if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
-        log("❌ WEBHOOK_BASE_URL of INTERNAL_TOKEN ontbreekt")
-        return False
+        log("⚠️ Webhook niet actief (env ontbreekt)")
+        return
 
-    url = f"{WEBHOOK_BASE_URL}/internal/prebuy"
     try:
-        r = requests.post(
-            url,
+        requests.post(
+            f"{WEBHOOK_BASE_URL}/internal/prebuy",
             json=prebuy,
             headers={"X-Internal-Token": INTERNAL_TOKEN},
-            timeout=20,
+            timeout=15,
         )
-        if 200 <= r.status_code < 300:
-            log(f"✅ Pre-BUY verzonden: {prebuy['id']}")
-            return True
-        log(f"❌ Webservice reject {r.status_code}: {r.text[:200]}")
-        return False
     except Exception as e:
-        log(f"❌ Webservice fout: {e}")
-        return False
+        log(f"⚠️ Webhook fout: {e}")
 
 # ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
     log("🚀 multi_coin_score gestart (Pre-BUY only)")
-    log(f"🕒 UTC: {now_utc_iso()}")
-    log(f"🌐 WEBHOOK_BASE_URL: {WEBHOOK_BASE_URL or '(niet gezet)'}")
+    ensure_data_dir()
+
+    pending = load_pending()
+    now = time.time()
+
+    # verlopen opruimen
+    pending["items"] = [
+        p for p in pending.get("items", [])
+        if p.get("expires_at_epoch", 0) > now
+    ]
+
+    count = 0
 
     if FORCE_TEST_PREBUY:
         test = build_prebuy("BTCUSDT", 99, {"last_price": 100.0, "note": "forced test"})
+        pending["items"].append(test)
+        save_pending(pending)
         send_to_webservice(test)
         return
 
-    count = 0
     for symbol in COINS:
         try:
             klines = get_klines(symbol, INTERVAL, LIMIT)
@@ -224,6 +250,10 @@ def main() -> None:
                 continue
 
             prebuy = build_prebuy(symbol, score, details)
+
+            pending["items"].append(prebuy)
+            save_pending(pending)
+
             send_to_webservice(prebuy)
             count += 1
 
