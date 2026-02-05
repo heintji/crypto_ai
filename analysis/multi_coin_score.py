@@ -25,6 +25,9 @@ FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 
+# Optioneel: je mag DATA_DIR in Render env zetten (bv /data)
+ENV_DATA_DIR = (os.getenv("DATA_DIR") or "").strip()
+
 # ==========================================================
 # MARKET SETTINGS
 # ==========================================================
@@ -52,6 +55,36 @@ def log(msg: str) -> None:
 def now_utc_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
+def _is_writable_dir(path: str) -> bool:
+    try:
+        os.makedirs(path, exist_ok=True)
+        testfile = os.path.join(path, ".write_test")
+        with open(testfile, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(testfile)
+        return True
+    except Exception:
+        return False
+
+def get_data_dir() -> str:
+    """
+    1) Als DATA_DIR env is gezet: probeer die
+    2) Anders probeer /data (Render Disk mount)
+    3) Als dat niet kan: fallback naar PROJECT_ROOT/data (altijd schrijfbaar)
+    """
+    candidates = []
+    if ENV_DATA_DIR:
+        candidates.append(ENV_DATA_DIR)
+    candidates.append("/data")
+    candidates.append(os.path.join(PROJECT_ROOT, "data"))
+
+    for c in candidates:
+        if _is_writable_dir(c):
+            return c
+
+    # Als zelfs fallback niet lukt (heel zeldzaam)
+    return os.path.join(PROJECT_ROOT, "data")
+
 # ==========================================================
 # BINANCE DATA
 # ==========================================================
@@ -62,10 +95,11 @@ def get_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
         timeout=20,
     )
     r.raise_for_status()
-    return r.json() if isinstance(r.json(), list) else []
+    data = r.json()
+    return data if isinstance(data, list) else []
 
 def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    closes = []
+    closes: List[float] = []
     for k in klines:
         try:
             closes.append(float(k[4]))
@@ -106,11 +140,7 @@ def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
     s50 = sma(closes, 50)
     r14 = rsi(closes, 14)
 
-    details.update({
-        "sma20": s20,
-        "sma50": s50,
-        "rsi14": r14,
-    })
+    details.update({"sma20": s20, "sma50": s50, "rsi14": r14})
 
     if s20 is None or s50 is None or r14 is None:
         return 0, details
@@ -172,7 +202,7 @@ def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, 
     }
 
 # ==========================================================
-# SEND TO WEBSERVICE (ENIGE JUISTE ROUTE)
+# SEND TO WEBSERVICE (ENIGE JUISTE ROUTE OP RENDER)
 # ==========================================================
 def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
     if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
@@ -180,7 +210,6 @@ def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
         return False
 
     url = f"{WEBHOOK_BASE_URL}/internal/prebuy"
-
     try:
         r = requests.post(
             url,
@@ -200,6 +229,25 @@ def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
         return False
 
 # ==========================================================
+# OPTIONAL: schrijf debug payloads (maar crasht nooit)
+# ==========================================================
+def try_write_debug(prebuy: Dict[str, Any]) -> None:
+    """
+    Niet verplicht, maar handig: schrijft een debug bestand in de data dir.
+    Als schrijven niet lukt: geen crash.
+    """
+    try:
+        data_dir = get_data_dir()
+        path = os.path.join(data_dir, "last_prebuy.json")
+        import json  # lokaal import om file clean te houden
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(prebuy, f, indent=2)
+        log(f"📝 Debug geschreven: {path}")
+    except Exception:
+        # bewust stil: debug is optioneel
+        pass
+
+# ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
@@ -207,13 +255,15 @@ def main() -> None:
     log(f"🕒 UTC: {now_utc_iso()}")
     log(f"🌐 WEBHOOK_BASE_URL: {WEBHOOK_BASE_URL or '(niet gezet)'}")
 
+    # laat in logs zien welke data dir gekozen wordt (zonder te crashen)
+    chosen_data_dir = get_data_dir()
+    log(f"📁 DATA_DIR gekozen: {chosen_data_dir}")
+
     if FORCE_TEST_PREBUY:
-        test = build_prebuy(
-            "BTCUSDT",
-            99,
-            {"last_price": 100.0, "note": "forced test"}
-        )
-        send_to_webservice(test)
+        test = build_prebuy("BTCUSDT", 99, {"last_price": 100.0, "note": "forced test"})
+        ok = send_to_webservice(test)
+        if ok:
+            try_write_debug(test)
         return
 
     count = 0
@@ -222,7 +272,6 @@ def main() -> None:
         try:
             klines = get_klines(symbol, INTERVAL, LIMIT)
             closes = closes_from_klines(klines)
-
             if len(closes) < 60:
                 continue
 
@@ -236,7 +285,9 @@ def main() -> None:
                 continue
 
             prebuy = build_prebuy(symbol, score, details)
-            send_to_webservice(prebuy)
+            ok = send_to_webservice(prebuy)
+            if ok:
+                try_write_debug(prebuy)
             count += 1
 
         except Exception:
