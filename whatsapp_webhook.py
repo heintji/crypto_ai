@@ -6,7 +6,6 @@ import sys
 import json
 import time
 import traceback
-import inspect
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -18,8 +17,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Paper trader / trader module
-# LET OP: buy_eur signature verschilt per versie -> we maken compat wrapper.
+# Paper trader / execution (volgens jouw structuur: BUY via paper_trader)
 from trading.paper_trader import buy_eur, get_price  # noqa: E402
 
 app = Flask(__name__)
@@ -31,12 +29,10 @@ INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()
 
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+WHATSAPP_FROM = os.getenv("WHATSAPP_FROM", "").strip()  # bv: "whatsapp:+14155238886"
+WHATSAPP_TO = os.getenv("WHATSAPP_TO", "").strip()      # bv: "whatsapp:+316..."
 
-# In jouw project zie ik 2 naamvarianten. We ondersteunen beide.
-WHATSAPP_FROM = (os.getenv("WHATSAPP_FROM") or os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
-WHATSAPP_TO = (os.getenv("WHATSAPP_TO") or os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
-
-# Render Disk pad (BELANGRIJK: /data, niet /project/src/data)
+# Render Disk pad (BELANGRIJK: /data)
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").strip()
 PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
 
@@ -108,7 +104,7 @@ def _to_int_seconds(ts: Any) -> Optional[int]:
         x = int(ts)
     except Exception:
         return None
-    if x > 10**12:  # ms support
+    if x > 10**12:  # ms -> s
         x = int(x / 1000)
     return x
 
@@ -137,7 +133,7 @@ def remaining_text(expires_at: Any) -> str:
     return f"nog {hours}u {rem_m}m"
 
 # ==========================================================
-# PARSING
+# PENDING HELPERS
 # ==========================================================
 def find_by_id(pending: List[Dict[str, Any]], pid: str) -> Optional[Dict[str, Any]]:
     pid = str(pid or "").strip()
@@ -208,92 +204,32 @@ def format_prebuy_push(p: Dict[str, Any]) -> str:
     pid = p.get("id", "?")
     exp = remaining_text(p.get("expires_at", 0))
 
-    def f6(x):
-        try:
-            return f"{float(x):.6f}"
-        except Exception:
-            return str(x)
+    try:
+        entry_f = f"{float(entry):.6f}"
+    except Exception:
+        entry_f = str(entry)
+    try:
+        stop_f = f"{float(stop):.6f}"
+    except Exception:
+        stop_f = str(stop)
+    try:
+        target_f = f"{float(target):.6f}"
+    except Exception:
+        target_f = str(target)
 
     kans_txt = f" ({kans})" if kans else ""
     return (
         "📊 PRE-BUY GEVONDEN\n"
         f"Coin: {coin}\n"
         f"Score: {score}{kans_txt}\n"
-        f"Entry: {f6(entry)}\n"
-        f"Stop: {f6(stop)}\n"
-        f"Target: {f6(target)}\n\n"
+        f"Entry: {entry_f}\n"
+        f"Stop: {stop_f}\n"
+        f"Target: {target_f}\n\n"
         f"⏳ Geldig: {exp}\n"
         f"ID: {pid}\n\n"
         "Bevestig: YES <bedrag> <ID>\n"
         f"Voorbeeld: YES 10 {pid}"
     )
-
-# ==========================================================
-# BUY COMPAT WRAPPER (waterdicht tegen signature-wijzigingen)
-# ==========================================================
-def execute_buy_compat(
-    coin: str,
-    amount_eur: float,
-    entry: float,
-    stop: float,
-    target: float,
-    prebuy_id: str,
-) -> Dict[str, Any]:
-    """
-    Probeert buy_eur aan te roepen op basis van de echte signature in trading.paper_trader.
-
-    We ondersteunen o.a.:
-    - buy_eur(symbol, amount_eur, stop_loss, target, prebuy_id)  (5 args)
-    - buy_eur(symbol=..., amount_eur=..., stop_loss=..., target=..., prebuy_id=...)
-    - (als iemand later weer price/entry toevoegt, dan pakt hij die ook)
-    """
-    try:
-        sig = inspect.signature(buy_eur)
-        params = list(sig.parameters.keys())
-
-        # voorkeur: keyword call op basis van parameter-namen
-        kw: Dict[str, Any] = {}
-        if "symbol" in params:
-            kw["symbol"] = coin
-        elif params:
-            # eerste param heet misschien coin/symbol
-            kw[params[0]] = coin
-
-        if "amount_eur" in params:
-            kw["amount_eur"] = float(amount_eur)
-        elif "amount" in params:
-            kw["amount"] = float(amount_eur)
-
-        if "stop_loss" in params:
-            kw["stop_loss"] = float(stop)
-        if "target" in params:
-            kw["target"] = float(target)
-
-        # entry/price alleen als functie het vraagt
-        if "price" in params:
-            kw["price"] = float(entry)
-        if "entry" in params:
-            kw["entry"] = float(entry)
-
-        if "prebuy_id" in params:
-            kw["prebuy_id"] = str(prebuy_id)
-
-        log_event("BUY_CALL_SIGNATURE", {"params": params, "kw": kw})
-
-        # Als keyword-call exact matcht met signature -> doen
-        # Anders fallback: 5-args standaard (zonder price)
-        try:
-            return buy_eur(**kw)  # type: ignore
-        except TypeError as e_kw:
-            log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(e_kw), "mode": "positional_5"})
-
-            # Default: 5 positional (zonder price/entry)
-            # buy_eur(symbol, amount_eur, stop_loss, target, prebuy_id)
-            return buy_eur(coin, float(amount_eur), float(stop), float(target), str(prebuy_id))  # type: ignore
-
-    except Exception as e:
-        log_event("BUY_CALL_FATAL", {"coin": coin, "error": str(e)})
-        raise
 
 # ==========================================================
 # INTERNAL ENDPOINT (multi_coin_score -> POST /internal/prebuy)
@@ -324,8 +260,8 @@ def internal_prebuy():
 
         pending = load_pending()
 
-        exists = any(str(p.get("id", "")).strip() == pid for p in pending)
-        if exists:
+        # idempotent: geen duplicates
+        if any(str(p.get("id", "")).strip() == pid for p in pending):
             log_event("INTERNAL_PREBUY_DUPLICATE", {"id": pid, "coin": coin})
             return jsonify({"ok": True, "duplicate": True}), 200
 
@@ -336,6 +272,7 @@ def internal_prebuy():
         if ex is None:
             ex = int(time.time()) + 4 * 60 * 60
         data["expires_at"] = ex
+
         data["status"] = status
 
         pending.append(data)
@@ -343,6 +280,7 @@ def internal_prebuy():
 
         log_event("INTERNAL_PREBUY_SAVED", {"id": pid, "coin": coin, "pending_file": PENDING_PATH})
 
+        # push
         pushed = False
         if status == STATUS_PENDING and not is_expired(ex):
             msg = format_prebuy_push(data)
@@ -480,15 +418,6 @@ def whatsapp():
 
         status = str(item.get("status", "")).upper()
 
-        # Als hij al APPROVED was maar nooit CONSUMED (door eerdere crash),
-        # dan willen we opnieuw kunnen proberen:
-        if status == STATUS_APPROVED and not item.get("trade_id"):
-            log_event("APPROVED_RETRY", {"id": item.get("id"), "coin": item.get("coin")})
-            # terug naar PENDING zodat dit pad normaal kan lopen
-            item["status"] = STATUS_PENDING
-            save_pending(pending)
-            status = STATUS_PENDING
-
         if status == STATUS_CONSUMED:
             return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED).\nID: {item.get('id','?')}")
         if status != STATUS_PENDING:
@@ -501,48 +430,58 @@ def whatsapp():
         if not coin:
             return twiml("⚠️ Pre-BUY mist 'coin'. Check storage.")
 
-        # ====== 1) Eerst entry/stop/target berekenen
+        # Pak prijs en stop/target
         entry = float(get_price(coin))
         stop, target = compute_stop_target(entry)
 
-        # ====== 2) Zet op APPROVED vlak voor BUY (audit)
+        # Zet tijdelijk APPROVED (audit), maar bij failure -> terug naar PENDING
         item["status"] = STATUS_APPROVED
         item["approved_amount"] = float(amount)
         item["approved_at"] = int(time.time())
         save_pending(pending)
 
-        # ====== 3) BUY uitvoeren (compat)
+        # ✅ BELANGRIJKE FIX: buy_eur() ZONDER price=
+        log_event("BUY_CALL_SIGNATURE", {
+            "params": ["symbol", "amount_eur", "stop_loss", "target", "prebuy_id"],
+            "kw": {
+                "symbol": coin,
+                "amount_eur": float(amount),
+                "stop_loss": stop,
+                "target": target,
+                "prebuy_id": str(item.get("id") or ""),
+            }
+        })
+
         try:
-            buy_res = execute_buy_compat(
-                coin=coin,
+            buy_res = buy_eur(
+                symbol=coin,
                 amount_eur=float(amount),
-                entry=entry,
-                stop=stop,
+                stop_loss=stop,
                 target=target,
                 prebuy_id=str(item.get("id") or ""),
             )
         except Exception as e:
-            # rollback zodat je opnieuw YES kan doen
+            # rollback naar PENDING zodat je opnieuw kunt proberen
+            traceback.print_exc()
             item["status"] = STATUS_PENDING
-            item["last_error"] = str(e)[:250]
-            item["last_error_at"] = int(time.time())
+            item["buy_error"] = str(e)
+            item["buy_error_at"] = int(time.time())
             save_pending(pending)
 
-            log_event("BUY_EXCEPTION_ROLLBACK", {"id": item.get("id"), "coin": coin, "error": str(e)})
+            log_event("BUY_CALL_FATAL", {"coin": coin, "error": str(e)})
             return twiml("⚠️ BUY faalde (interne fout). Ik heb de Pre-BUY teruggezet naar PENDING. Probeer opnieuw.")
 
         if not isinstance(buy_res, dict) or not buy_res.get("ok"):
-            # rollback zodat je opnieuw YES kan doen
-            reason = (buy_res or {}).get("reason", "UNKNOWN")
+            # rollback naar PENDING zodat je opnieuw kunt proberen
             item["status"] = STATUS_PENDING
-            item["last_error"] = str(reason)[:250]
-            item["last_error_at"] = int(time.time())
+            item["buy_error"] = (buy_res or {}).get("reason", "UNKNOWN")
+            item["buy_error_at"] = int(time.time())
             save_pending(pending)
 
-            log_event("BUY_FAIL_ROLLBACK", {"id": item.get("id"), "coin": coin, "reason": reason})
-            return twiml(f"⛔ BUY mislukt: {reason}\nIk heb de Pre-BUY teruggezet naar PENDING. Probeer opnieuw.")
+            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item["buy_error"], "from": sender})
+            return twiml(f"⛔ BUY mislukt: {item.get('buy_error','UNKNOWN')}\nIk heb teruggezet naar PENDING.")
 
-        # ====== 4) CONSUMED + details
+        # CONSUMED
         item["status"] = STATUS_CONSUMED
         item["consumed_at"] = int(time.time())
         item["entry"] = round(entry, 8)
