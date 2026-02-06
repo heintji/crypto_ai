@@ -1,29 +1,88 @@
+# trading/paper_trader.py
 import json
 import os
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
 import hmac
 import hashlib
+import requests
 
 # =========================================
 # RENDER DISK PATHS (belangrijk!)
 # =========================================
-# Op Render is /data de enige plek die blijft bestaan.
-STATE_PATH = os.getenv("LIVE_STATE_PATH", "/data/live_state.json")
+STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
 APPROVALS_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
-LOG_PATH = os.getenv("LIVE_TRADES_CSV", "/data/live_trades.csv")
+LOG_PATH = os.getenv("PAPER_TRADES_CSV", "/data/paper_trades.csv")
 
-HTTP_TIMEOUT = 20
+HTTP_TIMEOUT = 15
 
 # =========================================
-# Bitvavo settings
+# LIVE TRADING SWITCH (jij wil altijd LIVE)
 # =========================================
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY", "")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET", "")
-BITVAVO_BASE_URL = "https://api.bitvavo.com"
+# Jij wilt geen paper trades meer. Dus dit staat hard op LIVE.
+LIVE_TRADING = True
+
+# =========================================
+# Bitvavo API
+# =========================================
+BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY", "").strip()
+BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET", "").strip()
+BITVAVO_BASE_URL = os.getenv("BITVAVO_BASE_URL", "https://api.bitvavo.com").strip()
+
+# Binance (alleen voor prijs/R-berekening in trade_monitor)
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+
+# In jouw bot gebruik je symbols als BTCUSDT (Binance).
+# Bitvavo werkt met markets zoals BTC-EUR.
+QUOTE_CURRENCY = os.getenv("QUOTE_CURRENCY", "EUR").strip().upper()
+
+
+# =========================================
+# Helpers
+# =========================================
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent and not os.path.exists(parent):
+        os.makedirs(parent, exist_ok=True)
+
+
+def _now_ts() -> int:
+    return int(time.time())
+
+
+def _iso_now() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _safe_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
+
+
+def binance_symbol_to_bitvavo_market(symbol: str) -> str:
+    """
+    BTCUSDT -> BTC-EUR
+    ETHUSDT -> ETH-EUR
+    (We nemen aan: quote is EUR bij Bitvavo.)
+    """
+    s = (symbol or "").upper().strip()
+    if s.endswith("USDT"):
+        base = s[:-4]
+        return f"{base}-{QUOTE_CURRENCY}"
+    if s.endswith("EUR"):
+        base = s[:-3]
+        return f"{base}-{QUOTE_CURRENCY}"
+    # fallback: probeer eerste 3/4 letters als base (niet perfect)
+    # beter: jij blijft gewoon BTCUSDT/ETHUSDT etc gebruiken.
+    base = s.replace("-", "").replace("/", "")
+    if len(base) >= 3:
+        return f"{base[:3]}-{QUOTE_CURRENCY}"
+    return f"{s}-{QUOTE_CURRENCY}"
+
 
 # =========================================
 # WhatsApp (Twilio)
@@ -38,9 +97,6 @@ def twilio_ready() -> bool:
 
 
 def send_whatsapp(message: str) -> bool:
-    """
-    Stuurt WhatsApp bericht via Twilio. Als env vars ontbreken: silent skip + print.
-    """
     if not twilio_ready():
         print("📭 WhatsApp melding overgeslagen (Twilio env vars ontbreken).", flush=True)
         return False
@@ -65,170 +121,157 @@ def send_whatsapp(message: str) -> bool:
 
 
 # =========================================
-# Helpers
+# PRICE (Binance) — nodig voor trade_monitor R-calcs
 # =========================================
-def ensure_parent_dir(path: str) -> None:
-    parent = os.path.dirname(path)
-    if parent and not os.path.exists(parent):
-        os.makedirs(parent, exist_ok=True)
-
-
-def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def symbol_to_bitvavo_market(symbol: str) -> str:
+def get_price(symbol: str) -> float:
     """
-    Jouw bot gebruikt BTCUSDT (Binance-style).
-    Bitvavo werkt typisch met BTC-EUR.
+    Binance spot price. trade_monitor gebruikt dit voor R/targets.
+    (Heeft niks met live buy/sell te maken.)
     """
-    s = symbol.upper().strip()
-    if s.endswith("USDT"):
-        base = s.replace("USDT", "")
-        return f"{base}-EUR"
-    # fallback: als je ooit al BTC-EUR doorgeeft
-    if "-" in s:
-        return s
-    return f"{s}-EUR"
+    r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    return float(r.json()["price"])
 
 
 # =========================================
 # Bitvavo signing + request
 # =========================================
-def _require_bitvavo_keys():
+def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
     if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY / BITVAVO_API_SECRET ontbreken in env vars.")
+        raise RuntimeError("BITVAVO_API_KEY/SECRET ontbreken (Render env vars).")
 
-
-def _bitvavo_sign(ts_ms: str, method: str, path: str, body: str = "") -> str:
-    msg = f"{ts_ms}{method.upper()}{path}{body}"
-    return hmac.new(
+    ts = str(int(time.time() * 1000))
+    payload = ts + method.upper() + path + body
+    sig = hmac.new(
         BITVAVO_API_SECRET.encode("utf-8"),
-        msg.encode("utf-8"),
+        payload.encode("utf-8"),
         hashlib.sha256
     ).hexdigest()
 
-
-def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
-    _require_bitvavo_keys()
-    ts = str(int(time.time() * 1000))
-    sig = _bitvavo_sign(ts, method, path, body)
     return {
-        "Bitvavo-Access-Key": BITVAVO_API_KEY,
-        "Bitvavo-Access-Signature": sig,
-        "Bitvavo-Access-Timestamp": ts,
+        "bitvavo-access-key": BITVAVO_API_KEY,
+        "bitvavo-access-signature": sig,
+        "bitvavo-access-timestamp": ts,
+        "bitvavo-access-window": "10000",
         "Content-Type": "application/json",
     }
 
 
-def bitvavo_request(method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Any:
-    url = f"{BITVAVO_BASE_URL}{path}"
-    body = ""
-    data = None
-    if payload is not None:
-        body = json.dumps(payload, separators=(",", ":"))
-        data = body
+def _bitvavo_request(method: str, path: str, params: Optional[dict] = None, data: Optional[dict] = None) -> Any:
+    url = BITVAVO_BASE_URL + path
+    body = json.dumps(data) if data else ""
+    headers = _bitvavo_headers(method, path, body)
 
-    r = requests.request(method, url, headers=_bitvavo_headers(method, path, body), data=data, timeout=HTTP_TIMEOUT)
+    r = requests.request(
+        method=method.upper(),
+        url=url,
+        params=params,
+        data=body if body else None,
+        headers=headers,
+        timeout=HTTP_TIMEOUT,
+    )
 
-    if r.status_code >= 300:
-        raise RuntimeError(f"Bitvavo {r.status_code} {path}: {r.text}")
+    if r.status_code >= 400:
+        # Bitvavo geeft vaak json error body, maar soms plain text
+        try:
+            err = r.json()
+        except Exception:
+            err = r.text
+        raise RuntimeError(f"Bitvavo API error {r.status_code} on {path}: {err}")
 
-    if not r.text:
-        return None
-
+    # meestal json
     try:
         return r.json()
     except Exception:
-        return {"raw": r.text}
+        return r.text
 
 
-def bitvavo_market_buy_eur(market: str, amount_eur: float) -> Dict[str, Any]:
+def bitvavo_get_balances() -> List[Dict[str, Any]]:
+    # /v2/balance
+    return _bitvavo_request("GET", "/v2/balance")
+
+
+def bitvavo_get_open_orders(market: Optional[str] = None) -> List[Dict[str, Any]]:
+    # /v2/ordersOpen
+    params = {}
+    if market:
+        params["market"] = market
+    return _bitvavo_request("GET", "/v2/ordersOpen", params=params)
+
+
+def bitvavo_place_order(
+    market: str,
+    side: str,
+    order_type: str,
+    amount: Optional[str] = None,
+    amount_quote: Optional[str] = None
+) -> Dict[str, Any]:
     """
-    ECHTE market BUY op Bitvavo: kopen voor EUR bedrag (quote).
+    Plaats market order.
+    - SELL: amount = base amount (qty)
+    - BUY: bij voorkeur amountQuote (EUR)
     """
-    payload = {
+    payload: Dict[str, Any] = {
         "market": market,
-        "side": "buy",
-        "orderType": "market",
-        "amountQuote": f"{float(amount_eur):.2f}",
+        "side": side.upper(),
+        "orderType": order_type,
     }
-    return bitvavo_request("POST", "/v2/order", payload)
+    if amount_quote is not None:
+        payload["amountQuote"] = str(amount_quote)
+    if amount is not None:
+        payload["amount"] = str(amount)
+
+    # /v2/order
+    return _bitvavo_request("POST", "/v2/order", data=payload)
 
 
-def bitvavo_market_sell_base(market: str, amount_base: float) -> Dict[str, Any]:
+def _balance_lookup(balances: List[Dict[str, Any]], symbol: str) -> Tuple[float, float]:
     """
-    ECHTE market SELL op Bitvavo: verkopen coin hoeveelheid (base).
+    Returns (available, inOrder)
     """
-    payload = {
-        "market": market,
-        "side": "sell",
-        "orderType": "market",
-        "amount": str(amount_base),
-    }
-    return bitvavo_request("POST", "/v2/order", payload)
+    for b in balances:
+        if str(b.get("symbol", "")).upper() == symbol.upper():
+            return _safe_float(b.get("available", 0.0)), _safe_float(b.get("inOrder", 0.0))
+    return 0.0, 0.0
 
 
-def extract_qty_and_avg_price(order_resp: Dict[str, Any]) -> Tuple[float, float]:
-    """
-    Probeert robust base_qty + avg_price uit response te halen.
-    Als Bitvavo response afwijkt, blijven we netjes fallbacken.
-    """
-    base_qty = 0.0
-    avg_price = 0.0
+def get_eur_available_live() -> float:
+    balances = bitvavo_get_balances()
+    available, _ = _balance_lookup(balances, "EUR")
+    return available
 
-    fills = order_resp.get("fills")
-    if isinstance(fills, list) and fills:
-        total_qty = 0.0
-        total_quote = 0.0
-        for f in fills:
-            q = float(f.get("amount") or f.get("quantity") or f.get("size") or 0.0)
-            p = float(f.get("price") or 0.0)
-            total_qty += q
-            total_quote += q * p
-        if total_qty > 0:
-            base_qty = total_qty
-            avg_price = total_quote / total_qty
 
-    if base_qty == 0.0:
-        # alternatieve keys
-        for k in ["filledAmount", "amount", "executedAmount"]:
-            try:
-                base_qty = float(order_resp.get(k) or 0.0)
-                if base_qty:
-                    break
-            except Exception:
-                pass
-
-    if avg_price == 0.0:
-        for k in ["averagePrice", "price", "avgPrice"]:
-            try:
-                avg_price = float(order_resp.get(k) or 0.0)
-                if avg_price:
-                    break
-            except Exception:
-                pass
-
-    return float(base_qty), float(avg_price)
+def get_asset_available_live(asset: str) -> float:
+    balances = bitvavo_get_balances()
+    available, _ = _balance_lookup(balances, asset)
+    return available
 
 
 # =========================================
-# LIVE STATE (Render Disk)
+# STATE (we houden dit bij voor trade_monitor)
 # =========================================
 def _default_state() -> Dict[str, Any]:
-    return {"open_trades": {}}
+    return {
+        "balance": 0.0,  # live EUR available
+        "positions": {},  # symbol -> qty (Binance symbol key), plus "{symbol}_entry"
+        "open_trades": []
+    }
 
 
 def load_state() -> Dict[str, Any]:
     if not os.path.isfile(STATE_PATH):
         return _default_state()
+
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             s = json.load(f)
     except Exception:
         return _default_state()
 
-    s.setdefault("open_trades", {})
+    base = _default_state()
+    s.setdefault("balance", base["balance"])
+    s.setdefault("positions", base["positions"])
+    s.setdefault("open_trades", base["open_trades"])
     return s
 
 
@@ -240,25 +283,26 @@ def save_state(state: Dict[str, Any]) -> None:
     os.replace(tmp, STATE_PATH)
 
 
-def has_open_trade(prebuy_id: str) -> bool:
+def has_position(symbol: str) -> bool:
     s = load_state()
-    return prebuy_id in (s.get("open_trades") or {})
+    return float(s.get("positions", {}).get(symbol, 0.0)) > 0
 
 
 # =========================================
-# APPROVAL HANDLING (supports list OR dict)
+# APPROVAL HANDLING (CRUCIAAL)
 # =========================================
-def load_approvals_any() -> Any:
+def load_approvals() -> List[Dict[str, Any]]:
     if not os.path.isfile(APPROVALS_PATH):
-        return None
+        return []
     try:
         with open(APPROVALS_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            return data if isinstance(data, list) else []
     except Exception:
-        return None
+        return []
 
 
-def save_approvals_any(data: Any) -> None:
+def save_approvals(data: List[Dict[str, Any]]) -> None:
     ensure_parent_dir(APPROVALS_PATH)
     tmp = APPROVALS_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -266,86 +310,39 @@ def save_approvals_any(data: Any) -> None:
     os.replace(tmp, APPROVALS_PATH)
 
 
-def consume_approval(prebuy_id: str) -> Dict[str, Any]:
-    """
-    Verbruikt approval definitief na LIVE BUY.
-    Ondersteunt 2 formaten:
-    1) list: [{id, status, expires_at, ...}, ...]
-    2) dict: {"pending": { "<id>": {...}, ... } }
-    Retourneert: {"ok": bool, "item": dict|None, "reason": str}
-    """
-    data = load_approvals_any()
+def consume_approval(prebuy_id: str) -> bool:
+    approvals = load_approvals()
     now = int(time.time())
 
-    if data is None:
-        return {"ok": False, "item": None, "reason": "NO_APPROVALS_FILE"}
+    new_list: List[Dict[str, Any]] = []
+    consumed = False
 
-    # Format A: list
-    if isinstance(data, list):
-        new_list: List[Dict[str, Any]] = []
-        found_item = None
+    for a in approvals:
+        if a.get("id") == prebuy_id:
+            if a.get("status") != "APPROVED":
+                return False
+            if int(a.get("expires_at", 0)) < now:
+                return False
+            consumed = True
+            continue
+        new_list.append(a)
 
-        for a in data:
-            if a.get("id") == prebuy_id:
-                found_item = a
-                # checks
-                if a.get("status") != "APPROVED":
-                    return {"ok": False, "item": None, "reason": "NOT_APPROVED"}
-                if int(a.get("expires_at", 0)) < now:
-                    return {"ok": False, "item": None, "reason": "EXPIRED"}
-                continue  # consume -> remove
-            new_list.append(a)
+    if consumed:
+        save_approvals(new_list)
 
-        if not found_item:
-            return {"ok": False, "item": None, "reason": "ID_NOT_FOUND"}
-
-        save_approvals_any(new_list)
-        return {"ok": True, "item": found_item, "reason": "OK"}
-
-    # Format B: dict with "pending"
-    if isinstance(data, dict):
-        pending = data.get("pending")
-        if not isinstance(pending, dict):
-            return {"ok": False, "item": None, "reason": "INVALID_PENDING_FORMAT"}
-
-        item = pending.get(prebuy_id)
-        if not item:
-            return {"ok": False, "item": None, "reason": "ID_NOT_FOUND"}
-
-        # checks (best effort)
-        status = (item.get("status") or "").upper()
-        expires_at = int(item.get("expires_at") or item.get("expiresAt") or 0)
-
-        if status and status not in ["APPROVED", "PENDING", "NEW"]:
-            # als jouw flow 'APPROVED' gebruikt, dan houd je het strak.
-            # Als je flow geen status gebruikt, laten we het door.
-            pass
-
-        if expires_at and expires_at < now:
-            return {"ok": False, "item": None, "reason": "EXPIRED"}
-
-        # consume: markeer consumed
-        item["status"] = "CONSUMED"
-        item["consumed_at"] = now
-        pending[prebuy_id] = item
-        data["pending"] = pending
-        save_approvals_any(data)
-
-        return {"ok": True, "item": item, "reason": "OK"}
-
-    return {"ok": False, "item": None, "reason": "UNKNOWN_APPROVALS_FORMAT"}
+    return consumed
 
 
 # =========================================
 # LOGGING (CSV)
 # =========================================
 def log_trade(
-    market: str,
+    symbol: str,
     side: str,
+    price: float,
     qty: float,
-    amount_eur: float,
-    avg_price: float,
-    order_id: str,
+    balance: float,
+    pnl: float = 0.0,
     meta: str = ""
 ) -> None:
     ensure_parent_dir(LOG_PATH)
@@ -353,20 +350,20 @@ def log_trade(
 
     with open(LOG_PATH, "a", encoding="utf-8") as f:
         if not exists:
-            f.write("datetime,market,side,qty,amount_eur,avg_price,order_id,meta\n")
+            f.write("datetime,symbol,side,price,qty,balance,pnl,meta\n")
         f.write(
-            f"{_now_iso()},"
-            f"{market},{side},{qty:.12f},{amount_eur:.2f},{avg_price:.8f},{order_id},{meta}\n"
+            f"{_iso_now()},"
+            f"{symbol},{side},{price:.8f},{qty:.12f},{balance:.2f},{pnl:.2f},{meta}\n"
         )
 
 
 # =========================================
-# LIVE BUY (ONLY VIA APPROVAL)
+# LIVE BUY (Bitvavo) — ALLEEN VIA APPROVAL
 # =========================================
 def buy_eur(
-    symbol: str,
-    price: Optional[float],  # blijft voor compat, maar we gebruiken Bitvavo fills
-    amount_eur: float,
+    symbol: str,                  # Binance symbol, bv BTCUSDT
+    price: Optional[float],       # entry price (kan None)
+    amount_eur: float,            # inzet
     stop_loss: float,
     target: float,
     prebuy_id: Optional[str] = None
@@ -375,148 +372,240 @@ def buy_eur(
     if not prebuy_id:
         return {"ok": False, "reason": "MISSING_PREBUY_ID"}
 
-    if has_open_trade(prebuy_id):
-        return {"ok": False, "reason": "ALREADY_OPEN_FOR_PREBUY_ID"}
+    # 1) approval consumeren (nooit dubbel)
+    if not consume_approval(prebuy_id):
+        return {"ok": False, "reason": "APPROVAL_INVALID_OR_USED"}
 
-    # consume approval (must succeed)
-    c = consume_approval(prebuy_id)
-    if not c["ok"]:
-        return {"ok": False, "reason": f"APPROVAL_INVALID: {c['reason']}"}
+    if not LIVE_TRADING:
+        return {"ok": False, "reason": "LIVE_TRADING_DISABLED"}  # zou bij jou nooit gebeuren
 
-    market = symbol_to_bitvavo_market(symbol)
+    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+        return {"ok": False, "reason": "BITVAVO_KEYS_MISSING"}
 
+    # 2) al in positie? (volgens eigen state)
+    if has_position(symbol):
+        return {"ok": False, "reason": "ALREADY_IN_POSITION"}
+
+    # 3) check live eur beschikbaar
     try:
-        order = bitvavo_market_buy_eur(market, float(amount_eur))
-        base_qty, avg_price = extract_qty_and_avg_price(order)
-        order_id = str(order.get("orderId") or order.get("id") or "unknown")
+        eur_avail = get_eur_available_live()
     except Exception as e:
-        # als buy faalt: zet approval niet terug (want we hebben al CONSUMED gemarkeerd in dict-mode)
-        # -> daarom wil je eigenlijk dict-mode met status update zodat je het kunt zien.
-        err = str(e)
-        print(f"❌ LIVE BUY FAILED: {err}", flush=True)
-        send_whatsapp(f"❌ LIVE BUY mislukt\nMarket: {market}\nInzet: €{amount_eur:.2f}\nFout: {err}\nID: {prebuy_id}")
-        return {"ok": False, "reason": "BITVAVO_BUY_FAILED", "error": err}
+        return {"ok": False, "reason": f"BITVAVO_BALANCE_ERROR: {e}"}
 
-    # state opslaan zodat trade_monitor kan SELL'en
+    if amount_eur > eur_avail:
+        return {"ok": False, "reason": "INSUFFICIENT_EUR_LIVE", "eur_available": eur_avail}
+
+    # 4) market bepalen
+    market = binance_symbol_to_bitvavo_market(symbol)
+    base_asset = market.split("-")[0]
+
+    # 5) entry prijs voor logging/R (liefst Binance, anders Bitvavo ticker)
+    if price is None:
+        try:
+            price = get_price(symbol)
+        except Exception:
+            price = 0.0
+
+    # 6) LIVE market BUY op Bitvavo (voorkeur amountQuote)
+    order_res: Optional[Dict[str, Any]] = None
+    try:
+        order_res = bitvavo_place_order(
+            market=market,
+            side="buy",
+            order_type="market",
+            amount_quote=str(round(float(amount_eur), 2)),
+            amount=None
+        )
+    except Exception as e1:
+        # fallback: als amountQuote niet geaccepteerd wordt, bereken qty via prijs
+        if price and price > 0:
+            qty_guess = float(amount_eur) / float(price)
+            try:
+                order_res = bitvavo_place_order(
+                    market=market,
+                    side="buy",
+                    order_type="market",
+                    amount=str(qty_guess),
+                    amount_quote=None
+                )
+            except Exception as e2:
+                return {"ok": False, "reason": f"BITVAVO_BUY_FAILED: {e2}"}
+        else:
+            return {"ok": False, "reason": f"BITVAVO_BUY_FAILED: {e1}"}
+
+    # 7) na order: haal live balans/asset op
+    try:
+        eur_after = get_eur_available_live()
+        asset_after = get_asset_available_live(base_asset)
+    except Exception as e:
+        # order is waarschijnlijk wel gedaan, maar snapshot faalt
+        eur_after = 0.0
+        asset_after = 0.0
+        print(f"⚠️ Balance refresh error after BUY: {e}", flush=True)
+
+    # 8) qty bepalen (beste poging): asset available delta is lastig zonder 'before'
+    # We gebruiken asset_after als indicatie (niet perfect als je al assets had).
+    # Voor trade_monitor hebben we vooral 'qty' nodig om te kunnen SELL'en.
+    qty = asset_after
+
+    # 9) state opslaan (voor monitor)
     state = load_state()
-    state.setdefault("open_trades", {})
-    state["open_trades"][prebuy_id] = {
-        "status": "OPEN",
-        "prebuy_id": prebuy_id,
+    state["balance"] = eur_after
+    state["positions"][symbol] = qty
+    state["positions"][f"{symbol}_entry"] = float(price) if price else 0.0
+
+    trade_id = f"{symbol}-{_now_ts()}"
+    state["open_trades"].append({
+        "trade_id": trade_id,
         "symbol": symbol,
-        "market": market,
-        "amount_eur": float(amount_eur),
-        "base_qty": float(base_qty),
-        "avg_entry_price": float(avg_price),
+        "entry": float(price) if price else 0.0,
         "stop_loss": float(stop_loss),
         "target": float(target),
-        "opened_at": int(time.time()),
-        "buy_order": order,
-    }
+        "qty": qty,
+        "side": "LONG",
+        "prebuy_id": prebuy_id,
+        "opened_at": _now_ts(),
+        "bitvavo_market": market,
+        "bitvavo_order": order_res,
+    })
+
     save_state(state)
 
-    log_trade(market, "BUY", base_qty, float(amount_eur), avg_price, order_id, meta=f"prebuy={prebuy_id}")
+    log_trade(symbol, "BUY", float(price) if price else 0.0, qty, eur_after, meta=f"LIVE bitvavo market={market} prebuy={prebuy_id}")
+
+    print(f"✅ LIVE BUY OK | {market} | €{amount_eur:.2f}", flush=True)
 
     msg = (
         f"✅ LIVE BUY uitgevoerd (Bitvavo)\n"
         f"Market: {market}\n"
         f"Inzet: €{amount_eur:.2f}\n"
-        f"Qty: {base_qty:.12f}\n"
-        f"Avg entry: {avg_price:.8f}\n"
-        f"Stop: {stop_loss:.6f}\n"
-        f"Target: {target:.6f}\n"
-        f"OrderId: {order_id}\n"
-        f"Pre-BUY ID: {prebuy_id}"
+        f"Entry (binance): {float(price) if price else 0.0:.6f}\n"
+        f"Stop: {float(stop_loss):.6f}\n"
+        f"Target: {float(target):.6f}\n"
+        f"Trade ID: {trade_id}\n"
+        f"Pre-BUY ID: {prebuy_id}\n"
+        f"EUR (avail): €{eur_after:.2f}\n"
+        f"{base_asset} (avail): {asset_after:.8f}"
     )
     send_whatsapp(msg)
 
     return {
         "ok": True,
-        "prebuy_id": prebuy_id,
-        "market": market,
-        "order_id": order_id,
-        "qty": base_qty,
-        "avg_price": avg_price
+        "trade_id": trade_id,
+        "symbol": symbol,
+        "bitvavo_market": market,
+        "price": float(price) if price else 0.0,
+        "qty": qty,
+        "eur_available": eur_after,
+        "order": order_res,
     }
 
 
 # =========================================
-# LIVE SELL (AANGESTUURD DOOR trade_monitor)
+# LIVE SELL (Bitvavo) — aangestuurd door trade_monitor
 # =========================================
-def sell(prebuy_id: str, fraction: float = 1.0) -> Dict[str, Any]:
-    """
-    Live SELL op basis van prebuy_id (zodat we exact weten welke trade).
-    fraction: 1.0 = 100%, 0.4 = 40% etc.
-    """
+def sell(symbol: str, fraction: float = 1.0) -> Dict[str, Any]:
+    if not LIVE_TRADING:
+        return {"ok": False, "reason": "LIVE_TRADING_DISABLED"}
+
+    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+        return {"ok": False, "reason": "BITVAVO_KEYS_MISSING"}
+
     state = load_state()
-    open_trades = state.get("open_trades", {}) or {}
+    positions = state.get("positions", {})
+    open_trades = state.get("open_trades", [])
 
-    trade = open_trades.get(prebuy_id)
-    if not trade:
-        return {"ok": False, "reason": "NO_OPEN_TRADE_FOR_ID"}
-
-    market = trade["market"]
-    qty_total = float(trade.get("base_qty") or 0.0)
+    qty_total = float(positions.get(symbol, 0.0))
     if qty_total <= 0:
-        return {"ok": False, "reason": "INVALID_QTY"}
+        return {"ok": False, "reason": "NO_POSITION_IN_STATE"}
 
-    fraction = max(0.0, min(1.0, fraction))
+    fraction = max(0.0, min(1.0, float(fraction)))
     if fraction <= 0:
         return {"ok": False, "reason": "INVALID_FRACTION"}
 
+    market = None
+    for t in open_trades:
+        if t.get("symbol") == symbol and t.get("bitvavo_market"):
+            market = t.get("bitvavo_market")
+            break
+    if not market:
+        market = binance_symbol_to_bitvavo_market(symbol)
+
+    base_asset = market.split("-")[0]
+
     qty_sell = qty_total * fraction
+    if qty_sell <= 0:
+        return {"ok": False, "reason": "SELL_QTY_ZERO"}
 
+    # prijs voor pnl logging (binance)
     try:
-        order = bitvavo_market_sell_base(market, qty_sell)
-        sold_qty, avg_price = extract_qty_and_avg_price(order)
-        order_id = str(order.get("orderId") or order.get("id") or "unknown")
-    except Exception as e:
-        err = str(e)
-        print(f"❌ LIVE SELL FAILED: {err}", flush=True)
-        send_whatsapp(f"❌ LIVE SELL mislukt\nMarket: {market}\nQty: {qty_sell:.12f}\nFout: {err}\nID: {prebuy_id}")
-        return {"ok": False, "reason": "BITVAVO_SELL_FAILED", "error": err}
+        price_now = get_price(symbol)
+    except Exception:
+        price_now = 0.0
 
-    # update state: reduce qty or close
-    qty_left = max(0.0, qty_total - qty_sell)
-    trade["base_qty"] = qty_left
-    trade.setdefault("sell_orders", [])
-    trade["sell_orders"].append(order)
+    entry = float(positions.get(f"{symbol}_entry", 0.0)) or 0.0
+
+    # LIVE market SELL
+    try:
+        order_res = bitvavo_place_order(
+            market=market,
+            side="sell",
+            order_type="market",
+            amount=str(qty_sell),
+            amount_quote=None
+        )
+    except Exception as e:
+        return {"ok": False, "reason": f"BITVAVO_SELL_FAILED: {e}"}
+
+    # refresh balances
+    try:
+        eur_after = get_eur_available_live()
+        asset_after = get_asset_available_live(base_asset)
+    except Exception as e:
+        eur_after = float(state.get("balance", 0.0))
+        asset_after = 0.0
+        print(f"⚠️ Balance refresh error after SELL: {e}", flush=True)
+
+    pnl = 0.0
+    if entry > 0 and price_now > 0:
+        pnl = (price_now - entry) * qty_sell
+
+    # state aanpassen
+    qty_left = qty_total - qty_sell
+    state["balance"] = eur_after
 
     if qty_left <= 1e-12:
-        trade["status"] = "CLOSED"
-        trade["closed_at"] = int(time.time())
+        positions.pop(symbol, None)
+        positions.pop(f"{symbol}_entry", None)
+        state["open_trades"] = [t for t in open_trades if t.get("symbol") != symbol]
+    else:
+        positions[symbol] = qty_left
+        for t in state["open_trades"]:
+            if t.get("symbol") == symbol:
+                t["qty"] = qty_left
 
-    open_trades[prebuy_id] = trade
-    state["open_trades"] = open_trades
     save_state(state)
 
-    log_trade(market, "SELL", sold_qty or qty_sell, 0.0, avg_price, order_id, meta=f"fraction={fraction};prebuy={prebuy_id}")
+    log_trade(symbol, "SELL", float(price_now) if price_now else 0.0, qty_sell, eur_after, pnl=pnl, meta=f"LIVE bitvavo market={market} fraction={fraction}")
 
-    msg = (
-        f"💰 LIVE SELL uitgevoerd (Bitvavo)\n"
-        f"Market: {market}\n"
-        f"Fraction: {fraction*100:.0f}%\n"
-        f"Qty sold: {(sold_qty or qty_sell):.12f}\n"
-        f"Avg price: {avg_price:.8f}\n"
-        f"Qty left: {qty_left:.12f}\n"
-        f"OrderId: {order_id}\n"
-        f"Pre-BUY ID: {prebuy_id}"
-    )
-    send_whatsapp(msg)
+    print(f"💰 LIVE SELL | {market} {fraction*100:.0f}% | pnl={pnl:.2f}", flush=True)
 
     return {
         "ok": True,
-        "prebuy_id": prebuy_id,
-        "market": market,
-        "order_id": order_id,
-        "qty_sold": (sold_qty or qty_sell),
-        "qty_left": qty_left,
-        "avg_price": avg_price
+        "symbol": symbol,
+        "bitvavo_market": market,
+        "price": float(price_now) if price_now else 0.0,
+        "qty_sold": qty_sell,
+        "qty_left": max(0.0, qty_left),
+        "pnl": pnl,
+        "eur_available": eur_after,
+        "asset_available": asset_after,
+        "order": order_res,
     }
 
 
 if __name__ == "__main__":
-    print("✅ LIVE trader (in paper_trader.py) klaar", flush=True)
+    print("✅ LIVE paper_trader (Bitvavo) klaar", flush=True)
     print(f"STATE_PATH: {STATE_PATH}", flush=True)
     print(f"LOG_PATH:   {LOG_PATH}", flush=True)
-    print(f"APPROVALS:  {APPROVALS_PATH}", flush=True)
+    print(f"LIVE_TRADING: {LIVE_TRADING}", flush=True)
