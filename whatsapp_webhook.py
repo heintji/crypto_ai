@@ -17,7 +17,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Paper trader / execution (volgens jouw structuur: BUY via paper_trader)
+# Paper trader alleen hier gebruiken voor BUY (jouw structuur)
+# BELANGRIJK: buy_eur signature = (symbol, amount_eur, stop_loss, target, prebuy_id)
 from trading.paper_trader import buy_eur, get_price  # noqa: E402
 
 app = Flask(__name__)
@@ -32,7 +33,7 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
 WHATSAPP_FROM = os.getenv("WHATSAPP_FROM", "").strip()  # bv: "whatsapp:+14155238886"
 WHATSAPP_TO = os.getenv("WHATSAPP_TO", "").strip()      # bv: "whatsapp:+316..."
 
-# Render Disk pad (BELANGRIJK: /data)
+# Render Disk pad (BELANGRIJK: /data, niet /project/src/data)
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").strip()
 PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
 
@@ -49,6 +50,7 @@ STATUS_APPROVED = "APPROVED"
 STATUS_CONSUMED = "CONSUMED"
 STATUS_REJECTED = "REJECTED"
 STATUS_ERROR = "ERROR"
+STATUS_PROCESSING = "PROCESSING"
 
 # ==========================================================
 # FILE HELPERS
@@ -59,6 +61,7 @@ def ensure_file() -> None:
         with open(PENDING_PATH, "w", encoding="utf-8") as f:
             json.dump([], f, indent=2, ensure_ascii=False)
 
+
 def load_pending() -> List[Dict[str, Any]]:
     ensure_file()
     try:
@@ -67,6 +70,7 @@ def load_pending() -> List[Dict[str, Any]]:
         return data if isinstance(data, list) else []
     except Exception:
         return []
+
 
 def save_pending(data: List[Dict[str, Any]]) -> None:
     ensure_file()
@@ -104,9 +108,11 @@ def _to_int_seconds(ts: Any) -> Optional[int]:
         x = int(ts)
     except Exception:
         return None
-    if x > 10**12:  # ms -> s
+    # ms support
+    if x > 10**12:
         x = int(x / 1000)
     return x
+
 
 def is_expired(expires_at: Any) -> bool:
     now_s = int(time.time())
@@ -114,6 +120,7 @@ def is_expired(expires_at: Any) -> bool:
     if x is None:
         return False
     return x < now_s
+
 
 def remaining_text(expires_at: Any) -> str:
     now_s = int(time.time())
@@ -142,6 +149,7 @@ def find_by_id(pending: List[Dict[str, Any]], pid: str) -> Optional[Dict[str, An
             return p
     return None
 
+
 def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
     parts = body.strip().split()
     if len(parts) >= 2 and parts[0].upper() == "YES" and parts[1].isdigit():
@@ -150,11 +158,13 @@ def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
         return amount, pid
     return None, None
 
+
 def parse_no(body: str) -> Optional[str]:
     parts = body.strip().split()
     if parts and parts[0].upper() == "NO":
         return parts[1].strip() if len(parts) >= 2 else None
     return None
+
 
 def compute_stop_target(entry: float) -> Tuple[float, float]:
     stop = entry * (1.0 - STOP_PCT)
@@ -168,7 +178,12 @@ def compute_stop_target(entry: float) -> Tuple[float, float]:
 def twilio_ready() -> bool:
     return all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WHATSAPP_FROM, WHATSAPP_TO])
 
+
 def send_whatsapp_outbound(message: str) -> bool:
+    """
+    Stuurt een WhatsApp bericht OUTBOUND via Twilio.
+    Dit is voor automatische PRE-BUY push.
+    """
     if not twilio_ready():
         log_event("TWILIO_NOT_READY", {
             "has_sid": bool(TWILIO_ACCOUNT_SID),
@@ -193,6 +208,7 @@ def send_whatsapp_outbound(message: str) -> bool:
     except Exception as e:
         log_event("TWILIO_SEND_ERROR", {"error": str(e)})
         return False
+
 
 def format_prebuy_push(p: Dict[str, Any]) -> str:
     coin = p.get("coin", "?")
@@ -236,6 +252,11 @@ def format_prebuy_push(p: Dict[str, Any]) -> str:
 # ==========================================================
 @app.post("/internal/prebuy")
 def internal_prebuy():
+    """
+    multi_coin_score.py -> POST /internal/prebuy
+    Header: X-Internal-Token: <INTERNAL_TOKEN>
+    JSON body: prebuy dict
+    """
     try:
         token = (request.headers.get("X-Internal-Token") or "").strip()
         if not INTERNAL_TOKEN:
@@ -255,19 +276,21 @@ def internal_prebuy():
         if not pid or not coin:
             return jsonify({"ok": False, "error": "missing id/coin"}), 400
 
-        if status not in {STATUS_PENDING, STATUS_APPROVED, STATUS_CONSUMED, STATUS_REJECTED, STATUS_ERROR}:
+        if status not in {STATUS_PENDING, STATUS_APPROVED, STATUS_CONSUMED, STATUS_REJECTED, STATUS_ERROR, STATUS_PROCESSING}:
             status = STATUS_PENDING
 
         pending = load_pending()
 
         # idempotent: geen duplicates
-        if any(str(p.get("id", "")).strip() == pid for p in pending):
+        exists = any(str(p.get("id", "")).strip() == pid for p in pending)
+        if exists:
             log_event("INTERNAL_PREBUY_DUPLICATE", {"id": pid, "coin": coin})
             return jsonify({"ok": True, "duplicate": True}), 200
 
         if "created_at" not in data:
             data["created_at"] = int(time.time())
 
+        # expiry default 4 uur als leeg
         ex = _to_int_seconds(expires_at)
         if ex is None:
             ex = int(time.time()) + 4 * 60 * 60
@@ -280,7 +303,7 @@ def internal_prebuy():
 
         log_event("INTERNAL_PREBUY_SAVED", {"id": pid, "coin": coin, "pending_file": PENDING_PATH})
 
-        # push
+        # pushen naar WhatsApp (alleen als PENDING en niet verlopen)
         pushed = False
         if status == STATUS_PENDING and not is_expired(ex):
             msg = format_prebuy_push(data)
@@ -317,12 +340,6 @@ def whatsapp():
         up = body.upper().strip()
         pending = load_pending()
 
-        def active_pending() -> List[Dict[str, Any]]:
-            return [
-                p for p in pending
-                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
-            ]
-
         # HELP
         if up == "HELP":
             return twiml(
@@ -334,6 +351,12 @@ def whatsapp():
                 "Voorbeeld:\n"
                 "YES 10 PB-BTCUSDT-123"
             )
+
+        def active_pending() -> List[Dict[str, Any]]:
+            return [
+                p for p in pending
+                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
+            ]
 
         # LIST
         if up == "LIST":
@@ -418,10 +441,15 @@ def whatsapp():
 
         status = str(item.get("status", "")).upper()
 
+        # Als je eerder bleef hangen: PROCESSING/APPROVED, dan niet blokkeren — stuur duidelijke melding
         if status == STATUS_CONSUMED:
             return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED).\nID: {item.get('id','?')}")
-        if status != STATUS_PENDING:
-            return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
+        if status == STATUS_REJECTED:
+            return twiml(f"⚠️ Deze Pre-BUY is afgewezen (REJECTED).\nID: {item.get('id','?')}")
+        if status == STATUS_ERROR:
+            return twiml(f"⚠️ Deze Pre-BUY had eerder een fout (ERROR). Stuur LIST voor nieuwe.\nID: {item.get('id','?')}")
+        if status == STATUS_APPROVED:
+            return twiml(f"⚠️ Deze Pre-BUY staat nog op APPROVED (oude poging). Ik zet 'm terug naar PENDING.\nStuur opnieuw: YES {amount} {item.get('id','?')}")
 
         if is_expired(item.get("expires_at", 0)):
             return twiml("⚠️ Deze Pre-BUY is verlopen. Wacht op een nieuwe.")
@@ -430,58 +458,62 @@ def whatsapp():
         if not coin:
             return twiml("⚠️ Pre-BUY mist 'coin'. Check storage.")
 
-        # Pak prijs en stop/target
-        entry = float(get_price(coin))
-        stop, target = compute_stop_target(entry)
-
-        # Zet tijdelijk APPROVED (audit), maar bij failure -> terug naar PENDING
-        item["status"] = STATUS_APPROVED
-        item["approved_amount"] = float(amount)
-        item["approved_at"] = int(time.time())
+        # ----------------------------------------------------------
+        # BELANGRIJKE FIX:
+        # We zetten NIET eerst naar APPROVED.
+        # We zetten naar PROCESSING. Bij fout -> terug naar PENDING.
+        # ----------------------------------------------------------
+        item["status"] = STATUS_PROCESSING
+        item["processing_amount"] = float(amount)
+        item["processing_at"] = int(time.time())
         save_pending(pending)
 
-        # ✅ BELANGRIJKE FIX: buy_eur() ZONDER price=
-        log_event("BUY_CALL_SIGNATURE", {
-            "params": ["symbol", "amount_eur", "stop_loss", "target", "prebuy_id"],
-            "kw": {
-                "symbol": coin,
-                "amount_eur": float(amount),
-                "stop_loss": stop,
-                "target": target,
-                "prebuy_id": str(item.get("id") or ""),
-            }
-        })
-
+        # 1) Entry + stop/target (alleen voor logging/bericht)
         try:
+            entry = float(get_price(coin))
+        except Exception as e:
+            item["status"] = STATUS_PENDING
+            item["last_error"] = f"GET_PRICE_FAIL: {e}"
+            item["error_at"] = int(time.time())
+            save_pending(pending)
+            log_event("GET_PRICE_FAIL", {"id": item.get("id"), "coin": coin, "error": str(e)})
+            return twiml("⚠️ Kon prijs niet ophalen. Ik heb de Pre-BUY teruggezet naar PENDING. Probeer opnieuw.")
+
+        stop, target = compute_stop_target(entry)
+
+        # 2) BUY uitvoeren
+        try:
+            # buy_eur signature zonder 'price' (zoals je logs aangeven)
             buy_res = buy_eur(
                 symbol=coin,
                 amount_eur=float(amount),
-                stop_loss=stop,
-                target=target,
+                stop_loss=float(stop),
+                target=float(target),
                 prebuy_id=str(item.get("id") or ""),
             )
         except Exception as e:
-            # rollback naar PENDING zodat je opnieuw kunt proberen
-            traceback.print_exc()
+            # Terug naar PENDING zodat je opnieuw kunt proberen
             item["status"] = STATUS_PENDING
-            item["buy_error"] = str(e)
-            item["buy_error_at"] = int(time.time())
+            item["last_error"] = str(e)
+            item["error_at"] = int(time.time())
             save_pending(pending)
 
-            log_event("BUY_CALL_FATAL", {"coin": coin, "error": str(e)})
+            log_event("BUY_EXCEPTION", {"id": item.get("id"), "coin": coin, "error": str(e), "from": sender})
             return twiml("⚠️ BUY faalde (interne fout). Ik heb de Pre-BUY teruggezet naar PENDING. Probeer opnieuw.")
 
         if not isinstance(buy_res, dict) or not buy_res.get("ok"):
-            # rollback naar PENDING zodat je opnieuw kunt proberen
             item["status"] = STATUS_PENDING
-            item["buy_error"] = (buy_res or {}).get("reason", "UNKNOWN")
-            item["buy_error_at"] = int(time.time())
+            item["last_error"] = (buy_res or {}).get("reason", "UNKNOWN")
+            item["error_at"] = int(time.time())
             save_pending(pending)
 
-            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item["buy_error"], "from": sender})
-            return twiml(f"⛔ BUY mislukt: {item.get('buy_error','UNKNOWN')}\nIk heb teruggezet naar PENDING.")
+            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item["last_error"], "from": sender})
+            return twiml(f"⛔ BUY mislukt: {item['last_error']}\nIk heb de Pre-BUY teruggezet naar PENDING.")
 
-        # CONSUMED
+        # 3) Succes -> nu pas APPROVED + CONSUMED (audit-proof)
+        item["approved_amount"] = float(amount)
+        item["approved_at"] = int(time.time())
+
         item["status"] = STATUS_CONSUMED
         item["consumed_at"] = int(time.time())
         item["entry"] = round(entry, 8)
@@ -489,6 +521,11 @@ def whatsapp():
         item["target"] = round(target, 8)
         item["qty"] = round(float(buy_res.get("qty", 0.0)), 10)
         item["trade_id"] = buy_res.get("trade_id")
+
+        # cleanup processing fields
+        item.pop("processing_amount", None)
+        item.pop("processing_at", None)
+
         save_pending(pending)
 
         log_event("BUY_OK", {"id": item.get("id"), "coin": coin, "amount": amount, "trade_id": item.get("trade_id"), "from": sender})
