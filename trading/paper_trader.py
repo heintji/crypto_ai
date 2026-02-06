@@ -1,105 +1,95 @@
 # trading/paper_trader.py
+# =========================================
+# LIVE TRADER (Bitvavo) – single source of truth
+# =========================================
+
 import os
-import json
 import time
+import json
 import hmac
 import hashlib
 import requests
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 
-# =========================================================
-# 🔐 Bitvavo API
-# =========================================================
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY", "")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET", "")
+# =========================================
+# ENV
+# =========================================
+BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
+BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
+
+if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+    raise RuntimeError("❌ BITVAVO_API_KEY / SECRET ontbreken")
+
 BASE_URL = "https://api.bitvavo.com/v2"
 
-# =========================================================
-# 📁 Render Disk paths
-# =========================================================
 STATE_PATH = "/data/paper_state.json"
-APPROVALS_PATH = "/data/pending_approvals.json"
 LOG_PATH = "/data/paper_trades.csv"
+APPROVALS_PATH = "/data/pending_approvals.json"
 
 HTTP_TIMEOUT = 15
 
-# =========================================================
-# Helpers
-# =========================================================
-def _now() -> int:
-    return int(time.time())
 
-def _ensure_dir(path: str):
-    d = os.path.dirname(path)
-    if d and not os.path.exists(d):
-        os.makedirs(d, exist_ok=True)
-
-def _sign(method: str, path: str, body: str = "") -> Dict[str, str]:
-    ts = str(int(time.time() * 1000))
-    msg = ts + method + path + body
-    sig = hmac.new(
+# =========================================
+# HELPERS
+# =========================================
+def _sign(timestamp: str, method: str, path: str, body: str = "") -> str:
+    msg = timestamp + method + path + body
+    return hmac.new(
         BITVAVO_API_SECRET.encode(),
         msg.encode(),
         hashlib.sha256
     ).hexdigest()
+
+
+def _headers(method: str, path: str, body: str = "") -> Dict[str, str]:
+    ts = str(int(time.time() * 1000))
     return {
         "Bitvavo-Access-Key": BITVAVO_API_KEY,
-        "Bitvavo-Access-Signature": sig,
+        "Bitvavo-Access-Signature": _sign(ts, method, path, body),
         "Bitvavo-Access-Timestamp": ts,
-        "Bitvavo-Access-Window": "10000",
-        "Content-Type": "application/json",
+        "Content-Type": "application/json"
     }
 
-# =========================================================
-# MARKET DATA (nodig voor webhook)
-# =========================================================
+
+def ensure_dir(path: str):
+    d = os.path.dirname(path)
+    if d and not os.path.exists(d):
+        os.makedirs(d, exist_ok=True)
+
+
+# =========================================
+# MARKET DATA
+# =========================================
 def get_price(symbol: str) -> float:
     r = requests.get(
-        "https://api.binance.com/api/v3/ticker/price",
-        params={"symbol": symbol},
+        f"{BASE_URL}/ticker/price",
+        params={"market": symbol.replace("USDT", "-EUR")},
         timeout=HTTP_TIMEOUT
     )
     r.raise_for_status()
     return float(r.json()["price"])
 
-# =========================================================
-# STATE
-# =========================================================
-def load_state() -> Dict[str, Any]:
-    if not os.path.isfile(STATE_PATH):
-        return {"positions": {}, "open_trades": []}
-    with open(STATE_PATH, "r") as f:
-        return json.load(f)
 
-def save_state(state: Dict[str, Any]):
-    _ensure_dir(STATE_PATH)
-    tmp = STATE_PATH + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(state, f, indent=2)
-    os.replace(tmp, STATE_PATH)
+# =========================================
+# APPROVAL
+# =========================================
+def _consume_approval(prebuy_id: str) -> bool:
+    if not os.path.exists(APPROVALS_PATH):
+        return False
 
-# =========================================================
-# APPROVALS
-# =========================================================
-def load_approvals() -> List[Dict[str, Any]]:
-    if not os.path.isfile(APPROVALS_PATH):
-        return []
     with open(APPROVALS_PATH, "r") as f:
-        return json.load(f)
+        data = json.load(f)
 
-def consume_approval(prebuy_id: str) -> bool:
-    approvals = load_approvals()
-    now = _now()
+    now = int(time.time())
     new = []
     ok = False
 
-    for a in approvals:
+    for a in data:
         if a.get("id") == prebuy_id:
-            if a.get("status") == "APPROVED" and int(a.get("expires_at", 0)) > now:
+            if a.get("status") == "APPROVED" and a.get("expires_at", 0) > now:
                 ok = True
                 continue
-            return False
         new.append(a)
 
     if ok:
@@ -108,33 +98,50 @@ def consume_approval(prebuy_id: str) -> bool:
 
     return ok
 
-# =========================================================
-# LOGGING
-# =========================================================
-def log_trade(symbol, side, price, qty, meta=""):
-    _ensure_dir(LOG_PATH)
-    exists = os.path.isfile(LOG_PATH)
+
+# =========================================
+# STATE
+# =========================================
+def _load_state() -> Dict[str, Any]:
+    if not os.path.exists(STATE_PATH):
+        return {"positions": {}}
+    with open(STATE_PATH, "r") as f:
+        return json.load(f)
+
+
+def _save_state(state: Dict[str, Any]):
+    ensure_dir(STATE_PATH)
+    with open(STATE_PATH, "w") as f:
+        json.dump(state, f, indent=2)
+
+
+# =========================================
+# LOG
+# =========================================
+def _log(symbol, side, price, qty, pnl=0.0, meta=""):
+    ensure_dir(LOG_PATH)
+    new = not os.path.exists(LOG_PATH)
     with open(LOG_PATH, "a") as f:
-        if not exists:
-            f.write("datetime,symbol,side,price,qty,meta\n")
+        if new:
+            f.write("datetime,symbol,side,price,qty,pnl,meta\n")
         f.write(
             f"{datetime.utcnow().isoformat()},"
-            f"{symbol},{side},{price},{qty},{meta}\n"
+            f"{symbol},{side},{price},{qty},{pnl},{meta}\n"
         )
 
-# =========================================================
-# 🔥 LIVE BUY
-# =========================================================
+
+# =========================================
+# LIVE BUY
+# =========================================
 def buy_eur(
     symbol: str,
-    price: Optional[float],
     amount_eur: float,
     stop_loss: float,
     target: float,
     prebuy_id: str
 ) -> Dict[str, Any]:
 
-    if not consume_approval(prebuy_id):
+    if not _consume_approval(prebuy_id):
         return {"ok": False, "reason": "APPROVAL_INVALID"}
 
     body = json.dumps({
@@ -144,80 +151,83 @@ def buy_eur(
         "amountQuote": f"{amount_eur:.2f}"
     })
 
-    headers = _sign("POST", "/v2/order", body)
-    r = requests.post(BASE_URL + "/order", headers=headers, data=body, timeout=HTTP_TIMEOUT)
+    path = "/order"
+    r = requests.post(
+        BASE_URL + path,
+        headers=_headers("POST", path, body),
+        data=body,
+        timeout=HTTP_TIMEOUT
+    )
     r.raise_for_status()
-    order = r.json()
+    res = r.json()
 
-    fills = order.get("fills", [])
-    avg_price = float(order.get("price", 0.0))
-    qty = float(order.get("amount", 0.0))
+    filled_qty = float(res.get("filledAmount", 0))
+    price = float(res.get("price", 0))
 
-    state = load_state()
-    trade_id = f"{symbol}-{_now()}"
-
-    state["positions"][symbol] = qty
-    state["open_trades"].append({
-        "trade_id": trade_id,
-        "symbol": symbol,
-        "entry": avg_price,
+    state = _load_state()
+    state["positions"][symbol] = {
+        "qty": filled_qty,
+        "entry": price,
         "stop_loss": stop_loss,
         "target": target,
-        "qty": qty,
-        "opened_at": _now()
-    })
+        "opened_at": int(time.time()),
+        "prebuy_id": prebuy_id
+    }
+    _save_state(state)
 
-    save_state(state)
-    log_trade(symbol, "BUY", avg_price, qty, meta=f"prebuy={prebuy_id}")
+    _log(symbol, "BUY", price, filled_qty, meta=f"prebuy={prebuy_id}")
 
     return {
         "ok": True,
-        "trade_id": trade_id,
         "symbol": symbol,
-        "price": avg_price,
-        "qty": qty
+        "qty": filled_qty,
+        "price": price
     }
 
-# =========================================================
-# 🔥 LIVE SELL
-# =========================================================
+
+# =========================================
+# LIVE SELL
+# =========================================
 def sell(symbol: str, fraction: float = 1.0) -> Dict[str, Any]:
-    state = load_state()
-    qty_total = float(state["positions"].get(symbol, 0.0))
-    if qty_total <= 0:
+    state = _load_state()
+    pos = state.get("positions", {}).get(symbol)
+
+    if not pos:
         return {"ok": False, "reason": "NO_POSITION"}
 
-    qty_sell = qty_total * fraction
+    qty = pos["qty"] * fraction
 
     body = json.dumps({
         "market": symbol.replace("USDT", "-EUR"),
         "side": "sell",
         "orderType": "market",
-        "amount": f"{qty_sell:.8f}"
+        "amount": f"{qty:.8f}"
     })
 
-    headers = _sign("POST", "/v2/order", body)
-    r = requests.post(BASE_URL + "/order", headers=headers, data=body, timeout=HTTP_TIMEOUT)
+    path = "/order"
+    r = requests.post(
+        BASE_URL + path,
+        headers=_headers("POST", path, body),
+        data=body,
+        timeout=HTTP_TIMEOUT
+    )
     r.raise_for_status()
-    order = r.json()
+    res = r.json()
 
-    price = float(order.get("price", 0.0))
+    exit_price = float(res.get("price", 0))
+    pnl = (exit_price - pos["entry"]) * qty
 
-    if fraction >= 0.999:
-        state["positions"].pop(symbol, None)
-        state["open_trades"] = [t for t in state["open_trades"] if t["symbol"] != symbol]
+    if fraction >= 1.0:
+        del state["positions"][symbol]
     else:
-        state["positions"][symbol] = qty_total - qty_sell
+        pos["qty"] -= qty
 
-    save_state(state)
-    log_trade(symbol, "SELL", price, qty_sell, meta=f"fraction={fraction}")
+    _save_state(state)
+    _log(symbol, "SELL", exit_price, qty, pnl=pnl)
 
     return {
         "ok": True,
-        "symbol": symbol,
-        "price": price,
-        "qty_sold": qty_sell
+        "price": exit_price,
+        "qty": qty,
+        "pnl": pnl
     }
-
-if __name__ == "__main__":
-    print("🔥 LIVE trader actief (Bitvavo)")
