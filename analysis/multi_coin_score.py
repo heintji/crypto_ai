@@ -23,7 +23,7 @@ INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
 
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "70")
 
 # Optioneel: je mag DATA_DIR in Render env zetten (bv /data)
 ENV_DATA_DIR = (os.getenv("DATA_DIR") or "").strip()
