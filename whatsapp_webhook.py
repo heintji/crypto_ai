@@ -23,21 +23,25 @@ app = Flask(__name__)
 # ==========================================================
 # ENV
 # ==========================================================
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()  # moet op Render gezet worden (Web Service)
+INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
 
 # ==========================================================
-# PATHS (alleen binnen deze Web Service container)
+# PATHS (Render-proof: altijd naar /data schrijven als die bestaat)
 # ==========================================================
-DATA_DIR = os.path.join(PROJECT_ROOT, "data")
-PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
+PERSIST_DIR = os.getenv("PERSIST_DIR", "/data").strip() or "/data"
+if not os.path.isdir(PERSIST_DIR):
+    # fallback lokaal (zonder Render Disk)
+    PERSIST_DIR = os.path.join(PROJECT_ROOT, "data")
+
+PENDING_PATH = os.path.join(PERSIST_DIR, "pending_approvals.json")
 
 # ==========================================================
 # SETTINGS
 # ==========================================================
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
-STOP_PCT = 0.02
-RR_TARGET = 2.0
+STOP_PCT = float(os.getenv("STOP_PCT", "0.02"))      # 2% stop
+RR_TARGET = float(os.getenv("RR_TARGET", "2.0"))     # 2R target
 
 STATUS_PENDING = "PENDING"
 STATUS_APPROVED = "APPROVED"
@@ -49,10 +53,10 @@ STATUS_ERROR = "ERROR"
 # FILE HELPERS
 # ==========================================================
 def ensure_file() -> None:
-    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(PENDING_PATH), exist_ok=True)
     if not os.path.isfile(PENDING_PATH):
         with open(PENDING_PATH, "w", encoding="utf-8") as f:
-            json.dump([], f, indent=2)
+            json.dump([], f, indent=2, ensure_ascii=False)
 
 def load_pending() -> List[Dict[str, Any]]:
     ensure_file()
@@ -87,25 +91,60 @@ def twiml(msg: str) -> Response:
 def log_event(event: str, details: dict) -> None:
     try:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n[{now}] {event}: {json.dumps(details, ensure_ascii=False)}")
+        print(f"\n[{now}] {event}: {json.dumps(details, ensure_ascii=False)}", flush=True)
     except Exception:
-        print(f"\n[{time.time()}] {event}: (log fail)")
+        print(f"\n[{time.time()}] {event}: (log fail)", flush=True)
 
 # ==========================================================
-# HELPERS
+# HELPERS (expiry + formatting)
 # ==========================================================
-def is_expired(expires_at: Any) -> bool:
-    now_s = int(time.time())
+def _to_int_seconds(ts: Any) -> int:
     try:
-        x = int(expires_at)
+        x = int(ts)
     except Exception:
-        return False
+        return 0
     # ms support
     if x > 10**12:
         x = int(x / 1000)
-    return x < now_s
+    return x
+
+def is_expired(expires_at: Any) -> bool:
+    now_s = int(time.time())
+    ex = _to_int_seconds(expires_at)
+    if ex <= 0:
+        return False
+    return ex < now_s
+
+def mins_left_text(expires_at: Any) -> str:
+    ex = _to_int_seconds(expires_at)
+    if ex <= 0:
+        return "onbekend"
+    now_s = int(time.time())
+    delta = ex - now_s
+    if delta <= 0:
+        return "0 min"
+    mins = int(delta // 60)
+    if mins < 60:
+        return f"{mins} min"
+    h = mins // 60
+    m = mins % 60
+    return f"{h}u {m}m"
+
+def fmt_price(x: Any, decimals: int = 6) -> str:
+    try:
+        v = float(x)
+        return f"{v:.{decimals}f}"
+    except Exception:
+        return "?"
+
+def fmt_int(x: Any) -> str:
+    try:
+        return str(int(float(x)))
+    except Exception:
+        return "?"
 
 def find_latest_pending(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    # laatste geldige PENDING
     for p in reversed(pending):
         if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0)):
             return p
@@ -139,6 +178,61 @@ def compute_stop_target(entry: float) -> Tuple[float, float]:
     return float(stop), float(target)
 
 # ==========================================================
+# MESSAGE BUILDERS (DIT IS JOUW FORMAT)
+# ==========================================================
+def build_prebuy_push(p: Dict[str, Any]) -> str:
+    coin = str(p.get("coin", "?"))
+    score = fmt_int(p.get("score", "?"))
+    kans = str(p.get("kans", "") or "")
+    entry = fmt_price(p.get("entry", p.get("details", {}).get("last_price", 0.0)))
+    stop = fmt_price(p.get("stop_loss", 0.0))
+    target = fmt_price(p.get("target", 0.0))
+    expires = mins_left_text(p.get("expires_at", 0))
+    pid = str(p.get("id", "?"))
+
+    return (
+        "📊 PRE-BUY GEVONDEN\n"
+        f"Coin: {coin}\n"
+        f"Score: {score}{f' ({kans})' if kans else ''}\n"
+        f"Entry: {entry}\n"
+        f"Stop: {stop}\n"
+        f"Target: {target}\n\n"
+        f"⏳ Geldig: nog {expires}\n"
+        f"ID: {pid}\n\n"
+        "Bevestig: YES <bedrag> <ID>\n"
+        f"Voorbeeld: YES 10 {pid}"
+    )
+
+def build_list(pending_items: List[Dict[str, Any]]) -> str:
+    lines = [f"📋 BESCHIKBARE PRE-BUY'S ({len(pending_items)})", ""]
+    for idx, p in enumerate(pending_items, start=1):
+        coin = str(p.get("coin", "?"))
+        score = fmt_int(p.get("score", "?"))
+        expires = mins_left_text(p.get("expires_at", 0))
+        pid = str(p.get("id", "?"))
+        lines.append(f"{idx}) {coin} | score {score}")
+        lines.append(f"⏳ nog {expires}")
+        lines.append(f"ID: {pid}")
+        lines.append("")
+    lines.append("Bevestig: YES <bedrag> <ID>")
+    lines.append("Weiger: NO <ID>")
+    return "\n".join(lines).strip()
+
+def build_top(pending_items: List[Dict[str, Any]]) -> str:
+    lines = ["🏆 TOP 3 BESTE PRE-BUY'S", ""]
+    for idx, p in enumerate(pending_items, start=1):
+        coin = str(p.get("coin", "?"))
+        score = fmt_int(p.get("score", "?"))
+        expires = mins_left_text(p.get("expires_at", 0))
+        pid = str(p.get("id", "?"))
+        lines.append(f"{idx}) {coin} | score {score}")
+        lines.append(f"⏳ nog {expires}")
+        lines.append(f"ID: {pid}")
+        lines.append("")
+    lines.append("Bevestig: YES <bedrag> <ID>")
+    return "\n".join(lines).strip()
+
+# ==========================================================
 # INTERNAL ENDPOINT (hier komt multi_coin_score binnen)
 # ==========================================================
 @app.post("/internal/prebuy")
@@ -159,10 +253,9 @@ def internal_prebuy():
         if not isinstance(data, dict):
             return jsonify({"ok": False, "error": "invalid json"}), 400
 
-        # basisvalidatie
         pid = str(data.get("id", "")).strip()
         coin = str(data.get("coin", "")).strip()
-        status = str(data.get("status", "PENDING")).upper().strip()
+        status = str(data.get("status", STATUS_PENDING)).upper().strip()
         expires_at = data.get("expires_at", 0)
 
         if not pid or not coin:
@@ -174,27 +267,49 @@ def internal_prebuy():
         pending = load_pending()
 
         # voorkom duplicates (idempotent)
-        exists = any(str(p.get("id", "")).strip() == pid for p in pending)
-        if exists:
+        if any(str(p.get("id", "")).strip() == pid for p in pending):
             log_event("INTERNAL_PREBUY_DUPLICATE", {"id": pid, "coin": coin})
             return jsonify({"ok": True, "duplicate": True}), 200
 
-        # force velden netjes
-        data["status"] = status
+        # created_at
         if "created_at" not in data:
             data["created_at"] = int(time.time())
 
-        # expiry check: als missing, geef default 4 uur
-        try:
-            ex = int(expires_at)
-        except Exception:
+        # expiry: als missing => default 4 uur
+        ex = _to_int_seconds(expires_at)
+        if ex <= 0:
             ex = int(time.time()) + 4 * 60 * 60
         data["expires_at"] = ex
+
+        # Zorg dat entry/stop/target bestaan (zodat WhatsApp en dashboard altijd compleet zijn)
+        # Als multi_coin_score ze al meestuurt: laten we het staan.
+        try:
+            entry = float(data.get("entry") or data.get("details", {}).get("last_price") or 0.0)
+        except Exception:
+            entry = 0.0
+
+        if entry > 0:
+            if not data.get("entry"):
+                data["entry"] = round(entry, 8)
+            if not data.get("stop_loss") or float(data.get("stop_loss") or 0) <= 0:
+                stop, target = compute_stop_target(entry)
+                data["stop_loss"] = round(stop, 8)
+                data["target"] = round(target, 8)
+
+        data["status"] = status
 
         pending.append(data)
         save_pending(pending)
 
         log_event("INTERNAL_PREBUY_SAVED", {"id": pid, "coin": coin, "pending_file": PENDING_PATH})
+
+        # ✅ Optioneel: push format in logs (handig debug)
+        try:
+            preview = build_prebuy_push(data)
+            log_event("INTERNAL_PREBUY_PREVIEW", {"id": pid, "preview": preview[:400]})
+        except Exception:
+            pass
+
         return jsonify({"ok": True}), 200
 
     except Exception as e:
@@ -230,43 +345,81 @@ def whatsapp():
             return twiml(
                 "Crypto_AI — Commands:\n"
                 "• LIST\n"
-                "• YES 5|10|15|20|30|100 [PREBUY-ID]\n"
-                "• NO [PREBUY-ID]\n\n"
+                "• TOP\n"
+                "• YES 5|10|15|20|30|100 <PREBUY-ID>\n"
+                "• NO <PREBUY-ID>\n\n"
                 "Voorbeeld:\n"
-                "YES 10 PB-TEST-001"
+                "YES 10 PB-BTCUSDT-123456\n\n"
+                "Tip: gebruik LIST of TOP om een ID te kiezen."
             )
 
-        # LIST
+        # LIST (alle PENDING)
         if up == "LIST":
             items = [
                 p for p in pending
                 if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
             ]
+
             if not items:
                 return twiml(f"Geen PENDING Pre-BUY’s gevonden.\n(ik lees: {PENDING_PATH})")
 
-            last = items[-10:]
-            lines = ["PENDING Pre-BUY’s (laatste 10):"]
-            for p in last:
-                lines.append(f"- {p.get('id','?')} | {p.get('coin','?')} | score={p.get('score','?')}")
-            return twiml("\n".join(lines))
+            # sorteer: nieuwste onderaan, maar we tonen maximaal 10
+            items_sorted = sorted(items, key=lambda x: int(_to_int_seconds(x.get("created_at", 0))) or 0)
+            show = items_sorted[-10:]
+            return twiml(build_list(show))
+
+        # TOP (top 3 beste)
+        if up == "TOP":
+            items = [
+                p for p in pending
+                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
+            ]
+            if not items:
+                return twiml("Geen PENDING Pre-BUY’s om te tonen. Stuur later opnieuw LIST.")
+
+            def _score(p: Dict[str, Any]) -> int:
+                try:
+                    return int(float(p.get("score", 0) or 0))
+                except Exception:
+                    return 0
+
+            # score desc, daarna expiry (meest tijd over), daarna created_at
+            items_sorted = sorted(
+                items,
+                key=lambda p: (
+                    -_score(p),
+                    -(_to_int_seconds(p.get("expires_at", 0)) - int(time.time())),
+                    -(_to_int_seconds(p.get("created_at", 0))),
+                )
+            )
+            top3 = items_sorted[:3]
+            return twiml(build_top(top3))
 
         # NO
         pid_no = parse_no(body)
         if pid_no is not None:
-            item = find_by_id(pending, pid_no) if pid_no else find_latest_pending(pending)
+            if not pid_no:
+                return twiml("Gebruik: NO <ID>\nTip: stuur LIST om ID’s te zien.")
+
+            item = find_by_id(pending, pid_no)
             if not item:
-                return twiml("❌ Geen PENDING Pre-BUY gevonden om af te wijzen. Stuur LIST.")
+                return twiml("❌ ID niet gevonden. Stuur LIST.")
 
             if str(item.get("status", "")).upper() != STATUS_PENDING:
                 return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
+
+            if is_expired(item.get("expires_at", 0)):
+                item["status"] = STATUS_REJECTED
+                item["rejected_at"] = int(time.time())
+                save_pending(pending)
+                return twiml("⚠️ Deze Pre-BUY was al verlopen en is nu afgesloten (REJECTED).")
 
             item["status"] = STATUS_REJECTED
             item["rejected_at"] = int(time.time())
             save_pending(pending)
 
             log_event("PREBUY_REJECTED", {"id": item.get("id"), "coin": item.get("coin"), "from": sender})
-            return twiml(f"❌ Afgewezen: {item.get('coin','?')} ({item.get('id','?')}).")
+            return twiml(f"❌ Pre-BUY afgewezen\nID: {item.get('id','?')}")
 
         # YES
         amount, pid_yes = parse_yes(body)
@@ -276,19 +429,22 @@ def whatsapp():
         if amount not in ALLOWED_AMOUNTS:
             return twiml("⛔ Ongeldig bedrag. Gebruik: 5,10,15,20,30,100.")
 
-        item = find_by_id(pending, pid_yes) if pid_yes else find_latest_pending(pending)
+        if not pid_yes:
+            return twiml("Gebruik: YES <bedrag> <ID>\nTip: stuur TOP voor de beste 3 trades.")
+
+        item = find_by_id(pending, pid_yes)
         if not item:
-            return twiml("❌ Geen PENDING Pre-BUY gevonden. Stuur eerst LIST.")
+            return twiml("❌ ID niet gevonden. Stuur LIST of TOP.")
 
         status = str(item.get("status", "")).upper()
 
         if status == STATUS_CONSUMED:
-            return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED). ID: {item.get('id','?')}")
+            return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED).\nID: {item.get('id','?')}")
         if status != STATUS_PENDING:
             return twiml(f"⚠️ Deze Pre-BUY is niet meer PENDING ({item.get('status','?')}).")
 
         if is_expired(item.get("expires_at", 0)):
-            return twiml("⚠️ Deze Pre-BUY is verlopen. Wacht op een nieuwe.")
+            return twiml("❌ Niet mogelijk\nReden: Pre-BUY verlopen")
 
         coin = str(item.get("coin") or "").strip()
         if not coin:
@@ -335,11 +491,14 @@ def whatsapp():
         log_event("BUY_OK", {"id": item.get("id"), "coin": coin, "amount": amount, "trade_id": item.get("trade_id"), "from": sender})
 
         return twiml(
-            f"✅ BUY uitgevoerd ({coin})\n"
+            "✅ BUY UITGEVOERD\n"
+            f"Coin: {coin}\n"
             f"Inzet: €{amount}\n"
             f"Entry: {entry:.6f}\n"
             f"Stop: {stop:.6f}\n"
-            f"Target: {target:.6f}\n"
+            f"Target: {target:.6f}\n\n"
+            f"Trade ID: {item.get('trade_id','?')}\n"
+            f"Saldo: €{float(buy_res.get('balance', 0.0)):.2f}\n"
             f"ID: {item.get('id','?')}"
         )
 
@@ -352,6 +511,4 @@ def whatsapp():
 # TEST ONDERAAN LATEN STAAN (zoals jij wil)
 # ==========================================================
 if __name__ == "__main__":
-    # In Render draait dit via start command (gunicorn/uvicorn of python)
-    # Lokaal kan dit prima:
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
