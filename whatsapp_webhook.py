@@ -17,8 +17,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Paper trader alleen hier gebruiken voor BUY (jouw structuur)
-# LET OP: we gebruiken buy_eur, maar maken de call "compatibel" met meerdere signatures.
+# ✅ Paper trader alleen hier gebruiken voor BUY (jouw structuur)
+# LET OP: we importeren alleen buy_eur, want get_price ontbreekt soms per versie
 from trading.paper_trader import buy_eur  # noqa: E402
 
 app = Flask(__name__)
@@ -26,14 +26,16 @@ app = Flask(__name__)
 # ==========================================================
 # ENV
 # ==========================================================
-INTERNAL_TOKEN = os.getenv("INTERNAL_TOKEN", "").strip()
+INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
 
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-WHATSAPP_FROM = os.getenv("WHATSAPP_FROM", "").strip()  # bv: "whatsapp:+14155238886"
-WHATSAPP_TO = os.getenv("WHATSAPP_TO", "").strip()      # bv: "whatsapp:+316..."
+TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
 
-# Render Disk pad (BELANGRIJK: /data)
+# ✅ We supporten beide naming-stijlen om Render/oudere code niet te breken
+WHATSAPP_FROM = (os.getenv("WHATSAPP_FROM") or os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
+WHATSAPP_TO = (os.getenv("WHATSAPP_TO") or os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
+
+# Render Disk pad (BELANGRIJK: /data, niet /project/src/data)
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").strip()
 PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
 
@@ -51,9 +53,10 @@ STATUS_CONSUMED = "CONSUMED"
 STATUS_REJECTED = "REJECTED"
 STATUS_ERROR = "ERROR"
 
-# Binance price (voor entry/stop/target berekening in webhook)
+# Binance ticker endpoint (voor entry prijs)
 BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
-HTTP_TIMEOUT = 15
+HTTP_TIMEOUT = 20
+
 
 # ==========================================================
 # FILE HELPERS
@@ -64,6 +67,7 @@ def ensure_file() -> None:
         with open(PENDING_PATH, "w", encoding="utf-8") as f:
             json.dump([], f, indent=2, ensure_ascii=False)
 
+
 def load_pending() -> List[Dict[str, Any]]:
     ensure_file()
     try:
@@ -73,12 +77,14 @@ def load_pending() -> List[Dict[str, Any]]:
     except Exception:
         return []
 
+
 def save_pending(data: List[Dict[str, Any]]) -> None:
     ensure_file()
     tmp = PENDING_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, PENDING_PATH)
+
 
 # ==========================================================
 # TWIML (reply naar Twilio inbound)
@@ -91,6 +97,7 @@ def twiml(msg: str) -> Response:
 </Response>"""
     return Response(xml, mimetype="application/xml")
 
+
 # ==========================================================
 # LOGGING
 # ==========================================================
@@ -101,6 +108,7 @@ def log_event(event: str, details: dict) -> None:
     except Exception:
         print(f"\n[{time.time()}] {event}: (log fail)", flush=True)
 
+
 # ==========================================================
 # TIME HELPERS
 # ==========================================================
@@ -109,10 +117,10 @@ def _to_int_seconds(ts: Any) -> Optional[int]:
         x = int(ts)
     except Exception:
         return None
-    # ms support
-    if x > 10**12:
+    if x > 10**12:  # ms support
         x = int(x / 1000)
     return x
+
 
 def is_expired(expires_at: Any) -> bool:
     now_s = int(time.time())
@@ -120,6 +128,7 @@ def is_expired(expires_at: Any) -> bool:
     if x is None:
         return False
     return x < now_s
+
 
 def remaining_text(expires_at: Any) -> str:
     now_s = int(time.time())
@@ -138,6 +147,16 @@ def remaining_text(expires_at: Any) -> str:
         return f"nog {hours}u"
     return f"nog {hours}u {rem_m}m"
 
+
+# ==========================================================
+# PRICE (local, zodat we niet afhankelijk zijn van paper_trader get_price)
+# ==========================================================
+def get_price_binance(symbol: str) -> float:
+    r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    return float(r.json()["price"])
+
+
 # ==========================================================
 # PENDING HELPERS
 # ==========================================================
@@ -148,6 +167,7 @@ def find_by_id(pending: List[Dict[str, Any]], pid: str) -> Optional[Dict[str, An
             return p
     return None
 
+
 def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
     parts = body.strip().split()
     if len(parts) >= 2 and parts[0].upper() == "YES" and parts[1].isdigit():
@@ -156,11 +176,13 @@ def parse_yes(body: str) -> Tuple[Optional[int], Optional[str]]:
         return amount, pid
     return None, None
 
+
 def parse_no(body: str) -> Optional[str]:
     parts = body.strip().split()
     if parts and parts[0].upper() == "NO":
         return parts[1].strip() if len(parts) >= 2 else None
     return None
+
 
 def compute_stop_target(entry: float) -> Tuple[float, float]:
     stop = entry * (1.0 - STOP_PCT)
@@ -168,10 +190,6 @@ def compute_stop_target(entry: float) -> Tuple[float, float]:
     target = entry + (RR_TARGET * r)
     return float(stop), float(target)
 
-def fetch_price(symbol: str) -> float:
-    r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
-    r.raise_for_status()
-    return float(r.json()["price"])
 
 # ==========================================================
 # TWILIO OUTBOUND (Pre-BUY push)
@@ -179,7 +197,11 @@ def fetch_price(symbol: str) -> float:
 def twilio_ready() -> bool:
     return all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WHATSAPP_FROM, WHATSAPP_TO])
 
+
 def send_whatsapp_outbound(message: str) -> bool:
+    """
+    OUTBOUND: automatische PRE-BUY push
+    """
     if not twilio_ready():
         log_event("TWILIO_NOT_READY", {
             "has_sid": bool(TWILIO_ACCOUNT_SID),
@@ -195,7 +217,7 @@ def send_whatsapp_outbound(message: str) -> bool:
             url,
             data={"From": WHATSAPP_FROM, "To": WHATSAPP_TO, "Body": message},
             auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
-            timeout=20,
+            timeout=HTTP_TIMEOUT,
         )
         ok = 200 <= r.status_code < 300
         if not ok:
@@ -204,6 +226,7 @@ def send_whatsapp_outbound(message: str) -> bool:
     except Exception as e:
         log_event("TWILIO_SEND_ERROR", {"error": str(e)})
         return False
+
 
 def format_prebuy_push(p: Dict[str, Any]) -> str:
     coin = p.get("coin", "?")
@@ -215,38 +238,94 @@ def format_prebuy_push(p: Dict[str, Any]) -> str:
     pid = p.get("id", "?")
     exp = remaining_text(p.get("expires_at", 0))
 
-    try:
-        entry_f = f"{float(entry):.6f}"
-    except Exception:
-        entry_f = str(entry)
-    try:
-        stop_f = f"{float(stop):.6f}"
-    except Exception:
-        stop_f = str(stop)
-    try:
-        target_f = f"{float(target):.6f}"
-    except Exception:
-        target_f = str(target)
+    def _fmt(x: Any) -> str:
+        try:
+            return f"{float(x):.6f}"
+        except Exception:
+            return str(x)
 
     kans_txt = f" ({kans})" if kans else ""
     return (
         "📊 PRE-BUY GEVONDEN\n"
         f"Coin: {coin}\n"
         f"Score: {score}{kans_txt}\n"
-        f"Entry: {entry_f}\n"
-        f"Stop: {stop_f}\n"
-        f"Target: {target_f}\n\n"
+        f"Entry: {_fmt(entry)}\n"
+        f"Stop: {_fmt(stop)}\n"
+        f"Target: {_fmt(target)}\n\n"
         f"⏳ Geldig: {exp}\n"
         f"ID: {pid}\n\n"
         "Bevestig: YES <bedrag> <ID>\n"
         f"Voorbeeld: YES 10 {pid}"
     )
 
+
+# ==========================================================
+# ✅ BUY COMPAT WRAPPER (lost jouw error op)
+# - sommige paper_trader versies accepteren price wel/niet
+# - sommige verwachten 5 args, andere 6
+# ==========================================================
+def execute_buy_compat(
+    coin: str,
+    amount_eur: float,
+    entry: float,
+    stop: float,
+    target: float,
+    prebuy_id: str,
+) -> Dict[str, Any]:
+    """
+    Probeert buy_eur in meerdere varianten, zodat versie-mismatch geen crashes geeft.
+    Retourneert altijd dict: {"ok": bool, ...}
+    """
+    # 1) Nieuwste: keywords incl price
+    try:
+        return buy_eur(
+            symbol=coin,
+            price=entry,
+            amount_eur=float(amount_eur),
+            stop_loss=float(stop),
+            target=float(target),
+            prebuy_id=str(prebuy_id),
+        )
+    except TypeError as e1:
+        log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(e1), "mode": "kw_with_price"})
+
+    # 2) Keywords zonder price
+    try:
+        return buy_eur(
+            symbol=coin,
+            amount_eur=float(amount_eur),
+            stop_loss=float(stop),
+            target=float(target),
+            prebuy_id=str(prebuy_id),
+        )
+    except TypeError as e2:
+        log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(e2), "mode": "kw_no_price"})
+
+    # 3) Positional 6
+    try:
+        return buy_eur(coin, entry, float(amount_eur), float(stop), float(target), str(prebuy_id))
+    except TypeError as e3:
+        log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(e3), "mode": "positional_6"})
+
+    # 4) Positional 5 (meest voorkomende oudere variant)
+    try:
+        return buy_eur(coin, float(amount_eur), float(stop), float(target), str(prebuy_id))
+    except TypeError as e4:
+        log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(e4), "mode": "positional_5"})
+
+    return {"ok": False, "reason": "BUY_CALL_SIGNATURE_MISMATCH"}
+
+
 # ==========================================================
 # INTERNAL ENDPOINT (multi_coin_score -> POST /internal/prebuy)
 # ==========================================================
 @app.post("/internal/prebuy")
 def internal_prebuy():
+    """
+    multi_coin_score.py -> POST /internal/prebuy
+    Header: X-Internal-Token: <INTERNAL_TOKEN>
+    JSON body: prebuy dict
+    """
     try:
         token = (request.headers.get("X-Internal-Token") or "").strip()
         if not INTERNAL_TOKEN:
@@ -280,11 +359,11 @@ def internal_prebuy():
         if "created_at" not in data:
             data["created_at"] = int(time.time())
 
-        # expiry default 4 uur
         ex = _to_int_seconds(expires_at)
         if ex is None:
             ex = int(time.time()) + 4 * 60 * 60
         data["expires_at"] = ex
+
         data["status"] = status
 
         pending.append(data)
@@ -304,6 +383,7 @@ def internal_prebuy():
         traceback.print_exc()
         return jsonify({"ok": False, "error": str(e)}), 500
 
+
 # ==========================================================
 # HEALTH
 # ==========================================================
@@ -311,37 +391,6 @@ def internal_prebuy():
 def health():
     return "OK - whatsapp_webhook running", 200
 
-# ==========================================================
-# COMPAT BUY CALL (WATERDICHT)
-# ==========================================================
-def execute_buy_compat(
-    coin: str,
-    amount_eur: float,
-    entry: float,
-    stop: float,
-    target: float,
-    prebuy_id: str,
-) -> Dict[str, Any]:
-    """
-    Maakt BUY-call compatibel met meerdere buy_eur signatures.
-    - Eerst proberen met keywords (incl. price)
-    - Als dat faalt: fallback naar positional call
-    """
-    # 1) keyword poging (nieuwere/uitgebreidere signature)
-    try:
-        return buy_eur(
-            symbol=coin,
-            price=entry,              # <-- dit gaf bij jou de crash, dus vangen we op
-            amount_eur=float(amount_eur),
-            stop_loss=float(stop),
-            target=float(target),
-            prebuy_id=prebuy_id,
-        )
-    except TypeError as te:
-        log_event("BUY_CALL_FALLBACK", {"coin": coin, "error": str(te), "mode": "positional"})
-        # 2) fallback: positional (oudere signature)
-        # Verwachte volgorde: (symbol, price, amount_eur, stop_loss, target, prebuy_id)
-        return buy_eur(coin, entry, float(amount_eur), float(stop), float(target), prebuy_id)
 
 # ==========================================================
 # WHATSAPP WEBHOOK (Twilio -> POST /whatsapp)
@@ -360,12 +409,6 @@ def whatsapp():
         up = body.upper().strip()
         pending = load_pending()
 
-        def active_pending() -> List[Dict[str, Any]]:
-            return [
-                p for p in pending
-                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
-            ]
-
         # HELP
         if up == "HELP":
             return twiml(
@@ -377,6 +420,13 @@ def whatsapp():
                 "Voorbeeld:\n"
                 "YES 10 PB-BTCUSDT-123"
             )
+
+        # actieve pending items
+        def active_pending() -> List[Dict[str, Any]]:
+            return [
+                p for p in pending
+                if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0))
+            ]
 
         # LIST
         if up == "LIST":
@@ -438,7 +488,7 @@ def whatsapp():
             if st == STATUS_CONSUMED:
                 return twiml("⚠️ Deze Pre-BUY is al gebruikt (CONSUMED).")
             if st == STATUS_REJECTED:
-                return twiml("⚠️ Deze Pre-BUY was al afgewezen (REJECTED).")
+                return twiml("⚠️ Deze Pre-BUY is al afgewezen (REJECTED).")
 
             item["status"] = STATUS_REJECTED
             item["rejected_at"] = int(time.time())
@@ -464,11 +514,17 @@ def whatsapp():
 
         status = str(item.get("status", "")).upper()
 
-        # ✅ Belangrijk: maak APPROVED/ERROR retrybaar, zodat je niet vastloopt.
+        # ✅ Als hij al CONSUMED is: klaar
         if status == STATUS_CONSUMED:
             return twiml(f"⚠️ Deze Pre-BUY is al gebruikt (CONSUMED).\nID: {item.get('id','?')}")
+
+        # ✅ Als hij REJECTED is: klaar
         if status == STATUS_REJECTED:
-            return twiml(f"⚠️ Deze Pre-BUY is afgewezen (REJECTED).\nID: {item.get('id','?')}")
+            return twiml("⚠️ Deze Pre-BUY is afgewezen (REJECTED).")
+
+        # ✅ PENDING of APPROVED mag opnieuw geprobeerd worden (retry bij eerdere crash)
+        if status not in {STATUS_PENDING, STATUS_APPROVED, STATUS_ERROR}:
+            return twiml(f"⚠️ Deze Pre-BUY kan niet verwerkt worden (status={item.get('status','?')}).")
 
         if is_expired(item.get("expires_at", 0)):
             return twiml("⚠️ Deze Pre-BUY is verlopen. Wacht op een nieuwe.")
@@ -477,55 +533,42 @@ def whatsapp():
         if not coin:
             return twiml("⚠️ Pre-BUY mist 'coin'. Check storage.")
 
-        # 1) Zet naar APPROVED (audit-proof) - óók als hij al APPROVED was, updaten we bedrag.
+        # 1) Approval opslaan (audit-proof), ook als hij al APPROVED was (we updaten amount)
         item["status"] = STATUS_APPROVED
         item["approved_amount"] = float(amount)
         item["approved_at"] = int(time.time())
-        item["last_attempt_at"] = int(time.time())
-        item.pop("error_reason", None)
-        item.pop("error_at", None)
+        item["approved_by"] = sender
         save_pending(pending)
 
-        # 2) BUY uitvoeren
-        try:
-            entry = float(fetch_price(coin))
-        except Exception as e:
-            item["status"] = STATUS_ERROR
-            item["error_reason"] = f"PRICE_FETCH_FAIL: {e}"
-            item["error_at"] = int(time.time())
-            save_pending(pending)
-            log_event("BUY_ERROR_PRICE", {"id": item.get("id"), "coin": coin, "error": str(e), "from": sender})
-            return twiml("⛔ Kan prijs niet ophalen (Binance). Probeer later opnieuw.")
-
+        # 2) BUY uitvoeren (paper) met compat wrapper
+        entry = float(get_price_binance(coin))
         stop, target = compute_stop_target(entry)
 
         buy_res = execute_buy_compat(
             coin=coin,
             amount_eur=float(amount),
-            entry=entry,
-            stop=stop,
-            target=target,
-            prebuy_id=str(item.get("id")),
+            entry=float(entry),
+            stop=float(stop),
+            target=float(target),
+            prebuy_id=str(item.get("id") or ""),
         )
 
         if not isinstance(buy_res, dict) or not buy_res.get("ok"):
-            # ✅ Zet naar ERROR maar laat het RETRYBAAR: gebruiker kan opnieuw YES sturen.
+            # ✅ Niet vast laten hangen op APPROVED → zet naar ERROR maar laat retry toe
             item["status"] = STATUS_ERROR
             item["error_reason"] = (buy_res or {}).get("reason", "UNKNOWN")
             item["error_at"] = int(time.time())
-            item["entry"] = round(entry, 8)
-            item["stop_loss"] = round(stop, 8)
-            item["target"] = round(target, 8)
             save_pending(pending)
 
-            log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item.get("error_reason"), "from": sender})
-            return twiml(
-                f"⛔ BUY mislukt: {item.get('error_reason','UNKNOWN')}\n"
-                f"Je mag opnieuw proberen met:\n"
-                f"YES {amount} {item.get('id','?')}"
-            )
+            log_event("BUY_ERROR", {
+                "id": item.get("id"),
+                "coin": coin,
+                "reason": item.get("error_reason"),
+                "from": sender
+            })
+            return twiml(f"⛔ BUY mislukt: {item.get('error_reason','UNKNOWN')}\nJe mag opnieuw YES sturen op dezelfde ID.")
 
-        # 3) CONSUMED (definitief)
+        # 3) CONSUMED
         item["status"] = STATUS_CONSUMED
         item["consumed_at"] = int(time.time())
         item["entry"] = round(entry, 8)
@@ -535,10 +578,16 @@ def whatsapp():
         item["trade_id"] = buy_res.get("trade_id")
         save_pending(pending)
 
-        log_event("BUY_OK", {"id": item.get("id"), "coin": coin, "amount": amount, "trade_id": item.get("trade_id"), "from": sender})
+        log_event("BUY_OK", {
+            "id": item.get("id"),
+            "coin": coin,
+            "amount": amount,
+            "trade_id": item.get("trade_id"),
+            "from": sender
+        })
 
         return twiml(
-            f"✅ BUY UITGEVOERD\n"
+            "✅ BUY UITGEVOERD\n"
             f"Coin: {coin}\n"
             f"Inzet: €{amount}\n"
             f"Entry: {entry:.6f}\n"
@@ -552,8 +601,10 @@ def whatsapp():
         log_event("WEBHOOK_FATAL", {"error": str(e)})
         return twiml("⚠️ Interne fout in webhook. Check Render logs.")
 
+
 # ==========================================================
 # LOCAL TEST
 # ==========================================================
 if __name__ == "__main__":
+    # Render gebruikt PORT env var; lokaal default 5000
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
