@@ -17,8 +17,8 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# Paper trader alleen hier gebruiken voor BUY (jouw structuur)
-from trading.paper_trader import buy_eur, get_price  # noqa: E402
+# ✅ Alleen buy_eur importeren (GEEN get_price meer)
+from trading.paper_trader import buy_eur  # noqa: E402
 
 app = Flask(__name__)
 
@@ -136,12 +136,6 @@ def remaining_text(expires_at: Any) -> str:
 # ==========================================================
 # PENDING HELPERS
 # ==========================================================
-def find_latest_pending(pending: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    for p in reversed(pending):
-        if str(p.get("status", "")).upper() == STATUS_PENDING and not is_expired(p.get("expires_at", 0)):
-            return p
-    return None
-
 def find_by_id(pending: List[Dict[str, Any]], pid: str) -> Optional[Dict[str, Any]]:
     pid = str(pid or "").strip()
     for p in pending:
@@ -176,10 +170,6 @@ def twilio_ready() -> bool:
     return all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, WHATSAPP_FROM, WHATSAPP_TO])
 
 def send_whatsapp_outbound(message: str) -> bool:
-    """
-    Stuurt een WhatsApp bericht OUTBOUND via Twilio.
-    Dit is voor automatische PRE-BUY push.
-    """
     if not twilio_ready():
         log_event("TWILIO_NOT_READY", {
             "has_sid": bool(TWILIO_ACCOUNT_SID),
@@ -215,7 +205,6 @@ def format_prebuy_push(p: Dict[str, Any]) -> str:
     pid = p.get("id", "?")
     exp = remaining_text(p.get("expires_at", 0))
 
-    # netjes afkappen/formatten
     try:
         entry_f = f"{float(entry):.6f}"
     except Exception:
@@ -248,11 +237,6 @@ def format_prebuy_push(p: Dict[str, Any]) -> str:
 # ==========================================================
 @app.post("/internal/prebuy")
 def internal_prebuy():
-    """
-    multi_coin_score.py -> POST /internal/prebuy
-    Header: X-Internal-Token: <INTERNAL_TOKEN>
-    JSON body: prebuy dict
-    """
     try:
         token = (request.headers.get("X-Internal-Token") or "").strip()
         if not INTERNAL_TOKEN:
@@ -277,22 +261,18 @@ def internal_prebuy():
 
         pending = load_pending()
 
-        # idempotent: geen duplicates
         exists = any(str(p.get("id", "")).strip() == pid for p in pending)
         if exists:
             log_event("INTERNAL_PREBUY_DUPLICATE", {"id": pid, "coin": coin})
             return jsonify({"ok": True, "duplicate": True}), 200
 
-        # default created_at
         if "created_at" not in data:
             data["created_at"] = int(time.time())
 
-        # expiry default 4 uur als leeg
         ex = _to_int_seconds(expires_at)
         if ex is None:
             ex = int(time.time()) + 4 * 60 * 60
         data["expires_at"] = ex
-
         data["status"] = status
 
         pending.append(data)
@@ -300,7 +280,6 @@ def internal_prebuy():
 
         log_event("INTERNAL_PREBUY_SAVED", {"id": pid, "coin": coin, "pending_file": PENDING_PATH})
 
-        # ✅ STAP A: meteen pushen naar WhatsApp (alleen als PENDING en niet verlopen)
         pushed = False
         if status == STATUS_PENDING and not is_expired(ex):
             msg = format_prebuy_push(data)
@@ -349,7 +328,7 @@ def whatsapp():
                 "YES 10 PB-BTCUSDT-123"
             )
 
-        # verzameling PENDING (niet verlopen)
+        # actieve PENDING
         def active_pending() -> List[Dict[str, Any]]:
             return [
                 p for p in pending
@@ -362,7 +341,6 @@ def whatsapp():
             if not items:
                 return twiml(f"Geen PENDING Pre-BUY’s gevonden.\n(ik lees: {PENDING_PATH})")
 
-            # laat ze in tijd-volgorde zien (oud->nieuw), max 10
             items = items[-10:]
             lines = [f"📋 BESCHIKBARE PRE-BUY'S ({len(items)})", ""]
             for i, p in enumerate(items, start=1):
@@ -378,12 +356,12 @@ def whatsapp():
             lines.append("Weiger: NO <ID>")
             return twiml("\n".join(lines).strip())
 
-        # TOP (top 3 op score)
+        # TOP
         if up == "TOP":
             items = active_pending()
             if not items:
                 return twiml("Geen PENDING Pre-BUY’s gevonden. Stuur LIST.")
-            # sorteer op score desc
+
             def score_val(p: Dict[str, Any]) -> float:
                 try:
                     return float(p.get("score", 0))
@@ -458,17 +436,23 @@ def whatsapp():
         item["approved_at"] = int(time.time())
         save_pending(pending)
 
-        # 2) BUY uitvoeren (paper)
-        entry = float(get_price(coin))
+        # 2) BUY uitvoeren — ✅ WATERDICHT:
+        # - GEEN get_price hier
+        # - price=None zodat paper_trader zelf live price haalt
+        # - positional args zodat keyword mismatch NOOIT meer kan
+        entry = float(item.get("entry", 0.0))  # alleen voor stop/target berekening als fallback
+        if entry <= 0:
+            entry = 1.0  # tijdelijke fallback; paper_trader pakt echte prijs
+
         stop, target = compute_stop_target(entry)
 
         buy_res = buy_eur(
-            symbol=coin,
-            price=entry,
-            amount_eur=float(amount),
-            stop_loss=stop,
-            target=target,
-            prebuy_id=item.get("id"),
+            coin,               # symbol
+            None,               # price -> paper_trader haalt live prijs op
+            float(amount),      # amount_eur
+            stop,               # stop_loss
+            target,             # target
+            item.get("id")      # prebuy_id
         )
 
         if not isinstance(buy_res, dict) or not buy_res.get("ok"):
@@ -480,10 +464,15 @@ def whatsapp():
             log_event("BUY_ERROR", {"id": item.get("id"), "coin": coin, "reason": item.get("error_reason"), "from": sender})
             return twiml(f"⛔ BUY mislukt: {item.get('error_reason','UNKNOWN')}")
 
+        # echte entry prijs uit resultaat (die komt uit paper_trader)
+        real_entry = float(buy_res.get("price", 0.0))
+        if real_entry > 0:
+            stop, target = compute_stop_target(real_entry)
+
         # 3) CONSUMED
         item["status"] = STATUS_CONSUMED
         item["consumed_at"] = int(time.time())
-        item["entry"] = round(entry, 8)
+        item["entry"] = round(real_entry if real_entry > 0 else entry, 8)
         item["stop_loss"] = round(stop, 8)
         item["target"] = round(target, 8)
         item["qty"] = round(float(buy_res.get("qty", 0.0)), 10)
@@ -496,9 +485,9 @@ def whatsapp():
             f"✅ BUY UITGEVOERD\n"
             f"Coin: {coin}\n"
             f"Inzet: €{amount}\n"
-            f"Entry: {entry:.6f}\n"
-            f"Stop: {stop:.6f}\n"
-            f"Target: {target:.6f}\n\n"
+            f"Entry: {item['entry']:.6f}\n"
+            f"Stop: {item['stop_loss']:.6f}\n"
+            f"Target: {item['target']:.6f}\n\n"
             f"ID: {item.get('id','?')}"
         )
 
