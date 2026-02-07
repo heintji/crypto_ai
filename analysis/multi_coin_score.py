@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 import time
+import hashlib
 import traceback
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,13 +25,16 @@ INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
 
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "70")
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 
-ENV_DATA_DIR = (os.getenv("DATA_DIR") or "").strip()
+# cooldown in seconden (bijv. 6 uur)
+TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
 
-# 👇 BELANGRIJK
-# EXACTE DEDUPE — alleen identieke trade setups blokkeren
-ACTIVE_STATUSES = {"PENDING", "APPROVED", "PROCESSING"}
+# ==========================================================
+# DATA PATHS (Render Disk)
+# ==========================================================
+DATA_DIR = "/data"
+FINGERPRINT_PATH = os.path.join(DATA_DIR, "trade_fingerprints.json")
 
 # ==========================================================
 # MARKET SETTINGS
@@ -55,78 +60,28 @@ LIMIT = 200
 def log(msg: str) -> None:
     print(msg, flush=True)
 
-def now_utc_iso() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+def now_utc() -> int:
+    return int(time.time())
 
-def get_data_dir() -> str:
-    candidates = []
-    if ENV_DATA_DIR:
-        candidates.append(ENV_DATA_DIR)
-    candidates.append("/data")
-    candidates.append(os.path.join(PROJECT_ROOT, "data"))
+def ensure_data_file(path: str, default: Any) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default, f, indent=2)
 
-    for c in candidates:
-        try:
-            os.makedirs(c, exist_ok=True)
-            return c
-        except Exception:
-            pass
-
-    return os.path.join(PROJECT_ROOT, "data")
-
-def is_expired(expires_at: Any) -> bool:
+def load_json(path: str, default: Any) -> Any:
+    ensure_data_file(path, default)
     try:
-        return int(expires_at) < int(time.time())
-    except Exception:
-        return False
-
-# ==========================================================
-# PENDING APPROVALS (DEDUP SOURCE)
-# ==========================================================
-def load_pending() -> List[Dict[str, Any]]:
-    try:
-        path = os.path.join(get_data_dir(), "pending_approvals.json")
-        if not os.path.isfile(path):
-            return []
-        import json
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
+            return json.load(f)
     except Exception:
-        return []
+        return default
 
-def has_exact_same_trade(symbol: str, entry: float, stop: float, target: float) -> bool:
-    """
-    ❌ Blokkeert alleen als:
-    - zelfde coin
-    - entry exact gelijk
-    - stop exact gelijk
-    - target exact gelijk
-    - status actief
-    - niet verlopen
-    """
-    pending = load_pending()
-    symbol = symbol.upper()
-
-    for p in pending:
-        try:
-            if str(p.get("status", "")).upper() not in ACTIVE_STATUSES:
-                continue
-            if is_expired(p.get("expires_at")):
-                continue
-            if str(p.get("coin", "")).upper() != symbol:
-                continue
-
-            if (
-                float(p.get("entry", 0)) == entry and
-                float(p.get("stop_loss", 0)) == stop and
-                float(p.get("target", 0)) == target
-            ):
-                return True
-        except Exception:
-            continue
-
-    return False
+def save_json(path: str, data: Any) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
 
 # ==========================================================
 # BINANCE DATA
@@ -141,7 +96,7 @@ def get_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
     return r.json()
 
 def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    return [float(k[4]) for k in klines if len(k) > 4]
+    return [float(k[4]) for k in klines if k and len(k) > 4]
 
 # ==========================================================
 # INDICATORS
@@ -163,20 +118,26 @@ def rsi(values: List[float], period: int = 14) -> Optional[float]:
             losses += abs(delta)
     if losses == 0:
         return 100.0
-    return 100.0 - (100.0 / (1.0 + gains / losses))
+    rs = gains / losses
+    return 100.0 - (100.0 / (1.0 + rs))
 
 # ==========================================================
-# SCORING
+# SETUP & SCORING
 # ==========================================================
+def determine_setup(s20: float, s50: float, r14: float) -> str:
+    if s20 > s50 and r14 >= 55:
+        return "TREND_PULLBACK"
+    if s20 < s50 and r14 <= 45:
+        return "BEAR_RALLY"
+    return "RANGE"
+
 def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
     s20 = sma(closes, 20)
     s50 = sma(closes, 50)
     r14 = rsi(closes, 14)
 
-    details = {"sma20": s20, "sma50": s50, "rsi14": r14}
-
     if s20 is None or s50 is None or r14 is None:
-        return 0, details
+        return 0, {}
 
     score = 50
     if s20 > s50:
@@ -185,33 +146,62 @@ def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
         score -= 10
 
     if r14 >= 60:
-        score += 15
-    elif r14 <= 45:
+        score += 20
+    elif r14 <= 40:
         score -= 10
 
-    return max(0, min(100, score)), details
+    setup = determine_setup(s20, s50, r14)
+
+    return max(0, min(100, score)), {
+        "sma20": s20,
+        "sma50": s50,
+        "rsi14": r14,
+        "setup_type": setup,
+    }
+
+# ==========================================================
+# FINGERPRINT LOGIC (ANTI-DUPLICATE)
+# ==========================================================
+def make_fingerprint(coin: str, setup: str, entry: float, target: float) -> str:
+    zone_entry = round(entry, 3)
+    zone_target = round(target, 3)
+    raw = f"{coin}|{setup}|{zone_entry}|{zone_target}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+def is_duplicate(fp: str, fingerprints: Dict[str, Any]) -> bool:
+    rec = fingerprints.get(fp)
+    if not rec:
+        return False
+    return (now_utc() - rec["ts"]) < TRADE_COOLDOWN_SECONDS
+
+def store_fingerprint(fp: str, coin: str, setup: str) -> None:
+    fingerprints = load_json(FINGERPRINT_PATH, {})
+    fingerprints[fp] = {
+        "coin": coin,
+        "setup": setup,
+        "ts": now_utc(),
+    }
+    save_json(FINGERPRINT_PATH, fingerprints)
 
 # ==========================================================
 # PRE-BUY
 # ==========================================================
-def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, Any]:
-    created = int(time.time())
-    price = float(details["last_price"])
-
-    stop = round(price * 0.98, 8)
-    target = round(price + (price - stop) * 2, 8)
+def build_prebuy(symbol: str, score: int, details: Dict[str, Any], price: float) -> Dict[str, Any]:
+    created = now_utc()
+    stop = price * 0.98
+    target = price + (price - stop) * 2
 
     return {
         "id": f"PB-{symbol}-{created}",
         "coin": symbol,
+        "setup_type": details["setup_type"],
         "score": score,
         "status": "PENDING",
         "created_at": created,
-        "created_at_utc": now_utc_iso(),
         "expires_at": created + PREBUY_VALID_SECONDS,
         "entry": round(price, 8),
-        "stop_loss": stop,
-        "target": target,
+        "stop_loss": round(stop, 8),
+        "target": round(target, 8),
         "details": details,
     }
 
@@ -219,20 +209,34 @@ def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, 
 # SEND TO WEBSERVICE
 # ==========================================================
 def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
-    url = f"{WEBHOOK_BASE_URL}/internal/prebuy"
-    r = requests.post(
-        url,
-        json=prebuy,
-        headers={"X-Internal-Token": INTERNAL_TOKEN},
-        timeout=20,
-    )
-    return 200 <= r.status_code < 300
+    if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
+        log("❌ WEBHOOK_BASE_URL of INTERNAL_TOKEN ontbreekt")
+        return False
+
+    try:
+        r = requests.post(
+            f"{WEBHOOK_BASE_URL}/internal/prebuy",
+            json=prebuy,
+            headers={"X-Internal-Token": INTERNAL_TOKEN},
+            timeout=20,
+        )
+        return r.status_code < 300
+    except Exception:
+        return False
 
 # ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
-    log("🚀 multi_coin_score gestart (Pre-BUY only)")
+    log("🚀 multi_coin_score gestart")
+    ensure_data_file(FINGERPRINT_PATH, {})
+
+    if FORCE_TEST_PREBUY:
+        test = build_prebuy("BTCUSDT", 99, {"setup_type": "TEST"}, 100.0)
+        send_to_webservice(test)
+        return
+
+    fingerprints = load_json(FINGERPRINT_PATH, {})
 
     for symbol in COINS:
         try:
@@ -242,29 +246,32 @@ def main() -> None:
                 continue
 
             score, details = score_symbol(closes)
-            details["last_price"] = closes[-1]
-            details["interval"] = INTERVAL
-
             if score < MIN_SCORE_TO_PREBUY:
                 continue
 
-            price = round(details["last_price"], 8)
-            stop = round(price * 0.98, 8)
-            target = round(price + (price - stop) * 2, 8)
+            price = closes[-1]
+            prebuy = build_prebuy(symbol, score, details, price)
 
-            # ✅ DE BESLISSENDE REGEL
-            if has_exact_same_trade(symbol, price, stop, target):
-                log(f"🔁 {symbol} zelfde trade-setup → GEEN nieuwe Pre-BUY")
+            fp = make_fingerprint(
+                symbol,
+                prebuy["setup_type"],
+                prebuy["entry"],
+                prebuy["target"],
+            )
+
+            if is_duplicate(fp, fingerprints):
+                log(f"⏭️ SKIP duplicate trade {symbol} {prebuy['setup_type']}")
                 continue
 
-            prebuy = build_prebuy(symbol, score, details)
-            if send_to_webservice(prebuy):
-                log(f"✅ Nieuwe Pre-BUY: {prebuy['id']}")
+            ok = send_to_webservice(prebuy)
+            if ok:
+                store_fingerprint(fp, symbol, prebuy["setup_type"])
+                log(f"✅ Pre-BUY verzonden: {prebuy['id']}")
 
         except Exception:
             traceback.print_exc()
 
-    log("✅ multi_coin_score klaar")
+    log("✅ Run klaar")
 
 if __name__ == "__main__":
     main()
