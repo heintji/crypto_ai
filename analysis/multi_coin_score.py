@@ -25,8 +25,11 @@ FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "70")
 
-# Optioneel: je mag DATA_DIR in Render env zetten (bv /data)
 ENV_DATA_DIR = (os.getenv("DATA_DIR") or "").strip()
+
+# 👇 BELANGRIJK
+# EXACTE DEDUPE — alleen identieke trade setups blokkeren
+ACTIVE_STATUSES = {"PENDING", "APPROVED", "PROCESSING"}
 
 # ==========================================================
 # MARKET SETTINGS
@@ -55,23 +58,7 @@ def log(msg: str) -> None:
 def now_utc_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-def _is_writable_dir(path: str) -> bool:
-    try:
-        os.makedirs(path, exist_ok=True)
-        testfile = os.path.join(path, ".write_test")
-        with open(testfile, "w", encoding="utf-8") as f:
-            f.write("ok")
-        os.remove(testfile)
-        return True
-    except Exception:
-        return False
-
 def get_data_dir() -> str:
-    """
-    1) Als DATA_DIR env is gezet: probeer die
-    2) Anders probeer /data (Render Disk mount)
-    3) Als dat niet kan: fallback naar PROJECT_ROOT/data (altijd schrijfbaar)
-    """
     candidates = []
     if ENV_DATA_DIR:
         candidates.append(ENV_DATA_DIR)
@@ -79,11 +66,67 @@ def get_data_dir() -> str:
     candidates.append(os.path.join(PROJECT_ROOT, "data"))
 
     for c in candidates:
-        if _is_writable_dir(c):
+        try:
+            os.makedirs(c, exist_ok=True)
             return c
+        except Exception:
+            pass
 
-    # Als zelfs fallback niet lukt (heel zeldzaam)
     return os.path.join(PROJECT_ROOT, "data")
+
+def is_expired(expires_at: Any) -> bool:
+    try:
+        return int(expires_at) < int(time.time())
+    except Exception:
+        return False
+
+# ==========================================================
+# PENDING APPROVALS (DEDUP SOURCE)
+# ==========================================================
+def load_pending() -> List[Dict[str, Any]]:
+    try:
+        path = os.path.join(get_data_dir(), "pending_approvals.json")
+        if not os.path.isfile(path):
+            return []
+        import json
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+def has_exact_same_trade(symbol: str, entry: float, stop: float, target: float) -> bool:
+    """
+    ❌ Blokkeert alleen als:
+    - zelfde coin
+    - entry exact gelijk
+    - stop exact gelijk
+    - target exact gelijk
+    - status actief
+    - niet verlopen
+    """
+    pending = load_pending()
+    symbol = symbol.upper()
+
+    for p in pending:
+        try:
+            if str(p.get("status", "")).upper() not in ACTIVE_STATUSES:
+                continue
+            if is_expired(p.get("expires_at")):
+                continue
+            if str(p.get("coin", "")).upper() != symbol:
+                continue
+
+            if (
+                float(p.get("entry", 0)) == entry and
+                float(p.get("stop_loss", 0)) == stop and
+                float(p.get("target", 0)) == target
+            ):
+                return True
+        except Exception:
+            continue
+
+    return False
 
 # ==========================================================
 # BINANCE DATA
@@ -95,17 +138,10 @@ def get_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
         timeout=20,
     )
     r.raise_for_status()
-    data = r.json()
-    return data if isinstance(data, list) else []
+    return r.json()
 
 def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    closes: List[float] = []
-    for k in klines:
-        try:
-            closes.append(float(k[4]))
-        except Exception:
-            pass
-    return closes
+    return [float(k[4]) for k in klines if len(k) > 4]
 
 # ==========================================================
 # INDICATORS
@@ -127,146 +163,76 @@ def rsi(values: List[float], period: int = 14) -> Optional[float]:
             losses += abs(delta)
     if losses == 0:
         return 100.0
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
+    return 100.0 - (100.0 / (1.0 + gains / losses))
 
 # ==========================================================
 # SCORING
 # ==========================================================
 def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
-    details: Dict[str, Any] = {}
-
     s20 = sma(closes, 20)
     s50 = sma(closes, 50)
     r14 = rsi(closes, 14)
 
-    details.update({"sma20": s20, "sma50": s50, "rsi14": r14})
+    details = {"sma20": s20, "sma50": s50, "rsi14": r14}
 
     if s20 is None or s50 is None or r14 is None:
         return 0, details
 
     score = 50
-
     if s20 > s50:
         score += 20
-        details["trend"] = "up"
     else:
         score -= 10
-        details["trend"] = "down"
 
-    if r14 >= 55:
+    if r14 >= 60:
         score += 15
-        details["momentum"] = "bullish"
     elif r14 <= 45:
         score -= 10
-        details["momentum"] = "bearish"
-    else:
-        details["momentum"] = "neutral"
 
-    if s20 > s50 and r14 >= 60:
-        score += 10
-        details["bonus"] = "strong_uptrend"
-
-    return max(0, min(100, int(score))), details
+    return max(0, min(100, score)), details
 
 # ==========================================================
 # PRE-BUY
 # ==========================================================
 def build_prebuy(symbol: str, score: int, details: Dict[str, Any]) -> Dict[str, Any]:
     created = int(time.time())
-    price = float(details.get("last_price", 0.0))
+    price = float(details["last_price"])
 
-    stop = price * 0.98 if price > 0 else 0.0
-    target = price + (price - stop) * 2 if price > 0 else 0.0
-
-    label = (
-        "kans groot" if score >= 90 else
-        "kans boven gemiddeld" if score >= 80 else
-        "kans gemiddeld"
-    )
+    stop = round(price * 0.98, 8)
+    target = round(price + (price - stop) * 2, 8)
 
     return {
         "id": f"PB-{symbol}-{created}",
         "coin": symbol,
-        "setup": "LIVE",
         "score": score,
-        "kans": label,
         "status": "PENDING",
         "created_at": created,
         "created_at_utc": now_utc_iso(),
         "expires_at": created + PREBUY_VALID_SECONDS,
         "entry": round(price, 8),
-        "stop_loss": round(stop, 8),
-        "target": round(target, 8),
+        "stop_loss": stop,
+        "target": target,
         "details": details,
     }
 
 # ==========================================================
-# SEND TO WEBSERVICE (ENIGE JUISTE ROUTE OP RENDER)
+# SEND TO WEBSERVICE
 # ==========================================================
 def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
-    if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
-        log("❌ WEBHOOK_BASE_URL of INTERNAL_TOKEN ontbreekt")
-        return False
-
     url = f"{WEBHOOK_BASE_URL}/internal/prebuy"
-    try:
-        r = requests.post(
-            url,
-            json=prebuy,
-            headers={"X-Internal-Token": INTERNAL_TOKEN},
-            timeout=20,
-        )
-        if 200 <= r.status_code < 300:
-            log(f"✅ Pre-BUY verzonden: {prebuy['id']}")
-            return True
-
-        log(f"❌ Webservice reject {r.status_code}: {r.text[:200]}")
-        return False
-
-    except Exception as e:
-        log(f"❌ Webservice fout: {e}")
-        return False
-
-# ==========================================================
-# OPTIONAL: schrijf debug payloads (maar crasht nooit)
-# ==========================================================
-def try_write_debug(prebuy: Dict[str, Any]) -> None:
-    """
-    Niet verplicht, maar handig: schrijft een debug bestand in de data dir.
-    Als schrijven niet lukt: geen crash.
-    """
-    try:
-        data_dir = get_data_dir()
-        path = os.path.join(data_dir, "last_prebuy.json")
-        import json  # lokaal import om file clean te houden
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(prebuy, f, indent=2)
-        log(f"📝 Debug geschreven: {path}")
-    except Exception:
-        # bewust stil: debug is optioneel
-        pass
+    r = requests.post(
+        url,
+        json=prebuy,
+        headers={"X-Internal-Token": INTERNAL_TOKEN},
+        timeout=20,
+    )
+    return 200 <= r.status_code < 300
 
 # ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
     log("🚀 multi_coin_score gestart (Pre-BUY only)")
-    log(f"🕒 UTC: {now_utc_iso()}")
-    log(f"🌐 WEBHOOK_BASE_URL: {WEBHOOK_BASE_URL or '(niet gezet)'}")
-
-    # laat in logs zien welke data dir gekozen wordt (zonder te crashen)
-    chosen_data_dir = get_data_dir()
-    log(f"📁 DATA_DIR gekozen: {chosen_data_dir}")
-
-    if FORCE_TEST_PREBUY:
-        test = build_prebuy("BTCUSDT", 99, {"last_price": 100.0, "note": "forced test"})
-        ok = send_to_webservice(test)
-        if ok:
-            try_write_debug(test)
-        return
-
-    count = 0
 
     for symbol in COINS:
         try:
@@ -279,21 +245,26 @@ def main() -> None:
             details["last_price"] = closes[-1]
             details["interval"] = INTERVAL
 
-            log(f"📊 {symbol} score={score}")
-
             if score < MIN_SCORE_TO_PREBUY:
                 continue
 
+            price = round(details["last_price"], 8)
+            stop = round(price * 0.98, 8)
+            target = round(price + (price - stop) * 2, 8)
+
+            # ✅ DE BESLISSENDE REGEL
+            if has_exact_same_trade(symbol, price, stop, target):
+                log(f"🔁 {symbol} zelfde trade-setup → GEEN nieuwe Pre-BUY")
+                continue
+
             prebuy = build_prebuy(symbol, score, details)
-            ok = send_to_webservice(prebuy)
-            if ok:
-                try_write_debug(prebuy)
-            count += 1
+            if send_to_webservice(prebuy):
+                log(f"✅ Nieuwe Pre-BUY: {prebuy['id']}")
 
         except Exception:
             traceback.print_exc()
 
-    log(f"✅ Run klaar — {count} Pre-BUY(s)")
+    log("✅ multi_coin_score klaar")
 
 if __name__ == "__main__":
     main()
