@@ -13,15 +13,24 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-# ✅ BELANGRIJK:
-# paper_trader.sell() moet straks LIVE verkopen (Bitvavo) als jij paper_trader ombouwt.
 from trading.paper_trader import sell  # noqa: E402
 
 # =========================
-# ✅ Render Disk paths
+# ✅ DATA PATH RESOLVER (Render Worker: /data, Cron test: /tmp/data)
 # =========================
-STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
-FORCE_EXIT_LOCK_PATH = os.getenv("FORCE_EXIT_LOCK_PATH", "/data/force_test_exit.lock")
+def _get_data_dir() -> str:
+    # 1) expliciet gezet in env
+    d = (os.getenv("DATA_DIR") or "").strip()
+    if d:
+        return d
+    # 2) default: probeer /data (worker met disk), anders /tmp/data (cron)
+    return "/data" if os.path.isdir("/data") else "/tmp/data"
+
+DATA_DIR = _get_data_dir()
+LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
+
+STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
+FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
 
 # =========================
 # Binance endpoints (voor prijs / structuur)
@@ -47,6 +56,9 @@ def twilio_ready() -> bool:
         os.getenv("TWILIO_WHATSAPP_FROM"),
         os.getenv("TWILIO_WHATSAPP_TO"),
     ])
+
+def _print(msg: str):
+    print(msg, flush=True)
 
 def send_whatsapp(message: str) -> bool:
     if not twilio_ready():
@@ -74,10 +86,14 @@ def send_whatsapp(message: str) -> bool:
 # =========================
 # Helpers
 # =========================
+def ensure_dir(path: str) -> None:
+    if path and not os.path.exists(path):
+        os.makedirs(path, exist_ok=True)
+
 def ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
-    if parent and not os.path.exists(parent):
-        os.makedirs(parent, exist_ok=True)
+    if parent:
+        ensure_dir(parent)
 
 def load_state() -> Dict[str, Any]:
     ensure_parent_dir(STATE_PATH)
@@ -104,30 +120,16 @@ def save_state(state: Dict[str, Any]) -> None:
 def now_ts() -> int:
     return int(time.time())
 
-def _print(msg: str):
-    print(msg, flush=True)
-
 # =========================
 # ✅ Symbol mapping voor LIVE Bitvavo
 # =========================
 def to_bitvavo_market(symbol: str) -> str:
-    """
-    Jij gebruikt Binance symbols zoals BTCUSDT.
-    Bitvavo werkt meestal met EUR-markten zoals BTC-EUR.
-
-    - BTCUSDT -> BTC-EUR
-    - ETHUSDT -> ETH-EUR
-
-    Als jij later liever USDC of andere quote wilt, pas dit hier aan.
-    """
     s = (symbol or "").upper().strip()
     if s.endswith("USDT"):
         base = s.replace("USDT", "")
         return f"{base}-EUR"
-    # fallback: als je al BTC-EUR geeft, laat hem door
     if "-" in s:
         return s
-    # anders: gok EUR
     return f"{s}-EUR"
 
 # =========================
@@ -163,11 +165,7 @@ def _send_sell_close_message(
     r_now: float,
     sell_result: Dict[str, Any]
 ):
-    """
-    WhatsApp melding alleen bij 100% close.
-    """
     if not isinstance(sell_result, dict) or not sell_result.get("ok"):
-        # als live sell faalt: stuur ook WA fout zodat je het ziet
         send_whatsapp(
             f"⚠️ SELL MISLUKT ({symbol})\n"
             f"Reden: {reason}\n"
@@ -235,8 +233,6 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
-
-    # ✅ Live mapping: verkoop op Bitvavo market
     market = to_bitvavo_market(symbol)
     sell_res = sell(market, 1.0)
 
@@ -267,9 +263,6 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 # Core rules (jouw set)
 # =========================
 def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Optional[float] = None) -> bool:
-    """
-    Returns True if trade is CLOSED (positie volledig verkocht), else False.
-    """
     symbol = trade.get("symbol")
     entry = float(trade.get("entry", 0.0))
     stop_loss = float(trade.get("stop_loss", 0.0))
@@ -282,7 +275,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     price = float(test_price) if test_price is not None else get_price(symbol)
     r = calc_r_multiple(price, entry, stop_loss)
 
-    trade.setdefault("mode", "NORMAL")  # NORMAL / STRUCTUUR
+    trade.setdefault("mode", "NORMAL")
     trade.setdefault("status", "OPEN")
     trade.setdefault("max_r", 0.0)
     trade.setdefault("had_over_1r", False)
@@ -297,10 +290,8 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
     _print(f"📊 {symbol} | price={price:.6f} | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
-    # ✅ market voor live sell
     market = to_bitvavo_market(symbol)
 
-    # RULE 1: Stop-loss vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
         sell_res = sell(market, 1.0)
@@ -309,18 +300,9 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["closed_reason"] = "STOP_LOSS_BEFORE_1R"
         trade["closed_at"] = now_ts()
 
-        _send_sell_close_message(
-            symbol=symbol,
-            reason="STOP-LOSS vóór 1R",
-            entry=entry,
-            stop_loss=stop_loss,
-            target=target,
-            r_now=r,
-            sell_result=sell_res
-        )
+        _send_sell_close_message(symbol, "STOP-LOSS vóór 1R", entry, stop_loss, target, r, sell_res)
         return True
 
-    # BONUS ROUTE: target reached => message + STRUCTUUR-MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -335,13 +317,11 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             f"Mode: STRUCTUUR-MODE"
         )
 
-    # STRUCTUUR-MODE
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows = get_klines_lows(symbol)
             if len(lows) >= 3:
                 last_closed_low = lows[-2]
-
                 trailing = trade.get("struct_trailing_low")
                 if trailing is None:
                     trade["struct_trailing_low"] = last_closed_low
@@ -359,15 +339,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         trade["closed_reason"] = "STRUCTURE_LOWER_LOW"
                         trade["closed_at"] = now_ts()
 
-                        _send_sell_close_message(
-                            symbol=symbol,
-                            reason="STRUCTUUR: eerste lower-low",
-                            entry=entry,
-                            stop_loss=stop_loss,
-                            target=target,
-                            r_now=r,
-                            sell_result=sell_res
-                        )
+                        _send_sell_close_message(symbol, "STRUCTUUR: eerste lower-low", entry, stop_loss, target, r, sell_res)
                         return True
         except Exception as e:
             _print(f"⚠️ STRUCTUUR fetch error {symbol}: {e}")
@@ -375,23 +347,19 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # RULE 2: als >1R -> wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
         return False
 
-    # RULE 3: na >1R, zakt hij <1R -> SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
-        # 40% live sell
         sell(market, 0.40)
         trade["partial_sold_40"] = True
         trade["below_1r_count"] = 1
         trade["last_check"] = now_ts()
         return False
 
-    # RULE 4: 3 checks onder 1R -> SELL rest
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
@@ -403,15 +371,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             trade["closed_reason"] = "UNDER_1R_3X_CLOSE_REST"
             trade["closed_at"] = now_ts()
 
-            _send_sell_close_message(
-                symbol=symbol,
-                reason="Na >1R: 3x onder 1R (rest gesloten)",
-                entry=entry,
-                stop_loss=stop_loss,
-                target=target,
-                r_now=r,
-                sell_result=sell_res
-            )
+            _send_sell_close_message(symbol, "Na >1R: 3x onder 1R (rest gesloten)", entry, stop_loss, target, r, sell_res)
             return True
     else:
         trade["below_1r_count"] = 0
@@ -425,7 +385,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = None):
     state = load_state()
 
-    # ✅ FORCE EXIT check (1x)
     if _force_exit_once_if_enabled(state):
         return
 
@@ -471,8 +430,12 @@ def main():
 
     _print("🚦 trade_monitor gestart")
     _print(f"Project root: {PROJECT_ROOT}")
+    _print(f"DATA_DIR: {DATA_DIR}")
+    _print(f"LOGS_DIR: {LOGS_DIR}")
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
+
+    ensure_dir(LOGS_DIR)
 
     if args.once:
         run_once(test_price=args.test_price, only_symbol=args.symbol)
