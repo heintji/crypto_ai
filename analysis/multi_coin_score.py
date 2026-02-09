@@ -31,14 +31,13 @@ MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
 
 # ==========================================================
-# DATA PATHS (Render)
-# ✅ NOOIT hardcoded /data -> altijd via env
+# DATA PATHS (ALTIJD via ENV)
 # ==========================================================
-DATA_DIR = (os.getenv("DATA_DIR") or "/tmp/data").strip()
-LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
-
-# Als je deze via Render env invult: gebruikt hij die. Anders fallback naar DATA_DIR
-FINGERPRINT_PATH = (os.getenv("FINGERPRINT_PATH") or os.path.join(DATA_DIR, "trade_fingerprints.json")).strip()
+DATA_DIR = (os.getenv("DATA_DIR") or "/tmp/data").rstrip("/")
+FINGERPRINT_PATH = os.getenv(
+    "FINGERPRINT_PATH",
+    os.path.join(DATA_DIR, "fingerprints.json"),
+)
 
 # ==========================================================
 # MARKET SETTINGS
@@ -58,8 +57,6 @@ COINS = [
 INTERVAL = "1h"
 LIMIT = 200
 
-HTTP_TIMEOUT = 20
-
 # ==========================================================
 # HELPERS
 # ==========================================================
@@ -69,16 +66,11 @@ def log(msg: str) -> None:
 def now_utc() -> int:
     return int(time.time())
 
-def ensure_dir(path: str) -> None:
-    if path and not os.path.exists(path):
-        os.makedirs(path, exist_ok=True)
-
 def ensure_data_file(path: str, default: Any) -> None:
-    parent = os.path.dirname(path)
-    ensure_dir(parent)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(default, f, indent=2, ensure_ascii=False)
+            json.dump(default, f, indent=2)
 
 def load_json(path: str, default: Any) -> Any:
     ensure_data_file(path, default)
@@ -89,8 +81,6 @@ def load_json(path: str, default: Any) -> Any:
         return default
 
 def save_json(path: str, data: Any) -> None:
-    parent = os.path.dirname(path)
-    ensure_dir(parent)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
@@ -103,7 +93,7 @@ def get_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
     r = requests.get(
         BINANCE_KLINES,
         params={"symbol": symbol, "interval": interval, "limit": limit},
-        timeout=HTTP_TIMEOUT,
+        timeout=20,
     )
     r.raise_for_status()
     return r.json()
@@ -176,18 +166,14 @@ def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
 # FINGERPRINT LOGIC (ANTI-DUPLICATE)
 # ==========================================================
 def make_fingerprint(coin: str, setup: str, entry: float, target: float) -> str:
-    # Rond af naar zones zodat mini-verschillen niet zorgen voor nieuwe trades
-    zone_entry = round(float(entry), 3)
-    zone_target = round(float(target), 3)
-    raw = f"{coin}|{setup}|{zone_entry}|{zone_target}"
+    raw = f"{coin}|{setup}|{round(entry,3)}|{round(target,3)}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 def is_duplicate(fp: str, fingerprints: Dict[str, Any]) -> bool:
     rec = fingerprints.get(fp)
     if not rec:
         return False
-    ts = int(rec.get("ts") or 0)
-    return (now_utc() - ts) < TRADE_COOLDOWN_SECONDS
+    return (now_utc() - rec["ts"]) < TRADE_COOLDOWN_SECONDS
 
 def store_fingerprint(fp: str, coin: str, setup: str) -> None:
     fingerprints = load_json(FINGERPRINT_PATH, {})
@@ -199,70 +185,11 @@ def store_fingerprint(fp: str, coin: str, setup: str) -> None:
     save_json(FINGERPRINT_PATH, fingerprints)
 
 # ==========================================================
-# PRE-BUY
-# ==========================================================
-def build_prebuy(symbol: str, score: int, details: Dict[str, Any], price: float) -> Dict[str, Any]:
-    created = now_utc()
-    stop = price * 0.98
-    target = price + (price - stop) * 2
-
-    return {
-        "id": f"PB-{symbol}-{created}",
-        "coin": symbol,
-        "setup_type": details["setup_type"],
-        "score": score,
-        "status": "PENDING",
-        "created_at": created,
-        "expires_at": created + PREBUY_VALID_SECONDS,
-        "entry": round(price, 8),
-        "stop_loss": round(stop, 8),
-        "target": round(target, 8),
-        "details": details,
-    }
-
-# ==========================================================
-# SEND TO WEBSERVICE
-# ==========================================================
-def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
-    if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
-        log("❌ WEBHOOK_BASE_URL of INTERNAL_TOKEN ontbreekt")
-        return False
-
-    try:
-        r = requests.post(
-            f"{WEBHOOK_BASE_URL}/internal/prebuy",
-            json=prebuy,
-            headers={"X-Internal-Token": INTERNAL_TOKEN},
-            timeout=HTTP_TIMEOUT,
-        )
-        if r.status_code >= 300:
-            log(f"⚠️ Webservice error {r.status_code}: {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        log(f"⚠️ Webservice exception: {e}")
-        return False
-
-# ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
     log("🚀 multi_coin_score gestart")
-    log(f"DATA_DIR: {DATA_DIR}")
-    log(f"LOGS_DIR: {LOGS_DIR}")
-    log(f"FINGERPRINT_PATH: {FINGERPRINT_PATH}")
-
-    # Zorg dat directories bestaan (werkt op /tmp/data)
-    ensure_dir(DATA_DIR)
-    ensure_dir(LOGS_DIR)
-
     ensure_data_file(FINGERPRINT_PATH, {})
-
-    if FORCE_TEST_PREBUY:
-        test = build_prebuy("BTCUSDT", 99, {"setup_type": "TEST"}, 100.0)
-        ok = send_to_webservice(test)
-        log("✅ FORCE_TEST_PREBUY verzonden" if ok else "❌ FORCE_TEST_PREBUY kon niet verzonden worden")
-        return
 
     fingerprints = load_json(FINGERPRINT_PATH, {})
 
@@ -278,24 +205,17 @@ def main() -> None:
                 continue
 
             price = closes[-1]
-            prebuy = build_prebuy(symbol, score, details, price)
+            stop = price * 0.98
+            target = price + (price - stop) * 2
 
-            fp = make_fingerprint(
-                symbol,
-                prebuy["setup_type"],
-                prebuy["entry"],
-                prebuy["target"],
-            )
+            fp = make_fingerprint(symbol, details["setup_type"], price, target)
 
             if is_duplicate(fp, fingerprints):
-                log(f"⏭️ SKIP duplicate trade {symbol} {prebuy['setup_type']}")
+                log(f"⏭️ Skip duplicate {symbol} {details['setup_type']}")
                 continue
 
-            ok = send_to_webservice(prebuy)
-            if ok:
-                store_fingerprint(fp, symbol, prebuy["setup_type"])
-                fingerprints[fp] = {"coin": symbol, "setup": prebuy["setup_type"], "ts": now_utc()}
-                log(f"✅ Pre-BUY verzonden: {prebuy['id']}")
+            store_fingerprint(fp, symbol, details["setup_type"])
+            log(f"✅ Setup ok: {symbol} ({details['setup_type']})")
 
         except Exception:
             traceback.print_exc()
