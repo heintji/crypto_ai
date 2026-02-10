@@ -37,27 +37,18 @@ TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 *
 
 # ==========================================================
 # DATA PATHS (ALTIJD via ENV)
+# - Default /data (Render Disk). Als service geen disk heeft -> zet DATA_DIR env of hij valt terug naar /tmp/data
 # ==========================================================
-# ✅ Render Disk = /data (niet /tmp/data)
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").rstrip("/")
 LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).rstrip("/")
 
-FINGERPRINT_PATH = os.getenv(
-    "FINGERPRINT_PATH",
-    os.path.join(DATA_DIR, "fingerprints.json"),
-)
-
-# Scoreboard (read-only) dat door history_simulator gemaakt wordt
-SCOREBOARD_PATH = os.getenv(
-    "SCOREBOARD_PATH",
-    os.path.join(DATA_DIR, "scoreboard.json"),
-)
+FINGERPRINT_PATH = os.getenv("FINGERPRINT_PATH", os.path.join(DATA_DIR, "fingerprints.json"))
 
 # Experience log (CSV) – GO én WATCH worden opgeslagen
-EXPERIENCE_CSV = os.getenv(
-    "EXPERIENCE_CSV",
-    os.path.join(DATA_DIR, "experience.csv"),
-)
+EXPERIENCE_CSV = os.getenv("EXPERIENCE_CSV", os.path.join(DATA_DIR, "experience.csv"))
+
+# ✅ NIEUW: Scoreboard (gemaakt door history_simulator.py)
+SCOREBOARD_PATH = os.getenv("SCOREBOARD_PATH", os.path.join(DATA_DIR, "scoreboard.json"))
 
 # ==========================================================
 # MARKET SETTINGS
@@ -98,7 +89,6 @@ def ensure_data_file(path: str, default: Any) -> None:
             json.dump(default, f, indent=2)
 
 def load_json(path: str, default: Any) -> Any:
-    # ⚠️ voor scoreboard willen we NIET auto-aanmaken met defaults (anders lijkt het alsof hij er is)
     try:
         if not os.path.exists(path):
             return default
@@ -115,6 +105,27 @@ def save_json(path: str, data: Any) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
+
+def safe_prepare_storage() -> None:
+    """
+    ✅ Belangrijk: sommige Render services hebben GEEN Disk mount.
+    Dan is /data niet schrijfbaar. We vallen dan automatisch terug naar /tmp/data.
+    """
+    global DATA_DIR, LOGS_DIR, FINGERPRINT_PATH, EXPERIENCE_CSV, SCOREBOARD_PATH
+
+    try:
+        ensure_dir(DATA_DIR)
+        ensure_dir(LOGS_DIR)
+    except PermissionError:
+        fallback = "/tmp/data"
+        log(f"⚠️ Geen write access op {DATA_DIR}. Fallback naar {fallback}")
+        DATA_DIR = fallback
+        LOGS_DIR = os.path.join(DATA_DIR, "logs")
+        FINGERPRINT_PATH = os.path.join(DATA_DIR, "fingerprints.json")
+        EXPERIENCE_CSV = os.path.join(DATA_DIR, "experience.csv")
+        SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")
+        ensure_dir(DATA_DIR)
+        ensure_dir(LOGS_DIR)
 
 # ==========================================================
 # BINANCE DATA
@@ -177,8 +188,8 @@ def determine_setup(s20: float, s50: float, r14: float) -> str:
     if s20 > s50 and r14 >= 55:
         return "TREND_PULLBACK"
     if s20 < s50 and r14 <= 45:
-        return "BEAR_RALLY"
-    return "RANGE"
+        return "BREAKOUT_RETEST"  # (houd je 2 setups aan; BEAR_RALLY niet gebruiken)
+    return "BREAKOUT_RETEST"
 
 def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
     s20 = sma(closes, 20)
@@ -213,127 +224,75 @@ def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
     }
 
 # ==========================================================
-# SCOREBOARD LOOKUP (GO/WATCH + uitleg)
+# ✅ SCOREBOARD READ + CONTEXT
 # ==========================================================
-def safe_float(x: Any) -> Optional[float]:
-    try:
-        return float(x)
-    except Exception:
-        return None
+def load_scoreboard() -> Dict[str, Any]:
+    # scoreboard.json wordt gemaakt door history_simulator.py
+    return load_json(SCOREBOARD_PATH, {})
 
-def safe_int(x: Any) -> Optional[int]:
-    try:
-        return int(x)
-    except Exception:
-        return None
+def sb_key(setup_type: str, market_regime: str) -> str:
+    return f"{setup_type}|{market_regime}"
 
-def find_scoreboard_cell(scoreboard: Dict[str, Any], setup_type: str, market_regime: str) -> Dict[str, Any]:
+def scoreboard_context(sb: Dict[str, Any], coin: str, setup_type: str, market_regime: str) -> Dict[str, Any]:
     """
-    Probeert flexibel te vinden, omdat jouw scoreboard structuur kan verschillen per versie.
-    We zoeken naar een dict met keys die lijken op 'wins/loses/total/winrate/avg_r/...'
+    Verwacht grofweg structuur zoals:
+    sb["global"][ "TREND_PULLBACK|BULL" ] = {"trades":..., "winrate":..., "avg_r":..., ...}
+    sb["by_coin"]["XRPUSDT"][ "TREND_PULLBACK|BEAR" ] = {...}
+    Werkt ook als die structuur nog niet perfect is -> dan geeft hij gewoon {} terug.
     """
-    if not scoreboard or not isinstance(scoreboard, dict):
-        return {}
+    key = sb_key(setup_type, market_regime)
+    out: Dict[str, Any] = {"key": key}
 
-    # Mogelijke vormen:
-    # 1) scoreboard["setups"][setup][regime] = {...}
-    try:
-        setups = scoreboard.get("setups")
-        if isinstance(setups, dict):
-            st = setups.get(setup_type) or setups.get(setup_type.upper()) or setups.get(setup_type.lower())
-            if isinstance(st, dict):
-                cell = st.get(market_regime) or st.get(market_regime.upper()) or st.get(market_regime.lower())
-                if isinstance(cell, dict):
-                    return cell
-    except Exception:
-        pass
+    # coin-level (als aanwezig)
+    by_coin = sb.get("by_coin", {}) if isinstance(sb, dict) else {}
+    coin_bucket = by_coin.get(coin, {}) if isinstance(by_coin, dict) else {}
+    coin_stats = coin_bucket.get(key, {}) if isinstance(coin_bucket, dict) else {}
 
-    # 2) scoreboard[setup][regime] = {...}
-    try:
-        st = scoreboard.get(setup_type) or scoreboard.get(setup_type.upper()) or scoreboard.get(setup_type.lower())
-        if isinstance(st, dict):
-            cell = st.get(market_regime) or st.get(market_regime.upper()) or st.get(market_regime.lower())
-            if isinstance(cell, dict):
-                return cell
-    except Exception:
-        pass
+    # global-level (als aanwezig)
+    global_bucket = sb.get("global", {}) if isinstance(sb, dict) else {}
+    global_stats = global_bucket.get(key, {}) if isinstance(global_bucket, dict) else {}
 
-    # 3) scoreboard["cells"] list
-    cells = scoreboard.get("cells")
-    if isinstance(cells, list):
-        for c in cells:
-            if not isinstance(c, dict):
-                continue
-            if str(c.get("setup_type", "")).upper() == str(setup_type).upper() and str(c.get("market_regime", "")).upper() == str(market_regime).upper():
-                return c
+    # kies coin_stats als die voldoende sample heeft, anders global
+    def trades(x: Any) -> int:
+        try:
+            return int(x.get("trades", 0))
+        except Exception:
+            return 0
 
-    return {}
+    chosen = coin_stats if trades(coin_stats) >= 30 else global_stats
+    if not isinstance(chosen, dict):
+        chosen = {}
 
-def derive_hist_label_and_reason(scoreboard_cell: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
-    """
-    Regels (simpel + veilig):
-    - Als te weinig samples -> WATCH
-    - Als winrate >= 55% -> GO
-    - Anders WATCH
-    """
-    if not scoreboard_cell:
-        return "WATCH", "Geen scoreboard-data voor deze setup+regime (nog te weinig ervaring).", {}
+    out["stats"] = {
+        "source": "coin" if chosen is coin_stats else "global",
+        "trades": trades(chosen),
+        "winrate": float(chosen.get("winrate", 0.0) or 0.0),
+        "avg_r": float(chosen.get("avg_r", 0.0) or 0.0),
+    }
 
-    # haal metrics uit verschillende mogelijke keys
-    total = (
-        safe_int(scoreboard_cell.get("total"))
-        or safe_int(scoreboard_cell.get("n"))
-        or safe_int(scoreboard_cell.get("count"))
-        or safe_int(scoreboard_cell.get("trades"))
-        or 0
-    )
+    # eenvoudige interpretatie (geen hard skippen; alleen context + confidence tweak)
+    wr = out["stats"]["winrate"]
+    n = out["stats"]["trades"]
 
-    winrate = (
-        safe_float(scoreboard_cell.get("winrate"))
-        or safe_float(scoreboard_cell.get("win_rate"))
-        or safe_float(scoreboard_cell.get("wr"))
-    )
-
-    # soms is winrate als percentage (0-100) of fractie (0-1)
-    if winrate is not None and winrate <= 1.0:
-        winrate = winrate * 100.0
-
-    avg_r = (
-        safe_float(scoreboard_cell.get("avg_r"))
-        or safe_float(scoreboard_cell.get("avgR"))
-        or safe_float(scoreboard_cell.get("avg_return_r"))
-        or safe_float(scoreboard_cell.get("mean_r"))
-    )
-
-    wins = safe_int(scoreboard_cell.get("wins")) or safe_int(scoreboard_cell.get("win")) or None
-    losses = safe_int(scoreboard_cell.get("losses")) or safe_int(scoreboard_cell.get("loss")) or None
-
-    # minimale sample size
-    MIN_SAMPLES = int(os.getenv("SCOREBOARD_MIN_SAMPLES") or "20")
-
-    # fallback bereken winrate indien mogelijk
-    if winrate is None and wins is not None and losses is not None and (wins + losses) > 0:
-        winrate = (wins / float(wins + losses)) * 100.0
-        total = wins + losses
-
-    # label logica
-    if total < MIN_SAMPLES:
-        reason = f"Scoreboard: te weinig samples ({total}/{MIN_SAMPLES}) voor betrouwbare GO → WATCH."
-        stats = {"samples": total, "min_samples": MIN_SAMPLES, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
-        return "WATCH", reason, stats
-
-    if winrate is not None and winrate >= 55.0:
-        reason = f"Scoreboard: historisch sterk (winrate {winrate:.1f}% over {total} trades) → GO."
-        stats = {"samples": total, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
-        return "GO", reason, stats
-
-    # default
-    if winrate is not None:
-        reason = f"Scoreboard: historisch zwakker (winrate {winrate:.1f}% over {total} trades) → WATCH."
+    if n < 30:
+        out["verdict"] = "LOW_SAMPLE"
+        out["confidence_adj"] = -5
+        out["note"] = "Weinig historie voor deze combinatie."
     else:
-        reason = f"Scoreboard: data aanwezig ({total} trades) maar winrate onbekend → WATCH."
-    stats = {"samples": total, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
-    return "WATCH", reason, stats
+        if wr >= 0.55:
+            out["verdict"] = "STRONG"
+            out["confidence_adj"] = +8
+            out["note"] = "Historisch bovengemiddeld voor deze combinatie."
+        elif wr <= 0.45:
+            out["verdict"] = "WEAK"
+            out["confidence_adj"] = -10
+            out["note"] = "Historisch ondergemiddeld voor deze combinatie."
+        else:
+            out["verdict"] = "NEUTRAL"
+            out["confidence_adj"] = 0
+            out["note"] = "Historisch gemiddeld voor deze combinatie."
+
+    return out
 
 # ==========================================================
 # FINGERPRINT LOGIC (ANTI-DUPLICATE)
@@ -366,9 +325,7 @@ EXPERIENCE_HEADERS = [
     "coin",
     "setup_type",
     "market_regime",
-    "grade",             # GO / WATCH (score-based)
-    "hist_label",        # GO / WATCH (scoreboard-based)
-    "hist_reason",       # uitleg uit scoreboard
+    "grade",             # GO / WATCH
     "entry",
     "stop",
     "target",
@@ -409,32 +366,40 @@ def build_prebuy(
     score: int,
     details: Dict[str, Any],
     price: float,
-    scoreboard: Dict[str, Any],
+    sb_ctx: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     created = now_utc()
     stop = price * 0.98
     target = price + (price - stop) * 2
 
-    # score-based grade
+    # basis label
     grade = "GO" if score >= MIN_SCORE_TO_PREBUY else "WATCH"
 
-    setup_type = details.get("setup_type", "UNKNOWN")
-    market_regime = details.get("market_regime", "")
+    # ✅ scoreboard influence: geen hard skip, alleen label strakker + confidence aanpassen
+    bot_conf = score
+    sb_note = ""
+    sb_verdict = ""
+    if sb_ctx:
+        adj = int(sb_ctx.get("confidence_adj", 0) or 0)
+        bot_conf = max(0, min(100, score + adj))
+        sb_verdict = str(sb_ctx.get("verdict", "") or "")
+        sb_note = str(sb_ctx.get("note", "") or "")
 
-    # scoreboard-based label + reason
-    cell = find_scoreboard_cell(scoreboard, setup_type, market_regime)
-    hist_label, hist_reason, hist_stats = derive_hist_label_and_reason(cell)
+        # als historie WEAK is -> degrade naar WATCH (zelfs als score hoog is)
+        if sb_verdict == "WEAK":
+            grade = "WATCH"
+        # als historie STRONG is en score nét onder GO -> promote naar GO
+        if sb_verdict == "STRONG" and score >= (MIN_SCORE_TO_PREBUY - 5):
+            grade = "GO"
 
     return {
         "id": f"PB-{symbol}-{created}",
         "coin": symbol,
-        "setup_type": setup_type,
-        "market_regime": market_regime,
+        "setup_type": details.get("setup_type", "UNKNOWN"),
+        "market_regime": details.get("market_regime", ""),
         "score": score,
-        "grade": grade,                 # score-based
-        "hist_label": hist_label,       # scoreboard-based
-        "hist_reason": hist_reason,
-        "hist_stats": hist_stats,       # compact dict
+        "bot_confidence": bot_conf,
+        "grade": grade,
         "status": "PENDING",
         "created_at": created,
         "expires_at": created + PREBUY_VALID_SECONDS,
@@ -442,13 +407,18 @@ def build_prebuy(
         "stop_loss": round(stop, 8),
         "target": round(target, 8),
         "details": details,
+        "scoreboard": {
+            "path": SCOREBOARD_PATH,
+            "verdict": sb_verdict,
+            "note": sb_note,
+            "stats": (sb_ctx or {}).get("stats", {}),
+            "key": (sb_ctx or {}).get("key", ""),
+        },
     }
 
 def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
-    # Als je webhook nog niet wilt gebruiken, laat WEBHOOK_BASE_URL leeg -> dan slaat hij dit over
     if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
         return False
-
     try:
         r = requests.post(
             f"{WEBHOOK_BASE_URL}/internal/prebuy",
@@ -466,32 +436,33 @@ def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
 def main() -> None:
     log("🚀 multi_coin_score gestart")
 
-    # folders + files
-    ensure_dir(DATA_DIR)
-    ensure_dir(LOGS_DIR)
+    # ✅ storage voorbereiden (met fallback)
+    safe_prepare_storage()
+
     ensure_data_file(FINGERPRINT_PATH, {})
     ensure_experience_csv()
 
-    # ✅ scoreboard read-only laden
-    scoreboard = load_json(SCOREBOARD_PATH, {})
-    if scoreboard:
+    fingerprints = load_json(FINGERPRINT_PATH, {})
+
+    # ✅ scoreboard laden (als hij bestaat)
+    sb = load_scoreboard()
+    if sb:
         log(f"📘 Scoreboard geladen: {SCOREBOARD_PATH}")
     else:
-        log(f"⚠️ Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (alles wordt hist_label=WATCH)")
-
-    fingerprints = load_json(FINGERPRINT_PATH, {})
+        log(f"📘 Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (gaat alsnog door)")
 
     # Force test: maakt 1 fake prebuy + schrijft ervaring weg
     if FORCE_TEST_PREBUY:
         fake_details = {
-            "setup_type": "TEST",
+            "setup_type": "TREND_PULLBACK",
             "market_regime": "RANGE",
             "sma20": 100.0,
             "sma50": 100.0,
             "rsi14": 55.0,
             "sma20_slope": 0.0,
         }
-        prebuy = build_prebuy("BTCUSDT", 99, fake_details, 100.0, scoreboard)
+        sb_ctx = scoreboard_context(sb, "BTCUSDT", "TREND_PULLBACK", "RANGE") if sb else None
+        prebuy = build_prebuy("BTCUSDT", 79, fake_details, 100.0, sb_ctx=sb_ctx)
 
         append_experience_row({
             "timestamp": prebuy["created_at"],
@@ -499,8 +470,6 @@ def main() -> None:
             "setup_type": prebuy["setup_type"],
             "market_regime": prebuy["market_regime"],
             "grade": prebuy["grade"],
-            "hist_label": prebuy["hist_label"],
-            "hist_reason": prebuy["hist_reason"],
             "entry": prebuy["entry"],
             "stop": prebuy["stop_loss"],
             "target": prebuy["target"],
@@ -509,9 +478,9 @@ def main() -> None:
             "mfe": "",
             "mae": "",
             "time_minutes": "",
-            "why": "FORCE_TEST_PREBUY",
+            "why": f"SCOREBOARD:{(sb_ctx or {}).get('note','FORCE_TEST_PREBUY')}",
             "market_condition": "test",
-            "bot_confidence": prebuy["score"],
+            "bot_confidence": prebuy.get("bot_confidence", prebuy["score"]),
             "overextended": 0.0,
         })
         send_to_webservice(prebuy)
@@ -534,7 +503,14 @@ def main() -> None:
                 continue
 
             price = closes[-1]
-            prebuy = build_prebuy(symbol, score, details, price, scoreboard)
+
+            setup_type = str(details.get("setup_type", "UNKNOWN"))
+            market_regime = str(details.get("market_regime", ""))
+
+            # ✅ scoreboard context ophalen
+            sb_ctx = scoreboard_context(sb, symbol, setup_type, market_regime) if sb else None
+
+            prebuy = build_prebuy(symbol, score, details, price, sb_ctx=sb_ctx)
 
             fp = make_fingerprint(symbol, prebuy["setup_type"], prebuy["entry"], prebuy["target"])
             if is_duplicate(fp, fingerprints):
@@ -543,29 +519,33 @@ def main() -> None:
 
             # 1) Opslaan als ervaring (GO én WATCH)
             overext = calc_overextended(price, float(details["sma20"]))
+            why_note = ""
+            if sb_ctx:
+                why_note = f"SCOREBOARD:{sb_ctx.get('verdict','')} | {sb_ctx.get('note','')}"
+            else:
+                why_note = prebuy["setup_type"]
+
             append_experience_row({
                 "timestamp": prebuy["created_at"],
                 "coin": prebuy["coin"],
                 "setup_type": prebuy["setup_type"],
                 "market_regime": prebuy["market_regime"],
                 "grade": prebuy["grade"],
-                "hist_label": prebuy["hist_label"],
-                "hist_reason": prebuy["hist_reason"],
                 "entry": prebuy["entry"],
                 "stop": prebuy["stop_loss"],
                 "target": prebuy["target"],
-                "decision": "",          # wordt later gevuld bij WhatsApp YES/NO
-                "outcome": "",           # wordt later gevuld door simulatie/monitor
+                "decision": "",
+                "outcome": "",
                 "mfe": "",
                 "mae": "",
                 "time_minutes": "",
-                "why": prebuy["setup_type"],
+                "why": why_note,
                 "market_condition": "normal",
-                "bot_confidence": score,  # 0-100
+                "bot_confidence": prebuy.get("bot_confidence", score),
                 "overextended": overext,
             })
 
-            # 2) Optioneel naar WhatsApp-webservice sturen (als env gevuld is)
+            # 2) Optioneel naar WhatsApp-webservice sturen
             sent = send_to_webservice(prebuy)
 
             # 3) Fingerprint opslaan (anti-duplicate)
@@ -573,13 +553,13 @@ def main() -> None:
 
             if sent:
                 log(
-                    f"✅ Pre-BUY verzonden ({prebuy['grade']}, hist={prebuy['hist_label']}): "
-                    f"{symbol} {prebuy['setup_type']} score={score} | {prebuy['hist_reason']}"
+                    f"✅ Pre-BUY verzonden ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
+                    f"score={score} conf={prebuy.get('bot_confidence',score)} sb={prebuy['scoreboard'].get('verdict','')}"
                 )
             else:
                 log(
-                    f"✅ Experience opgeslagen ({prebuy['grade']}, hist={prebuy['hist_label']}): "
-                    f"{symbol} {prebuy['setup_type']} score={score} | {prebuy['hist_reason']}"
+                    f"✅ Experience opgeslagen ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
+                    f"score={score} conf={prebuy.get('bot_confidence',score)} sb={prebuy['scoreboard'].get('verdict','')}"
                 )
 
         except Exception:
