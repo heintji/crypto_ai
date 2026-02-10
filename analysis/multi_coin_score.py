@@ -38,12 +38,19 @@ TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 *
 # ==========================================================
 # DATA PATHS (ALTIJD via ENV)
 # ==========================================================
-DATA_DIR = (os.getenv("DATA_DIR") or "/tmp/data").rstrip("/")
+# ✅ Render Disk = /data (niet /tmp/data)
+DATA_DIR = (os.getenv("DATA_DIR") or "/data").rstrip("/")
 LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).rstrip("/")
 
 FINGERPRINT_PATH = os.getenv(
     "FINGERPRINT_PATH",
     os.path.join(DATA_DIR, "fingerprints.json"),
+)
+
+# Scoreboard (read-only) dat door history_simulator gemaakt wordt
+SCOREBOARD_PATH = os.getenv(
+    "SCOREBOARD_PATH",
+    os.path.join(DATA_DIR, "scoreboard.json"),
 )
 
 # Experience log (CSV) – GO én WATCH worden opgeslagen
@@ -91,8 +98,10 @@ def ensure_data_file(path: str, default: Any) -> None:
             json.dump(default, f, indent=2)
 
 def load_json(path: str, default: Any) -> Any:
-    ensure_data_file(path, default)
+    # ⚠️ voor scoreboard willen we NIET auto-aanmaken met defaults (anders lijkt het alsof hij er is)
     try:
+        if not os.path.exists(path):
+            return default
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
@@ -204,6 +213,129 @@ def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
     }
 
 # ==========================================================
+# SCOREBOARD LOOKUP (GO/WATCH + uitleg)
+# ==========================================================
+def safe_float(x: Any) -> Optional[float]:
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+def safe_int(x: Any) -> Optional[int]:
+    try:
+        return int(x)
+    except Exception:
+        return None
+
+def find_scoreboard_cell(scoreboard: Dict[str, Any], setup_type: str, market_regime: str) -> Dict[str, Any]:
+    """
+    Probeert flexibel te vinden, omdat jouw scoreboard structuur kan verschillen per versie.
+    We zoeken naar een dict met keys die lijken op 'wins/loses/total/winrate/avg_r/...'
+    """
+    if not scoreboard or not isinstance(scoreboard, dict):
+        return {}
+
+    # Mogelijke vormen:
+    # 1) scoreboard["setups"][setup][regime] = {...}
+    try:
+        setups = scoreboard.get("setups")
+        if isinstance(setups, dict):
+            st = setups.get(setup_type) or setups.get(setup_type.upper()) or setups.get(setup_type.lower())
+            if isinstance(st, dict):
+                cell = st.get(market_regime) or st.get(market_regime.upper()) or st.get(market_regime.lower())
+                if isinstance(cell, dict):
+                    return cell
+    except Exception:
+        pass
+
+    # 2) scoreboard[setup][regime] = {...}
+    try:
+        st = scoreboard.get(setup_type) or scoreboard.get(setup_type.upper()) or scoreboard.get(setup_type.lower())
+        if isinstance(st, dict):
+            cell = st.get(market_regime) or st.get(market_regime.upper()) or st.get(market_regime.lower())
+            if isinstance(cell, dict):
+                return cell
+    except Exception:
+        pass
+
+    # 3) scoreboard["cells"] list
+    cells = scoreboard.get("cells")
+    if isinstance(cells, list):
+        for c in cells:
+            if not isinstance(c, dict):
+                continue
+            if str(c.get("setup_type", "")).upper() == str(setup_type).upper() and str(c.get("market_regime", "")).upper() == str(market_regime).upper():
+                return c
+
+    return {}
+
+def derive_hist_label_and_reason(scoreboard_cell: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
+    """
+    Regels (simpel + veilig):
+    - Als te weinig samples -> WATCH
+    - Als winrate >= 55% -> GO
+    - Anders WATCH
+    """
+    if not scoreboard_cell:
+        return "WATCH", "Geen scoreboard-data voor deze setup+regime (nog te weinig ervaring).", {}
+
+    # haal metrics uit verschillende mogelijke keys
+    total = (
+        safe_int(scoreboard_cell.get("total"))
+        or safe_int(scoreboard_cell.get("n"))
+        or safe_int(scoreboard_cell.get("count"))
+        or safe_int(scoreboard_cell.get("trades"))
+        or 0
+    )
+
+    winrate = (
+        safe_float(scoreboard_cell.get("winrate"))
+        or safe_float(scoreboard_cell.get("win_rate"))
+        or safe_float(scoreboard_cell.get("wr"))
+    )
+
+    # soms is winrate als percentage (0-100) of fractie (0-1)
+    if winrate is not None and winrate <= 1.0:
+        winrate = winrate * 100.0
+
+    avg_r = (
+        safe_float(scoreboard_cell.get("avg_r"))
+        or safe_float(scoreboard_cell.get("avgR"))
+        or safe_float(scoreboard_cell.get("avg_return_r"))
+        or safe_float(scoreboard_cell.get("mean_r"))
+    )
+
+    wins = safe_int(scoreboard_cell.get("wins")) or safe_int(scoreboard_cell.get("win")) or None
+    losses = safe_int(scoreboard_cell.get("losses")) or safe_int(scoreboard_cell.get("loss")) or None
+
+    # minimale sample size
+    MIN_SAMPLES = int(os.getenv("SCOREBOARD_MIN_SAMPLES") or "20")
+
+    # fallback bereken winrate indien mogelijk
+    if winrate is None and wins is not None and losses is not None and (wins + losses) > 0:
+        winrate = (wins / float(wins + losses)) * 100.0
+        total = wins + losses
+
+    # label logica
+    if total < MIN_SAMPLES:
+        reason = f"Scoreboard: te weinig samples ({total}/{MIN_SAMPLES}) voor betrouwbare GO → WATCH."
+        stats = {"samples": total, "min_samples": MIN_SAMPLES, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
+        return "WATCH", reason, stats
+
+    if winrate is not None and winrate >= 55.0:
+        reason = f"Scoreboard: historisch sterk (winrate {winrate:.1f}% over {total} trades) → GO."
+        stats = {"samples": total, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
+        return "GO", reason, stats
+
+    # default
+    if winrate is not None:
+        reason = f"Scoreboard: historisch zwakker (winrate {winrate:.1f}% over {total} trades) → WATCH."
+    else:
+        reason = f"Scoreboard: data aanwezig ({total} trades) maar winrate onbekend → WATCH."
+    stats = {"samples": total, "winrate": winrate, "avg_r": avg_r, "wins": wins, "losses": losses}
+    return "WATCH", reason, stats
+
+# ==========================================================
 # FINGERPRINT LOGIC (ANTI-DUPLICATE)
 # ==========================================================
 def make_fingerprint(coin: str, setup: str, entry: float, target: float) -> str:
@@ -234,7 +366,9 @@ EXPERIENCE_HEADERS = [
     "coin",
     "setup_type",
     "market_regime",
-    "grade",             # GO / WATCH
+    "grade",             # GO / WATCH (score-based)
+    "hist_label",        # GO / WATCH (scoreboard-based)
+    "hist_reason",       # uitleg uit scoreboard
     "entry",
     "stop",
     "target",
@@ -270,20 +404,37 @@ def calc_overextended(price: float, sma20_val: float) -> float:
 # ==========================================================
 # PREBUY / WEBHOOK (optioneel)
 # ==========================================================
-def build_prebuy(symbol: str, score: int, details: Dict[str, Any], price: float) -> Dict[str, Any]:
+def build_prebuy(
+    symbol: str,
+    score: int,
+    details: Dict[str, Any],
+    price: float,
+    scoreboard: Dict[str, Any],
+) -> Dict[str, Any]:
     created = now_utc()
     stop = price * 0.98
     target = price + (price - stop) * 2
 
+    # score-based grade
     grade = "GO" if score >= MIN_SCORE_TO_PREBUY else "WATCH"
+
+    setup_type = details.get("setup_type", "UNKNOWN")
+    market_regime = details.get("market_regime", "")
+
+    # scoreboard-based label + reason
+    cell = find_scoreboard_cell(scoreboard, setup_type, market_regime)
+    hist_label, hist_reason, hist_stats = derive_hist_label_and_reason(cell)
 
     return {
         "id": f"PB-{symbol}-{created}",
         "coin": symbol,
-        "setup_type": details.get("setup_type", "UNKNOWN"),
-        "market_regime": details.get("market_regime", ""),
+        "setup_type": setup_type,
+        "market_regime": market_regime,
         "score": score,
-        "grade": grade,
+        "grade": grade,                 # score-based
+        "hist_label": hist_label,       # scoreboard-based
+        "hist_reason": hist_reason,
+        "hist_stats": hist_stats,       # compact dict
         "status": "PENDING",
         "created_at": created,
         "expires_at": created + PREBUY_VALID_SECONDS,
@@ -321,6 +472,13 @@ def main() -> None:
     ensure_data_file(FINGERPRINT_PATH, {})
     ensure_experience_csv()
 
+    # ✅ scoreboard read-only laden
+    scoreboard = load_json(SCOREBOARD_PATH, {})
+    if scoreboard:
+        log(f"📘 Scoreboard geladen: {SCOREBOARD_PATH}")
+    else:
+        log(f"⚠️ Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (alles wordt hist_label=WATCH)")
+
     fingerprints = load_json(FINGERPRINT_PATH, {})
 
     # Force test: maakt 1 fake prebuy + schrijft ervaring weg
@@ -333,13 +491,16 @@ def main() -> None:
             "rsi14": 55.0,
             "sma20_slope": 0.0,
         }
-        prebuy = build_prebuy("BTCUSDT", 99, fake_details, 100.0)
+        prebuy = build_prebuy("BTCUSDT", 99, fake_details, 100.0, scoreboard)
+
         append_experience_row({
             "timestamp": prebuy["created_at"],
             "coin": prebuy["coin"],
             "setup_type": prebuy["setup_type"],
             "market_regime": prebuy["market_regime"],
             "grade": prebuy["grade"],
+            "hist_label": prebuy["hist_label"],
+            "hist_reason": prebuy["hist_reason"],
             "entry": prebuy["entry"],
             "stop": prebuy["stop_loss"],
             "target": prebuy["target"],
@@ -373,7 +534,7 @@ def main() -> None:
                 continue
 
             price = closes[-1]
-            prebuy = build_prebuy(symbol, score, details, price)
+            prebuy = build_prebuy(symbol, score, details, price, scoreboard)
 
             fp = make_fingerprint(symbol, prebuy["setup_type"], prebuy["entry"], prebuy["target"])
             if is_duplicate(fp, fingerprints):
@@ -388,6 +549,8 @@ def main() -> None:
                 "setup_type": prebuy["setup_type"],
                 "market_regime": prebuy["market_regime"],
                 "grade": prebuy["grade"],
+                "hist_label": prebuy["hist_label"],
+                "hist_reason": prebuy["hist_reason"],
                 "entry": prebuy["entry"],
                 "stop": prebuy["stop_loss"],
                 "target": prebuy["target"],
@@ -409,9 +572,15 @@ def main() -> None:
             store_fingerprint(fp, symbol, prebuy["setup_type"], prebuy["grade"])
 
             if sent:
-                log(f"✅ Pre-BUY verzonden ({prebuy['grade']}): {symbol} {prebuy['setup_type']} score={score}")
+                log(
+                    f"✅ Pre-BUY verzonden ({prebuy['grade']}, hist={prebuy['hist_label']}): "
+                    f"{symbol} {prebuy['setup_type']} score={score} | {prebuy['hist_reason']}"
+                )
             else:
-                log(f"✅ Experience opgeslagen ({prebuy['grade']}): {symbol} {prebuy['setup_type']} score={score}")
+                log(
+                    f"✅ Experience opgeslagen ({prebuy['grade']}, hist={prebuy['hist_label']}): "
+                    f"{symbol} {prebuy['setup_type']} score={score} | {prebuy['hist_reason']}"
+                )
 
         except Exception:
             traceback.print_exc()
