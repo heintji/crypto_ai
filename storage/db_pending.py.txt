@@ -1,0 +1,66 @@
+# storage/db_pending.py
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, Dict, Optional
+
+import psycopg2
+
+
+def _dsn() -> str:
+    dsn = (os.getenv("DATABASE_URL") or "").strip()
+    if not dsn:
+        raise RuntimeError("DATABASE_URL is not set")
+    return dsn
+
+
+def insert_pending_approval(row: Dict[str, Any]) -> None:
+    """
+    Insert (or update) a pending approval into Postgres table `pending_approvals`.
+    Safe to call repeatedly for the same id.
+    """
+    payload_json = row.get("payload_json")
+    if payload_json is None:
+        # store full dict as payload if not provided
+        payload_json = json.dumps(row, ensure_ascii=False)
+
+    params = (
+        str(row["id"]),
+        str(row["symbol"]),
+        row.get("setup_type"),
+        row.get("regime"),
+        int(row.get("score") or 0) if row.get("score") is not None else None,
+        row.get("label"),
+        row.get("entry"),
+        row.get("stop"),
+        row.get("target"),
+        row.get("expires_at"),
+        payload_json,
+    )
+
+    sql = """
+    INSERT INTO pending_approvals
+      (id, symbol, setup_type, regime, score, label, entry, stop, target, expires_at, payload_json)
+    VALUES
+      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (id) DO UPDATE SET
+      symbol = EXCLUDED.symbol,
+      setup_type = EXCLUDED.setup_type,
+      regime = EXCLUDED.regime,
+      score = EXCLUDED.score,
+      label = EXCLUDED.label,
+      entry = EXCLUDED.entry,
+      stop = EXCLUDED.stop,
+      target = EXCLUDED.target,
+      expires_at = EXCLUDED.expires_at,
+      payload_json = EXCLUDED.payload_json;
+    """
+
+    conn = psycopg2.connect(_dsn(), sslmode="require")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+    finally:
+        conn.close()
