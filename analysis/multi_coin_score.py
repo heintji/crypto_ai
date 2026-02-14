@@ -35,19 +35,17 @@ WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
 # cooldown in seconden (bijv. 6 uur)
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
 
+# ✅ Postgres (maakt Cron “disk-loos” mogelijk)
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+
 # ==========================================================
-# DATA PATHS (ALTIJD via ENV)
-# - Default /data (Render Disk). Als service geen disk heeft -> fallback /tmp/data
+# DATA PATHS (fallback voor lokaal / services met Disk)
 # ==========================================================
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").rstrip("/")
 LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).rstrip("/")
 
 FINGERPRINT_PATH = os.getenv("FINGERPRINT_PATH", os.path.join(DATA_DIR, "fingerprints.json"))
-
-# Experience log (CSV) – GO én WATCH worden opgeslagen
 EXPERIENCE_CSV = os.getenv("EXPERIENCE_CSV", os.path.join(DATA_DIR, "experience.csv"))
-
-# ✅ Scoreboard (gemaakt door history_simulator.py)
 SCOREBOARD_PATH = os.getenv("SCOREBOARD_PATH", os.path.join(DATA_DIR, "scoreboard.json"))
 
 # ==========================================================
@@ -108,10 +106,15 @@ def save_json(path: str, data: Any) -> None:
 
 def safe_prepare_storage() -> None:
     """
-    ✅ Belangrijk: sommige Render services hebben GEEN Disk mount.
-    Dan is /data niet schrijfbaar. We vallen dan automatisch terug naar /tmp/data.
+    ✅ Sommige Render Cron jobs hebben geen Disk mount.
+    Als je DATABASE_URL hebt: prima -> DB is je storage.
+    Anders: probeer /data, fallback /tmp/data.
     """
     global DATA_DIR, LOGS_DIR, FINGERPRINT_PATH, EXPERIENCE_CSV, SCOREBOARD_PATH
+
+    if DATABASE_URL:
+        log("🗄️ DATABASE_URL gevonden: opslag via PostgreSQL (disk is niet verplicht).")
+        return
 
     try:
         ensure_dir(DATA_DIR)
@@ -126,6 +129,196 @@ def safe_prepare_storage() -> None:
         SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")
         ensure_dir(DATA_DIR)
         ensure_dir(LOGS_DIR)
+
+# ==========================================================
+# POSTGRES HELPERS
+# ==========================================================
+def db_available() -> bool:
+    return bool(DATABASE_URL)
+
+def db_connect():
+    import psycopg2  # type: ignore
+    return psycopg2.connect(DATABASE_URL)
+
+def db_ensure_tables() -> None:
+    """
+    Tabellen:
+    - pending_approvals: Pre-BUY’s (PENDING/APPROVED/REJECTED/EXPIRED/CONSUMED)
+    - fingerprints: anti-duplicate store
+    - experience_log: GO/WATCH ervaring
+    """
+    if not db_available():
+        return
+
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS pending_approvals (
+            id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            setup_type TEXT,
+            regime TEXT,
+            score INT,
+            label TEXT,
+            entry NUMERIC,
+            stop NUMERIC,
+            target NUMERIC,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMPTZ,
+            payload JSONB
+        );
+        """)
+
+        # “bijtrekken” (als tabel ooit ouder was)
+        cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS status TEXT;")
+        cur.execute("ALTER TABLE pending_approvals ALTER COLUMN status SET DEFAULT 'PENDING';")
+        cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS payload JSONB;")
+        cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS fingerprints (
+            fp TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            setup_type TEXT NOT NULL,
+            entry NUMERIC,
+            target NUMERIC,
+            grade TEXT,
+            ts BIGINT NOT NULL
+        );
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS experience_log (
+            id BIGSERIAL PRIMARY KEY,
+            ts BIGINT NOT NULL,
+            coin TEXT NOT NULL,
+            setup_type TEXT,
+            market_regime TEXT,
+            grade TEXT,
+            entry NUMERIC,
+            stop NUMERIC,
+            target NUMERIC,
+            decision TEXT,
+            outcome TEXT,
+            mfe TEXT,
+            mae TEXT,
+            time_minutes TEXT,
+            why TEXT,
+            market_condition TEXT,
+            bot_confidence INT,
+            overextended NUMERIC
+        );
+        """)
+
+        conn.commit()
+        log("✅ DB tables ready")
+    finally:
+        conn.close()
+
+def db_is_duplicate(fp: str) -> bool:
+    if not db_available():
+        return False
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT ts FROM fingerprints WHERE fp=%s;", (fp,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        last_ts = int(row[0])
+        return (now_utc() - last_ts) < TRADE_COOLDOWN_SECONDS
+    finally:
+        conn.close()
+
+def db_store_fingerprint(fp: str, symbol: str, setup_type: str, entry: float, target: float, grade: str) -> None:
+    if not db_available():
+        return
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO fingerprints(fp, symbol, setup_type, entry, target, grade, ts)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+        ON CONFLICT (fp) DO UPDATE SET
+            symbol=EXCLUDED.symbol,
+            setup_type=EXCLUDED.setup_type,
+            entry=EXCLUDED.entry,
+            target=EXCLUDED.target,
+            grade=EXCLUDED.grade,
+            ts=EXCLUDED.ts;
+        """, (fp, symbol, setup_type, entry, target, grade, now_utc()))
+        conn.commit()
+    finally:
+        conn.close()
+
+def db_insert_pending(prebuy: Dict[str, Any]) -> None:
+    if not db_available():
+        return
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO pending_approvals(
+            id, symbol, setup_type, regime, score, label, entry, stop, target, status, expires_at, payload
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,to_timestamp(%s),%s::jsonb)
+        ON CONFLICT (id) DO NOTHING;
+        """, (
+            prebuy["id"],
+            prebuy["coin"],
+            prebuy.get("setup_type", ""),
+            prebuy.get("market_regime", ""),
+            int(prebuy.get("score", 0)),
+            prebuy.get("grade", ""),
+            float(prebuy.get("entry", 0.0)),
+            float(prebuy.get("stop_loss", 0.0)),
+            float(prebuy.get("target", 0.0)),
+            "PENDING",
+            int(prebuy.get("expires_at", now_utc() + PREBUY_VALID_SECONDS)),
+            json.dumps(prebuy, ensure_ascii=False),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+def db_append_experience(row: Dict[str, Any]) -> None:
+    if not db_available():
+        return
+    conn = db_connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+        INSERT INTO experience_log(
+            ts, coin, setup_type, market_regime, grade,
+            entry, stop, target, decision, outcome, mfe, mae, time_minutes,
+            why, market_condition, bot_confidence, overextended
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s);
+        """, (
+            int(row.get("timestamp", now_utc())),
+            row.get("coin", ""),
+            row.get("setup_type", ""),
+            row.get("market_regime", ""),
+            row.get("grade", ""),
+            row.get("entry", None),
+            row.get("stop", None),
+            row.get("target", None),
+            row.get("decision", ""),
+            row.get("outcome", ""),
+            row.get("mfe", ""),
+            row.get("mae", ""),
+            row.get("time_minutes", ""),
+            row.get("why", ""),
+            row.get("market_condition", ""),
+            int(row.get("bot_confidence", 0) or 0),
+            row.get("overextended", None),
+        ))
+        conn.commit()
+    finally:
+        conn.close()
 
 # ==========================================================
 # BINANCE DATA
@@ -289,13 +482,13 @@ def make_fingerprint(coin: str, setup: str, entry: float, target: float) -> str:
     raw = f"{coin}|{setup}|{round(entry,3)}|{round(target,3)}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
-def is_duplicate(fp: str, fingerprints: Dict[str, Any]) -> bool:
+def is_duplicate_file(fp: str, fingerprints: Dict[str, Any]) -> bool:
     rec = fingerprints.get(fp)
     if not rec:
         return False
     return (now_utc() - rec["ts"]) < TRADE_COOLDOWN_SECONDS
 
-def store_fingerprint(fp: str, coin: str, setup: str, grade: str) -> None:
+def store_fingerprint_file(fp: str, coin: str, setup: str, grade: str) -> None:
     fingerprints = load_json(FINGERPRINT_PATH, {})
     fingerprints[fp] = {
         "coin": coin,
@@ -306,7 +499,7 @@ def store_fingerprint(fp: str, coin: str, setup: str, grade: str) -> None:
     save_json(FINGERPRINT_PATH, fingerprints)
 
 # ==========================================================
-# EXPERIENCE CSV (GO + WATCH opslaan)
+# EXPERIENCE CSV (fallback)
 # ==========================================================
 EXPERIENCE_HEADERS = [
     "timestamp",
@@ -335,7 +528,7 @@ def ensure_experience_csv() -> None:
             w = csv.writer(f)
             w.writerow(EXPERIENCE_HEADERS)
 
-def append_experience_row(row: Dict[str, Any]) -> None:
+def append_experience_row_file(row: Dict[str, Any]) -> None:
     ensure_experience_csv()
     with open(EXPERIENCE_CSV, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -347,7 +540,7 @@ def calc_overextended(price: float, sma20_val: float) -> float:
     return round(((price - sma20_val) / sma20_val) * 100.0, 3)
 
 # ==========================================================
-# PREBUY / WEBHOOK (optioneel)
+# PREBUY / WEBHOOK
 # ==========================================================
 def build_prebuy(
     symbol: str,
@@ -365,16 +558,11 @@ def build_prebuy(
     bot_conf = score
     sb_note = ""
     sb_verdict = ""
-    sb_stats: Dict[str, Any] = {}
-    sb_key_used = ""
-
     if sb_ctx:
         adj = int(sb_ctx.get("confidence_adj", 0) or 0)
         bot_conf = max(0, min(100, score + adj))
         sb_verdict = str(sb_ctx.get("verdict", "") or "")
         sb_note = str(sb_ctx.get("note", "") or "")
-        sb_stats = dict(sb_ctx.get("stats", {}) or {})
-        sb_key_used = str(sb_ctx.get("key", "") or "")
 
         if sb_verdict == "WEAK":
             grade = "WATCH"
@@ -400,15 +588,15 @@ def build_prebuy(
             "path": SCOREBOARD_PATH,
             "verdict": sb_verdict,
             "note": sb_note,
-            "stats": sb_stats,
-            "key": sb_key_used,
+            "stats": (sb_ctx or {}).get("stats", {}),
+            "key": (sb_ctx or {}).get("key", ""),
         },
     }
 
 def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
     """
-    ✅ Rolvast: multi_coin_score doet alleen analyse + stuurt Pre-BUY door.
-    DB insert gebeurt in whatsapp_webhook via /internal/prebuy.
+    Dit is puur “notify + central intake”.
+    De whatsapp_webhook.py ontvangt dit via /internal/prebuy en stuurt WhatsApp.
     """
     if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
         return False
@@ -431,10 +619,16 @@ def main() -> None:
 
     safe_prepare_storage()
 
-    ensure_data_file(FINGERPRINT_PATH, {})
-    ensure_experience_csv()
+    # ✅ DB tables als DB bestaat
+    db_ensure_tables()
 
-    fingerprints = load_json(FINGERPRINT_PATH, {})
+    # Fallback files alleen als geen DB
+    if not db_available():
+        ensure_data_file(FINGERPRINT_PATH, {})
+        ensure_experience_csv()
+        fingerprints_file = load_json(FINGERPRINT_PATH, {})
+    else:
+        fingerprints_file = {}
 
     sb = load_scoreboard()
     if sb:
@@ -442,6 +636,7 @@ def main() -> None:
     else:
         log(f"📘 Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (gaat alsnog door)")
 
+    # Force test
     if FORCE_TEST_PREBUY:
         fake_details = {
             "setup_type": "TREND_PULLBACK",
@@ -454,7 +649,7 @@ def main() -> None:
         sb_ctx = scoreboard_context(sb, "BTCUSDT", "TREND_PULLBACK", "RANGE") if sb else None
         prebuy = build_prebuy("BTCUSDT", 79, fake_details, 100.0, sb_ctx=sb_ctx)
 
-        append_experience_row({
+        exp_row = {
             "timestamp": prebuy["created_at"],
             "coin": prebuy["coin"],
             "setup_type": prebuy["setup_type"],
@@ -472,10 +667,17 @@ def main() -> None:
             "market_condition": "test",
             "bot_confidence": prebuy.get("bot_confidence", prebuy["score"]),
             "overextended": 0.0,
-        })
+        }
 
-        sent = send_to_webservice(prebuy)
-        log(f"✅ FORCE_TEST_PREBUY: test Pre-BUY gemaakt + experience opgeslagen | sent={sent}")
+        # ✅ opslaan in DB of file
+        if db_available():
+            db_insert_pending(prebuy)
+            db_append_experience(exp_row)
+        else:
+            append_experience_row_file(exp_row)
+
+        send_to_webservice(prebuy)
+        log("✅ FORCE_TEST_PREBUY: 1 test Pre-BUY + experience opgeslagen")
         return
 
     for symbol in COINS:
@@ -493,7 +695,6 @@ def main() -> None:
                 continue
 
             price = closes[-1]
-
             setup_type = str(details.get("setup_type", "UNKNOWN"))
             market_regime = str(details.get("market_regime", ""))
 
@@ -501,17 +702,25 @@ def main() -> None:
             prebuy = build_prebuy(symbol, score, details, price, sb_ctx=sb_ctx)
 
             fp = make_fingerprint(symbol, prebuy["setup_type"], prebuy["entry"], prebuy["target"])
-            if is_duplicate(fp, fingerprints):
-                log(f"⏭️ Skip duplicate {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
-                continue
+
+            # ✅ duplicate check via DB (als aanwezig), anders via file
+            if db_available():
+                if db_is_duplicate(fp):
+                    log(f"⏭️ Skip duplicate(DB) {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
+                    continue
+            else:
+                if is_duplicate_file(fp, fingerprints_file):
+                    log(f"⏭️ Skip duplicate(FILE) {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
+                    continue
 
             overext = calc_overextended(price, float(details["sma20"]))
+            why_note = ""
             if sb_ctx:
                 why_note = f"SCOREBOARD:{sb_ctx.get('verdict','')} | {sb_ctx.get('note','')}"
             else:
                 why_note = prebuy["setup_type"]
 
-            append_experience_row({
+            exp_row = {
                 "timestamp": prebuy["created_at"],
                 "coin": prebuy["coin"],
                 "setup_type": prebuy["setup_type"],
@@ -529,10 +738,23 @@ def main() -> None:
                 "market_condition": "normal",
                 "bot_confidence": prebuy.get("bot_confidence", score),
                 "overextended": overext,
-            })
+            }
 
+            # 1) opslaan pending + experience
+            if db_available():
+                db_insert_pending(prebuy)
+                db_append_experience(exp_row)
+            else:
+                append_experience_row_file(exp_row)
+
+            # 2) notify naar whatsapp-webservice (die stuurt WhatsApp)
             sent = send_to_webservice(prebuy)
-            store_fingerprint(fp, symbol, prebuy["setup_type"], prebuy["grade"])
+
+            # 3) fingerprint opslaan
+            if db_available():
+                db_store_fingerprint(fp, symbol, prebuy["setup_type"], prebuy["entry"], prebuy["target"], prebuy["grade"])
+            else:
+                store_fingerprint_file(fp, symbol, prebuy["setup_type"], prebuy["grade"])
 
             if sent:
                 log(
