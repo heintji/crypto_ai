@@ -4,92 +4,60 @@ import os
 import sys
 import json
 import time
-import csv
-import hashlib
 import traceback
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
+from flask import Flask, request, Response
 
 # ==========================================================
 # PROJECT ROOT
 # ==========================================================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # ==========================================================
+# OPTIONAL: paper execution (blijft jouw rolverdeling)
+# whatsapp_webhook = menselijke gate + start BUY
+# ==========================================================
+try:
+    from trading.paper_trader import buy_eur  # pas aan als jouw functie anders heet
+except Exception:
+    buy_eur = None  # type: ignore
+
+# ==========================================================
 # ENV
 # ==========================================================
-WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
 INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
 
-FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "whatsapp:+14155238886").strip()
+TWILIO_WHATSAPP_TO = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()  # jouw nummer
 
-PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
+DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL_INTERNAL") or "").strip()
 
-# WATCH drempel: trade wél melden + opslaan als ervaring, maar label als WATCH
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
-
-# cooldown in seconden (bijv. 6 uur)
-TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
-
-# ✅ Nieuw: Postgres (optioneel)
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-
-# ==========================================================
-# DATA PATHS (ALTIJD via ENV)
-# - Default /data (Render Disk). Als service geen disk heeft -> zet DATA_DIR env of hij valt terug naar /tmp/data
-# ==========================================================
 DATA_DIR = (os.getenv("DATA_DIR") or "/data").rstrip("/")
-LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).rstrip("/")
+PENDING_PATH = os.getenv("PENDING_PATH", os.path.join(DATA_DIR, "pending_approvals.json"))
 
-FINGERPRINT_PATH = os.getenv("FINGERPRINT_PATH", os.path.join(DATA_DIR, "fingerprints.json"))
+ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
-# Experience log (CSV) – GO én WATCH worden opgeslagen
-EXPERIENCE_CSV = os.getenv("EXPERIENCE_CSV", os.path.join(DATA_DIR, "experience.csv"))
+PORT = int(os.getenv("PORT") or "10000")
 
-# ✅ NIEUW: Scoreboard (gemaakt door history_simulator.py)
-SCOREBOARD_PATH = os.getenv("SCOREBOARD_PATH", os.path.join(DATA_DIR, "scoreboard.json"))
-
-# ==========================================================
-# MARKET SETTINGS
-# ==========================================================
-BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
-
-COINS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
-    "ADAUSDT",
-    "DOGEUSDT",
-    "SOLUSDT",
-]
-
-INTERVAL = "1h"
-LIMIT = 200
+app = Flask(__name__)
 
 # ==========================================================
 # HELPERS
 # ==========================================================
-def log(msg: str) -> None:
-    print(msg, flush=True)
-
 def now_utc() -> int:
     return int(time.time())
 
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
 def ensure_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
-
-def ensure_data_file(path: str, default: Any) -> None:
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
-    if not os.path.exists(path):
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(default, f, indent=2)
 
 def load_json(path: str, default: Any) -> Any:
     try:
@@ -109,555 +77,463 @@ def save_json(path: str, data: Any) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
     os.replace(tmp, path)
 
-def safe_prepare_storage() -> None:
-    """
-    ✅ Belangrijk: sommige Render services hebben GEEN Disk mount.
-    Dan is /data niet schrijfbaar. We vallen dan automatisch terug naar /tmp/data.
-    """
-    global DATA_DIR, LOGS_DIR, FINGERPRINT_PATH, EXPERIENCE_CSV, SCOREBOARD_PATH
-
+def safe_storage_ready() -> None:
     try:
         ensure_dir(DATA_DIR)
-        ensure_dir(LOGS_DIR)
     except PermissionError:
+        # fallback
         fallback = "/tmp/data"
         log(f"⚠️ Geen write access op {DATA_DIR}. Fallback naar {fallback}")
+        global DATA_DIR, PENDING_PATH
         DATA_DIR = fallback
-        LOGS_DIR = os.path.join(DATA_DIR, "logs")
-        FINGERPRINT_PATH = os.path.join(DATA_DIR, "fingerprints.json")
-        EXPERIENCE_CSV = os.path.join(DATA_DIR, "experience.csv")
-        SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")
+        PENDING_PATH = os.path.join(DATA_DIR, "pending_approvals.json")
         ensure_dir(DATA_DIR)
-        ensure_dir(LOGS_DIR)
 
 # ==========================================================
-# ✅ POSTGRES HELPERS (optioneel, maar nu toegevoegd)
+# DB LAYER
 # ==========================================================
 def db_available() -> bool:
-    if not DATABASE_URL:
-        return False
-    try:
-        import psycopg2  # type: ignore
-        _ = psycopg2
-        return True
-    except Exception:
-        return False
+    return bool(DATABASE_URL)
 
-def db_upsert_prebuy(prebuy: Dict[str, Any]) -> bool:
-    """
-    Slaat Pre-BUY op in Postgres (pending_approvals).
-    Werkt alleen als DATABASE_URL bestaat én psycopg2 geïnstalleerd is.
-    """
+def db_connect():
+    import psycopg2  # type: ignore
+    return psycopg2.connect(DATABASE_URL)
+
+def db_exec(sql: str, params: Optional[Tuple[Any, ...]] = None) -> None:
+    conn = db_connect()
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params or ())
+    finally:
+        conn.close()
+
+def db_init_pending_approvals_table() -> None:
+    db_exec(
+        """
+        CREATE TABLE IF NOT EXISTS pending_approvals (
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          setup_type TEXT,
+          regime TEXT,
+          score INT,
+          label TEXT,
+          entry NUMERIC,
+          stop NUMERIC,
+          target NUMERIC,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+
+    db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'PENDING';")
+    db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
+    db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS bot_confidence INT;")
+    db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'webhook';")
+    try:
+        db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS payload JSONB;")
+    except Exception:
+        db_exec("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS payload TEXT;")
+
+    db_exec("CREATE INDEX IF NOT EXISTS idx_pending_status_created ON pending_approvals(status, created_at DESC);")
+
+def db_insert_prebuy(prebuy: Dict[str, Any], source: str = "internal_prebuy") -> bool:
     if not db_available():
         return False
 
+    db_init_pending_approvals_table()
+
+    sql = """
+    INSERT INTO pending_approvals
+      (id, symbol, setup_type, regime, score, label, entry, stop, target, created_at, expires_at, status, bot_confidence, source, payload)
+    VALUES
+      (%s, %s, %s, %s, %s, %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s), %s, %s, %s, %s)
+    ON CONFLICT (id) DO UPDATE SET
+      symbol = EXCLUDED.symbol,
+      setup_type = EXCLUDED.setup_type,
+      regime = EXCLUDED.regime,
+      score = EXCLUDED.score,
+      label = EXCLUDED.label,
+      entry = EXCLUDED.entry,
+      stop = EXCLUDED.stop,
+      target = EXCLUDED.target,
+      expires_at = EXCLUDED.expires_at,
+      bot_confidence = EXCLUDED.bot_confidence,
+      source = EXCLUDED.source,
+      payload = EXCLUDED.payload;
+    """
+
+    payload_val: Any = prebuy
+    payload_json = json.dumps(prebuy, ensure_ascii=False)
+
+    params = (
+        prebuy.get("id"),
+        prebuy.get("coin") or prebuy.get("symbol"),
+        prebuy.get("setup_type"),
+        prebuy.get("market_regime") or prebuy.get("regime"),
+        int(prebuy.get("score") or 0),
+        prebuy.get("grade") or prebuy.get("label"),
+        float(prebuy.get("entry") or 0),
+        float(prebuy.get("stop_loss") or prebuy.get("stop") or 0),
+        float(prebuy.get("target") or 0),
+        int(prebuy.get("created_at") or now_utc()),
+        int(prebuy.get("expires_at") or (now_utc() + 4 * 60 * 60)),
+        prebuy.get("status") or "PENDING",
+        int(prebuy.get("bot_confidence") or int(prebuy.get("score") or 0)),
+        source,
+        payload_val if isinstance(payload_val, dict) else payload_json,
+    )
+
     try:
-        import psycopg2  # type: ignore
-        from psycopg2.extras import Json  # type: ignore
-
-        conn = psycopg2.connect(DATABASE_URL)
-        cur = conn.cursor()
-
-        # Let op: jouw tabel moet minimaal id/symbol/status/created_at hebben.
-        # We stoppen de volledige prebuy in payload zodat je later niks kwijt bent.
-        cur.execute(
-            """
-            INSERT INTO pending_approvals (
-                id, symbol, setup_type, regime, score, label,
-                entry, stop, target,
-                status, created_at, expires_at, updated_at, payload
-            )
-            VALUES (
-                %s, %s, %s, %s, %s, %s,
-                %s, %s, %s,
-                %s, NOW(), to_timestamp(%s), NOW(), %s
-            )
-            ON CONFLICT (id) DO UPDATE SET
-                symbol = EXCLUDED.symbol,
-                setup_type = EXCLUDED.setup_type,
-                regime = EXCLUDED.regime,
-                score = EXCLUDED.score,
-                label = EXCLUDED.label,
-                entry = EXCLUDED.entry,
-                stop = EXCLUDED.stop,
-                target = EXCLUDED.target,
-                status = EXCLUDED.status,
-                expires_at = EXCLUDED.expires_at,
-                updated_at = NOW(),
-                payload = EXCLUDED.payload
-            """,
-            (
-                prebuy["id"],
-                prebuy["coin"],
-                prebuy.get("setup_type", ""),
-                prebuy.get("market_regime", ""),
-                int(prebuy.get("score", 0) or 0),
-                prebuy.get("grade", ""),
-                float(prebuy.get("entry", 0.0) or 0.0),
-                float(prebuy.get("stop_loss", 0.0) or 0.0),
-                float(prebuy.get("target", 0.0) or 0.0),
-                prebuy.get("status", "PENDING"),
-                int(prebuy.get("expires_at", now_utc()) or now_utc()),
-                Json(prebuy),
-            ),
-        )
-
-        conn.commit()
-        cur.close()
+        conn = db_connect()
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
         conn.close()
         return True
-
     except Exception:
         traceback.print_exc()
         return False
 
-# ==========================================================
-# BINANCE DATA
-# ==========================================================
-def get_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
-    r = requests.get(
-        BINANCE_KLINES,
-        params={"symbol": symbol, "interval": interval, "limit": limit},
-        timeout=20,
-    )
-    r.raise_for_status()
-    return r.json()
+def db_list_pending(limit: int = 10) -> List[Dict[str, Any]]:
+    if not db_available():
+        return []
 
-def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    return [float(k[4]) for k in klines if k and len(k) > 4]
+    db_init_pending_approvals_table()
 
-# ==========================================================
-# INDICATORS
-# ==========================================================
-def sma(values: List[float], period: int) -> Optional[float]:
-    if len(values) < period:
-        return None
-    return sum(values[-period:]) / period
-
-def rsi(values: List[float], period: int = 14) -> Optional[float]:
-    if len(values) < period + 1:
-        return None
-    gains, losses = 0.0, 0.0
-    for i in range(-period, 0):
-        delta = values[i] - values[i - 1]
-        if delta >= 0:
-            gains += delta
-        else:
-            losses += abs(delta)
-    if losses == 0:
-        return 100.0
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
-
-def slope_sma(values: List[float], period: int, lookback: int = 6) -> Optional[float]:
-    """Simpel slope signaal: SMA nu - SMA lookback candles geleden."""
-    if len(values) < period + lookback:
-        return None
-    now_val = sum(values[-period:]) / period
-    prev_val = sum(values[-period - lookback : -lookback]) / period
-    return now_val - prev_val
-
-# ==========================================================
-# REGIME / SETUP & SCORING
-# ==========================================================
-def determine_market_regime(s20: float, s50: float, s20_slope: float) -> str:
-    # simpel maar bruikbaar: bull/bear/range
-    if s20 > s50 and s20_slope > 0:
-        return "BULL"
-    if s20 < s50 and s20_slope < 0:
-        return "BEAR"
-    return "RANGE"
-
-def determine_setup(s20: float, s50: float, r14: float) -> str:
-    if s20 > s50 and r14 >= 55:
-        return "TREND_PULLBACK"
-    if s20 < s50 and r14 <= 45:
-        return "BREAKOUT_RETEST"  # (houd je 2 setups aan; BEAR_RALLY niet gebruiken)
-    return "BREAKOUT_RETEST"
-
-def score_symbol(closes: List[float]) -> Tuple[int, Dict[str, Any]]:
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    r14 = rsi(closes, 14)
-    s20_sl = slope_sma(closes, 20, lookback=6)
-
-    if s20 is None or s50 is None or r14 is None or s20_sl is None:
-        return 0, {}
-
-    score = 50
-    if s20 > s50:
-        score += 20
-    else:
-        score -= 10
-
-    if r14 >= 60:
-        score += 20
-    elif r14 <= 40:
-        score -= 10
-
-    setup = determine_setup(s20, s50, r14)
-    regime = determine_market_regime(s20, s50, s20_sl)
-
-    return max(0, min(100, score)), {
-        "sma20": s20,
-        "sma50": s50,
-        "rsi14": r14,
-        "setup_type": setup,
-        "market_regime": regime,
-        "sma20_slope": s20_sl,
-    }
-
-# ==========================================================
-# ✅ SCOREBOARD READ + CONTEXT
-# ==========================================================
-def load_scoreboard() -> Dict[str, Any]:
-    # scoreboard.json wordt gemaakt door history_simulator.py
-    return load_json(SCOREBOARD_PATH, {})
-
-def sb_key(setup_type: str, market_regime: str) -> str:
-    return f"{setup_type}|{market_regime}"
-
-def scoreboard_context(sb: Dict[str, Any], coin: str, setup_type: str, market_regime: str) -> Dict[str, Any]:
+    sql = """
+    SELECT id, symbol, setup_type, regime, score, label, entry, stop, target,
+           EXTRACT(EPOCH FROM created_at)::bigint as created_ts,
+           COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) as expires_ts,
+           status, COALESCE(bot_confidence, score) as bot_confidence
+    FROM pending_approvals
+    WHERE status = 'PENDING'
+    ORDER BY created_at DESC
+    LIMIT %s;
     """
-    Verwacht grofweg structuur zoals:
-    sb["global"][ "TREND_PULLBACK|BULL" ] = {"trades":..., "winrate":..., "avg_r":..., ...}
-    sb["by_coin"]["XRPUSDT"][ "TREND_PULLBACK|BEAR" ] = {...}
-    Werkt ook als die structuur nog niet perfect is -> dan geeft hij gewoon {} terug.
-    """
-    key = sb_key(setup_type, market_regime)
-    out: Dict[str, Any] = {"key": key}
-
-    # coin-level (als aanwezig)
-    by_coin = sb.get("by_coin", {}) if isinstance(sb, dict) else {}
-    coin_bucket = by_coin.get(coin, {}) if isinstance(by_coin, dict) else {}
-    coin_stats = coin_bucket.get(key, {}) if isinstance(coin_bucket, dict) else {}
-
-    # global-level (als aanwezig)
-    global_bucket = sb.get("global", {}) if isinstance(sb, dict) else {}
-    global_stats = global_bucket.get(key, {}) if isinstance(global_bucket, dict) else {}
-
-    # kies coin_stats als die voldoende sample heeft, anders global
-    def trades(x: Any) -> int:
-        try:
-            return int(x.get("trades", 0))
-        except Exception:
-            return 0
-
-    chosen = coin_stats if trades(coin_stats) >= 30 else global_stats
-    if not isinstance(chosen, dict):
-        chosen = {}
-
-    out["stats"] = {
-        "source": "coin" if chosen is coin_stats else "global",
-        "trades": trades(chosen),
-        "winrate": float(chosen.get("winrate", 0.0) or 0.0),
-        "avg_r": float(chosen.get("avg_r", 0.0) or 0.0),
-    }
-
-    # eenvoudige interpretatie (geen hard skippen; alleen context + confidence tweak)
-    wr = out["stats"]["winrate"]
-    n = out["stats"]["trades"]
-
-    if n < 30:
-        out["verdict"] = "LOW_SAMPLE"
-        out["confidence_adj"] = -5
-        out["note"] = "Weinig historie voor deze combinatie."
-    else:
-        if wr >= 0.55:
-            out["verdict"] = "STRONG"
-            out["confidence_adj"] = +8
-            out["note"] = "Historisch bovengemiddeld voor deze combinatie."
-        elif wr <= 0.45:
-            out["verdict"] = "WEAK"
-            out["confidence_adj"] = -10
-            out["note"] = "Historisch ondergemiddeld voor deze combinatie."
-        else:
-            out["verdict"] = "NEUTRAL"
-            out["confidence_adj"] = 0
-            out["note"] = "Historisch gemiddeld voor deze combinatie."
-
-    return out
-
-# ==========================================================
-# FINGERPRINT LOGIC (ANTI-DUPLICATE)
-# ==========================================================
-def make_fingerprint(coin: str, setup: str, entry: float, target: float) -> str:
-    raw = f"{coin}|{setup}|{round(entry,3)}|{round(target,3)}"
-    return hashlib.sha256(raw.encode()).hexdigest()
-
-def is_duplicate(fp: str, fingerprints: Dict[str, Any]) -> bool:
-    rec = fingerprints.get(fp)
-    if not rec:
-        return False
-    return (now_utc() - rec["ts"]) < TRADE_COOLDOWN_SECONDS
-
-def store_fingerprint(fp: str, coin: str, setup: str, grade: str) -> None:
-    fingerprints = load_json(FINGERPRINT_PATH, {})
-    fingerprints[fp] = {
-        "coin": coin,
-        "setup": setup,
-        "grade": grade,
-        "ts": now_utc(),
-    }
-    save_json(FINGERPRINT_PATH, fingerprints)
-
-# ==========================================================
-# EXPERIENCE CSV (GO + WATCH opslaan)
-# ==========================================================
-EXPERIENCE_HEADERS = [
-    "timestamp",
-    "coin",
-    "setup_type",
-    "market_regime",
-    "grade",             # GO / WATCH
-    "entry",
-    "stop",
-    "target",
-    "decision",          # user decision later (BUY/NO/...) -> nu leeg
-    "outcome",           # later invullen door simulatie/monitor
-    "mfe",               # later
-    "mae",               # later
-    "time_minutes",      # later
-    "why",
-    "market_condition",
-    "bot_confidence",
-    "overextended",
-]
-
-def ensure_experience_csv() -> None:
-    ensure_dir(os.path.dirname(EXPERIENCE_CSV) or ".")
-    if not os.path.exists(EXPERIENCE_CSV):
-        with open(EXPERIENCE_CSV, "w", newline="", encoding="utf-8") as f:
-            w = csv.writer(f)
-            w.writerow(EXPERIENCE_HEADERS)
-
-def append_experience_row(row: Dict[str, Any]) -> None:
-    ensure_experience_csv()
-    with open(EXPERIENCE_CSV, "a", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow([row.get(h, "") for h in EXPERIENCE_HEADERS])
-
-def calc_overextended(price: float, sma20_val: float) -> float:
-    if sma20_val <= 0:
-        return 0.0
-    return round(((price - sma20_val) / sma20_val) * 100.0, 3)  # % boven SMA20
-
-# ==========================================================
-# PREBUY / WEBHOOK (optioneel)
-# ==========================================================
-def build_prebuy(
-    symbol: str,
-    score: int,
-    details: Dict[str, Any],
-    price: float,
-    sb_ctx: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    created = now_utc()
-    stop = price * 0.98
-    target = price + (price - stop) * 2
-
-    # basis label
-    grade = "GO" if score >= MIN_SCORE_TO_PREBUY else "WATCH"
-
-    # ✅ scoreboard influence: geen hard skip, alleen label strakker + confidence aanpassen
-    bot_conf = score
-    sb_note = ""
-    sb_verdict = ""
-    if sb_ctx:
-        adj = int(sb_ctx.get("confidence_adj", 0) or 0)
-        bot_conf = max(0, min(100, score + adj))
-        sb_verdict = str(sb_ctx.get("verdict", "") or "")
-        sb_note = str(sb_ctx.get("note", "") or "")
-
-        # als historie WEAK is -> degrade naar WATCH (zelfs als score hoog is)
-        if sb_verdict == "WEAK":
-            grade = "WATCH"
-        # als historie STRONG is en score nét onder GO -> promote naar GO
-        if sb_verdict == "STRONG" and score >= (MIN_SCORE_TO_PREBUY - 5):
-            grade = "GO"
-
-    return {
-        "id": f"PB-{symbol}-{created}",
-        "coin": symbol,
-        "setup_type": details.get("setup_type", "UNKNOWN"),
-        "market_regime": details.get("market_regime", ""),
-        "score": score,
-        "bot_confidence": bot_conf,
-        "grade": grade,
-        "status": "PENDING",
-        "created_at": created,
-        "expires_at": created + PREBUY_VALID_SECONDS,
-        "entry": round(price, 8),
-        "stop_loss": round(stop, 8),
-        "target": round(target, 8),
-        "details": details,
-        "scoreboard": {
-            "path": SCOREBOARD_PATH,
-            "verdict": sb_verdict,
-            "note": sb_note,
-            "stats": (sb_ctx or {}).get("stats", {}),
-            "key": (sb_ctx or {}).get("key", ""),
-        },
-    }
-
-def send_to_webservice(prebuy: Dict[str, Any]) -> bool:
-    if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
-        return False
+    items: List[Dict[str, Any]] = []
+    conn = db_connect()
     try:
-        r = requests.post(
-            f"{WEBHOOK_BASE_URL}/internal/prebuy",
-            json=prebuy,
-            headers={"X-Internal-Token": INTERNAL_TOKEN},
-            timeout=20,
-        )
-        return r.status_code < 300
-    except Exception:
-        return False
+        with conn.cursor() as cur:
+            cur.execute(sql, (limit,))
+            rows = cur.fetchall()
+            for r in rows:
+                items.append({
+                    "id": r[0],
+                    "coin": r[1],
+                    "setup_type": r[2],
+                    "market_regime": r[3],
+                    "score": int(r[4] or 0),
+                    "grade": r[5],
+                    "entry": float(r[6] or 0),
+                    "stop_loss": float(r[7] or 0),
+                    "target": float(r[8] or 0),
+                    "created_at": int(r[9] or 0),
+                    "expires_at": int(r[10] or 0),
+                    "status": r[11],
+                    "bot_confidence": int(r[12] or 0),
+                })
+    finally:
+        conn.close()
+    return items
 
-# ==========================================================
-# MAIN
-# ==========================================================
-def main() -> None:
-    log("🚀 multi_coin_score gestart")
+def db_get_pending_by_id(prebuy_id: str) -> Optional[Dict[str, Any]]:
+    if not db_available():
+        return None
 
-    # ✅ storage voorbereiden (met fallback)
-    safe_prepare_storage()
+    db_init_pending_approvals_table()
 
-    ensure_data_file(FINGERPRINT_PATH, {})
-    ensure_experience_csv()
+    sql = """
+    SELECT id, symbol, setup_type, regime, score, label, entry, stop, target,
+           EXTRACT(EPOCH FROM created_at)::bigint as created_ts,
+           COALESCE(EXTRACT(EPOCH FROM expires_at)::bigint, 0) as expires_ts,
+           status, COALESCE(bot_confidence, score) as bot_confidence
+    FROM pending_approvals
+    WHERE id = %s
+    LIMIT 1;
+    """
+    conn = db_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, (prebuy_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "coin": row[1],
+                "setup_type": row[2],
+                "market_regime": row[3],
+                "score": int(row[4] or 0),
+                "grade": row[5],
+                "entry": float(row[6] or 0),
+                "stop_loss": float(row[7] or 0),
+                "target": float(row[8] or 0),
+                "created_at": int(row[9] or 0),
+                "expires_at": int(row[10] or 0),
+                "status": row[11],
+                "bot_confidence": int(row[12] or 0),
+            }
+    finally:
+        conn.close()
 
-    fingerprints = load_json(FINGERPRINT_PATH, {})
-
-    # ✅ scoreboard laden (als hij bestaat)
-    sb = load_scoreboard()
-    if sb:
-        log(f"📘 Scoreboard geladen: {SCOREBOARD_PATH}")
-    else:
-        log(f"📘 Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (gaat alsnog door)")
-
-    # DB status log
-    if db_available():
-        log("🗄️ Postgres: AAN (DATABASE_URL gevonden + psycopg2 aanwezig)")
-    else:
-        log("🗄️ Postgres: UIT (geen DATABASE_URL of psycopg2 ontbreekt)")
-
-    # Force test: maakt 1 fake prebuy + schrijft ervaring weg
-    if FORCE_TEST_PREBUY:
-        fake_details = {
-            "setup_type": "TREND_PULLBACK",
-            "market_regime": "RANGE",
-            "sma20": 100.0,
-            "sma50": 100.0,
-            "rsi14": 55.0,
-            "sma20_slope": 0.0,
-        }
-        sb_ctx = scoreboard_context(sb, "BTCUSDT", "TREND_PULLBACK", "RANGE") if sb else None
-        prebuy = build_prebuy("BTCUSDT", 79, fake_details, 100.0, sb_ctx=sb_ctx)
-
-        append_experience_row({
-            "timestamp": prebuy["created_at"],
-            "coin": prebuy["coin"],
-            "setup_type": prebuy["setup_type"],
-            "market_regime": prebuy["market_regime"],
-            "grade": prebuy["grade"],
-            "entry": prebuy["entry"],
-            "stop": prebuy["stop_loss"],
-            "target": prebuy["target"],
-            "decision": "",
-            "outcome": "",
-            "mfe": "",
-            "mae": "",
-            "time_minutes": "",
-            "why": f"SCOREBOARD:{(sb_ctx or {}).get('note','FORCE_TEST_PREBUY')}",
-            "market_condition": "test",
-            "bot_confidence": prebuy.get("bot_confidence", prebuy["score"]),
-            "overextended": 0.0,
-        })
-
-        # ✅ Nieuw: ook naar DB proberen
-        db_ok = db_upsert_prebuy(prebuy)
-        sent = send_to_webservice(prebuy)
-
-        log(f"✅ FORCE_TEST_PREBUY: experience opgeslagen | db={'OK' if db_ok else 'NO'} | webhook={'OK' if sent else 'NO'}")
+def db_set_status(prebuy_id: str, status: str) -> None:
+    if not db_available():
         return
+    db_init_pending_approvals_table()
+    db_exec("UPDATE pending_approvals SET status=%s WHERE id=%s;", (status, prebuy_id))
 
-    for symbol in COINS:
+# ==========================================================
+# JSON FALLBACK (als DB niet beschikbaar)
+# ==========================================================
+def read_pending_json() -> List[Dict[str, Any]]:
+    safe_storage_ready()
+    data = load_json(PENDING_PATH, [])
+    if isinstance(data, list):
+        return data
+    return []
+
+def write_pending_json(items: List[Dict[str, Any]]) -> None:
+    safe_storage_ready()
+    save_json(PENDING_PATH, items)
+
+def json_insert_prebuy(prebuy: Dict[str, Any]) -> None:
+    items = read_pending_json()
+    # dedup op id
+    if any(x.get("id") == prebuy.get("id") for x in items):
+        return
+    items.insert(0, prebuy)
+    write_pending_json(items)
+
+def json_list_pending(limit: int = 10) -> List[Dict[str, Any]]:
+    items = [x for x in read_pending_json() if (x.get("status") or "PENDING") == "PENDING"]
+    return items[:limit]
+
+def json_get_pending_by_id(prebuy_id: str) -> Optional[Dict[str, Any]]:
+    for x in read_pending_json():
+        if x.get("id") == prebuy_id:
+            return x
+    return None
+
+def json_set_status(prebuy_id: str, status: str) -> None:
+    items = read_pending_json()
+    for x in items:
+        if x.get("id") == prebuy_id:
+            x["status"] = status
+    write_pending_json(items)
+
+# ==========================================================
+# Unified read/write (DB first, else JSON)
+# ==========================================================
+def list_pending(limit: int = 10) -> List[Dict[str, Any]]:
+    if db_available():
+        return db_list_pending(limit=limit)
+    return json_list_pending(limit=limit)
+
+def get_pending(prebuy_id: str) -> Optional[Dict[str, Any]]:
+    if db_available():
+        return db_get_pending_by_id(prebuy_id)
+    return json_get_pending_by_id(prebuy_id)
+
+def set_status(prebuy_id: str, status: str) -> None:
+    if db_available():
+        db_set_status(prebuy_id, status)
+    else:
+        json_set_status(prebuy_id, status)
+
+# ==========================================================
+# Twilio reply helper (TwiML)
+# ==========================================================
+def twiml(message: str) -> Response:
+    xml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{message}</Message></Response>'
+    return Response(xml, mimetype="application/xml")
+
+# ==========================================================
+# INTERNAL ENDPOINT (multi_coin_score -> webhook)
+# ==========================================================
+@app.route("/internal/prebuy", methods=["POST"])
+def internal_prebuy() -> Response:
+    token = (request.headers.get("X-Internal-Token") or "").strip()
+    if not INTERNAL_TOKEN or token != INTERNAL_TOKEN:
+        return Response("Unauthorized", status=401)
+
+    try:
+        prebuy = request.get_json(force=True, silent=False) or {}
+        if not isinstance(prebuy, dict):
+            return Response("Bad payload", status=400)
+
+        # status default
+        prebuy.setdefault("status", "PENDING")
+
+        stored_db = False
+        if db_available():
+            stored_db = db_insert_prebuy(prebuy, source="internal_prebuy")
+
+        if not stored_db:
+            json_insert_prebuy(prebuy)
+
+        return Response("OK", status=200)
+    except Exception:
+        traceback.print_exc()
+        return Response("ERROR", status=500)
+
+# ==========================================================
+# WHATSAPP COMMANDS
+# LIST
+# YES <amount> [id]
+# NO [id]
+# ==========================================================
+def parse_command(text: str) -> Tuple[str, List[str]]:
+    t = (text or "").strip()
+    parts = t.split()
+    if not parts:
+        return "", []
+    cmd = parts[0].upper()
+    return cmd, parts[1:]
+
+def format_prebuy_line(p: Dict[str, Any]) -> str:
+    return (
+        f"{p.get('id')} | {p.get('coin')} | {p.get('grade')} | "
+        f"score={p.get('score')} conf={p.get('bot_confidence', p.get('score'))} | "
+        f"entry={p.get('entry')} stop={p.get('stop_loss')} target={p.get('target')}"
+    )
+
+def is_expired(p: Dict[str, Any]) -> bool:
+    exp = int(p.get("expires_at") or 0)
+    return exp > 0 and now_utc() > exp
+
+def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
+    """
+    Start BUY via paper_trader (of later live).
+    """
+    if is_expired(prebuy):
+        return False, "Deze Pre-BUY is verlopen."
+
+    if buy_eur is None:
+        return False, "buy_eur() niet beschikbaar (paper_trader import faalt)."
+
+    symbol = str(prebuy.get("coin") or "")
+    entry = float(prebuy.get("entry") or 0)
+    stop = float(prebuy.get("stop_loss") or 0)
+    target = float(prebuy.get("target") or 0)
+
+    try:
+        # jouw paper_trader kan andere signature hebben; pas aan indien nodig.
+        buy_eur(symbol=symbol, amount_eur=amount_eur, entry=entry, stop_loss=stop, target=target, prebuy_id=str(prebuy.get("id")))
+        return True, f"BUY gestart ✅ {symbol} €{amount_eur} (id={prebuy.get('id')})"
+    except TypeError:
+        # fallback signature
         try:
-            klines = get_klines(symbol, INTERVAL, LIMIT)
-            closes = closes_from_klines(klines)
-            if len(closes) < 60:
-                continue
+            buy_eur(symbol, amount_eur)
+            return True, f"BUY gestart ✅ {symbol} €{amount_eur} (id={prebuy.get('id')})"
+        except Exception as e:
+            return False, f"BUY faalde: {e}"
+    except Exception as e:
+        return False, f"BUY faalde: {e}"
 
-            score, details = score_symbol(closes)
-            if not details:
-                continue
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp_webhook() -> Response:
+    body = (request.form.get("Body") or "").strip()
+    from_number = (request.form.get("From") or "").strip()
 
-            # Alleen loggen/melden als score minimaal WATCH niveau haalt
-            if score < WATCH_MIN_SCORE:
-                continue
+    # debug log
+    log(f"WHATSAPP_IN: from={from_number} body={body} db={'YES' if db_available() else 'NO'} pending_file={PENDING_PATH}")
 
-            price = closes[-1]
+    cmd, args = parse_command(body)
 
-            setup_type = str(details.get("setup_type", "UNKNOWN"))
-            market_regime = str(details.get("market_regime", ""))
-
-            # ✅ scoreboard context ophalen
-            sb_ctx = scoreboard_context(sb, symbol, setup_type, market_regime) if sb else None
-
-            prebuy = build_prebuy(symbol, score, details, price, sb_ctx=sb_ctx)
-
-            fp = make_fingerprint(symbol, prebuy["setup_type"], prebuy["entry"], prebuy["target"])
-            if is_duplicate(fp, fingerprints):
-                log(f"⏭️ Skip duplicate {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
-                continue
-
-            # 1) Opslaan als ervaring (GO én WATCH)
-            overext = calc_overextended(price, float(details["sma20"]))
-            why_note = ""
-            if sb_ctx:
-                why_note = f"SCOREBOARD:{sb_ctx.get('verdict','')} | {sb_ctx.get('note','')}"
-            else:
-                why_note = prebuy["setup_type"]
-
-            append_experience_row({
-                "timestamp": prebuy["created_at"],
-                "coin": prebuy["coin"],
-                "setup_type": prebuy["setup_type"],
-                "market_regime": prebuy["market_regime"],
-                "grade": prebuy["grade"],
-                "entry": prebuy["entry"],
-                "stop": prebuy["stop_loss"],
-                "target": prebuy["target"],
-                "decision": "",
-                "outcome": "",
-                "mfe": "",
-                "mae": "",
-                "time_minutes": "",
-                "why": why_note,
-                "market_condition": "normal",
-                "bot_confidence": prebuy.get("bot_confidence", score),
-                "overextended": overext,
-            })
-
-            # 2) ✅ Nieuw: ook in Postgres zetten (centrale pending)
-            db_ok = db_upsert_prebuy(prebuy)
-
-            # 3) Optioneel naar WhatsApp-webservice sturen (mag blijven)
-            sent = send_to_webservice(prebuy)
-
-            # 4) Fingerprint opslaan (anti-duplicate)
-            store_fingerprint(fp, symbol, prebuy["setup_type"], prebuy["grade"])
-
-            log(
-                f"✅ Pre-BUY ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
-                f"score={score} conf={prebuy.get('bot_confidence',score)} "
-                f"db={'OK' if db_ok else 'NO'} webhook={'OK' if sent else 'NO'} sb={prebuy['scoreboard'].get('verdict','')}"
+    try:
+        if cmd in ("HELP", "?"):
+            return twiml(
+                "Commands:\n"
+                "LIST\n"
+                "YES <bedrag> [ID]\n"
+                "NO [ID]\n"
+                "Voorbeeld: YES 10 PB-BTCUSDT-1770831004"
             )
 
+        if cmd == "LIST":
+            items = list_pending(limit=10)
+            if not items:
+                return twiml("Geen PENDING Pre-BUY’s gevonden.")
+            lines = ["PENDING Pre-BUY’s (max 10):"]
+            for p in items:
+                lines.append(format_prebuy_line(p))
+            return twiml("\n".join(lines))
+
+        if cmd == "YES":
+            if not args:
+                return twiml("Gebruik: YES <bedrag> [ID] (bijv. YES 10 PB-...)")
+
+            # bedrag
+            try:
+                amount = int(args[0])
+            except Exception:
+                return twiml("Bedrag ongeldig. Toegestaan: 5,10,15,20,30,100")
+
+            if amount not in ALLOWED_AMOUNTS:
+                return twiml("Bedrag niet toegestaan. Toegestaan: 5,10,15,20,30,100")
+
+            # id optioneel
+            prebuy_id = args[1] if len(args) >= 2 else ""
+
+            if prebuy_id:
+                prebuy = get_pending(prebuy_id)
+                if not prebuy:
+                    return twiml(f"ID niet gevonden: {prebuy_id}")
+            else:
+                items = list_pending(limit=1)
+                if not items:
+                    return twiml("Geen PENDING Pre-BUY’s.")
+                prebuy = items[0]
+
+            # execute buy
+            ok, msg = execute_buy(prebuy, amount)
+
+            if ok:
+                set_status(str(prebuy.get("id")), "APPROVED")
+                return twiml(msg)
+
+            return twiml(msg)
+
+        if cmd == "NO":
+            prebuy_id = args[0] if args else ""
+            if prebuy_id:
+                prebuy = get_pending(prebuy_id)
+                if not prebuy:
+                    return twiml(f"ID niet gevonden: {prebuy_id}")
+            else:
+                items = list_pending(limit=1)
+                if not items:
+                    return twiml("Geen PENDING Pre-BUY’s.")
+                prebuy = items[0]
+
+            set_status(str(prebuy.get("id")), "REJECTED")
+            return twiml(f"Afgewezen ❌ id={prebuy.get('id')}")
+
+        return twiml("Onbekend commando. Stuur HELP voor opties.")
+
+    except Exception:
+        traceback.print_exc()
+        return twiml("ERROR in webhook (check Render logs).")
+
+# ==========================================================
+# HEALTH
+# ==========================================================
+@app.route("/", methods=["GET"])
+def health() -> Response:
+    return Response("OK", status=200)
+
+# ==========================================================
+# RUN
+# ==========================================================
+if __name__ == "__main__":
+    safe_storage_ready()
+    # init db schema als DB er is (handig bij deploy)
+    if db_available():
+        try:
+            db_init_pending_approvals_table()
+            log("DB schema ready ✅ (pending_approvals)")
         except Exception:
             traceback.print_exc()
-
-    log("✅ Run klaar")
-
-if __name__ == "__main__":
-    main()
+            log("DB schema init faalde ⚠️")
+    app.run(host="0.0.0.0", port=PORT)
