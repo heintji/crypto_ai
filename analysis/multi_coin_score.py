@@ -7,9 +7,11 @@ import time
 import csv
 import hashlib
 import traceback
+from datetime import datetime, timezone  # ✅ NIEUW (alleen voor expires_at conversie)
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+import psycopg2  # ✅ NIEUW
 
 # ==========================================================
 # PROJECT ROOT
@@ -23,9 +25,9 @@ if PROJECT_ROOT not in sys.path:
 # ==========================================================
 WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
 INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()  # ✅ NIEUW
 
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
-
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 
@@ -49,6 +51,75 @@ EXPERIENCE_CSV = os.getenv("EXPERIENCE_CSV", os.path.join(DATA_DIR, "experience.
 
 # ✅ NIEUW: Scoreboard (gemaakt door history_simulator.py)
 SCOREBOARD_PATH = os.getenv("SCOREBOARD_PATH", os.path.join(DATA_DIR, "scoreboard.json"))
+
+# ==========================================================
+# ✅ B1 – PENDING APPROVALS NAAR POSTGRES
+# ==========================================================
+def _epoch_to_dt(ts: Optional[int]) -> Optional[datetime]:
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
+    except Exception:
+        return None
+
+def insert_pending_to_db(prebuy: Dict[str, Any]) -> None:
+    """
+    ✅ B1: schrijf Pre-BUY naar Postgres (tabel: pending_approvals)
+    - Geen logica wijziging; alleen centrale opslag toevoegen.
+    - Werkt ook veilig: bij fout gaat hij gewoon door (je flow blijft werken).
+    """
+    if not DATABASE_URL:
+        log("⚠️ DATABASE_URL ontbreekt -> DB insert overgeslagen")
+        return
+
+    # Let op: jouw tabel heeft expires_at als TIMESTAMPTZ (bij jou aangemaakt in Postgres).
+    # Daarom zetten we epoch -> datetime.
+    expires_dt = _epoch_to_dt(prebuy.get("expires_at"))
+
+    sql = """
+    INSERT INTO pending_approvals
+      (id, symbol, setup_type, regime, score, label, entry, stop, target, expires_at, payload_json)
+    VALUES
+      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON CONFLICT (id) DO UPDATE SET
+      symbol = EXCLUDED.symbol,
+      setup_type = EXCLUDED.setup_type,
+      regime = EXCLUDED.regime,
+      score = EXCLUDED.score,
+      label = EXCLUDED.label,
+      entry = EXCLUDED.entry,
+      stop = EXCLUDED.stop,
+      target = EXCLUDED.target,
+      expires_at = EXCLUDED.expires_at,
+      payload_json = EXCLUDED.payload_json;
+    """
+
+    payload_json = json.dumps(prebuy, ensure_ascii=False)
+
+    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql,
+                    (
+                        str(prebuy["id"]),
+                        str(prebuy["coin"]),
+                        str(prebuy.get("setup_type") or "UNKNOWN"),
+                        str(prebuy.get("market_regime") or ""),
+                        int(prebuy.get("score") or 0),
+                        str(prebuy.get("grade") or ""),
+                        float(prebuy.get("entry") or 0.0),
+                        float(prebuy.get("stop_loss") or 0.0),
+                        float(prebuy.get("target") or 0.0),
+                        expires_dt,
+                        payload_json,
+                    ),
+                )
+        log(f"[DB] pending opgeslagen: {prebuy['id']}")
+    finally:
+        conn.close()
 
 # ==========================================================
 # MARKET SETTINGS
@@ -464,6 +535,12 @@ def main() -> None:
         sb_ctx = scoreboard_context(sb, "BTCUSDT", "TREND_PULLBACK", "RANGE") if sb else None
         prebuy = build_prebuy("BTCUSDT", 79, fake_details, 100.0, sb_ctx=sb_ctx)
 
+        # ✅ B1: ook naar Postgres schrijven (centrale pending_approvals)
+        try:
+            insert_pending_to_db(prebuy)
+        except Exception as e:
+            log(f"[DB ERROR] {e}")
+
         append_experience_row({
             "timestamp": prebuy["created_at"],
             "coin": prebuy["coin"],
@@ -517,6 +594,12 @@ def main() -> None:
                 log(f"⏭️ Skip duplicate {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
                 continue
 
+            # ✅ B1: ook naar Postgres schrijven (centrale pending_approvals)
+            try:
+                insert_pending_to_db(prebuy)
+            except Exception as e:
+                log(f"[DB ERROR] {e}")
+
             # 1) Opslaan als ervaring (GO én WATCH)
             overext = calc_overextended(price, float(details["sma20"]))
             why_note = ""
@@ -569,3 +652,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+main()
