@@ -7,11 +7,9 @@ import time
 import csv
 import hashlib
 import traceback
-from datetime import datetime, timezone  # ✅ NIEUW (alleen voor expires_at conversie)
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
-import psycopg2  # ✅ NIEUW
 
 # ==========================================================
 # PROJECT ROOT
@@ -25,9 +23,9 @@ if PROJECT_ROOT not in sys.path:
 # ==========================================================
 WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
 INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()  # ✅ NIEUW
 
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 
@@ -36,6 +34,9 @@ WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
 
 # cooldown in seconden (bijv. 6 uur)
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
+
+# ✅ Nieuw: Postgres (optioneel)
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
 # ==========================================================
 # DATA PATHS (ALTIJD via ENV)
@@ -51,75 +52,6 @@ EXPERIENCE_CSV = os.getenv("EXPERIENCE_CSV", os.path.join(DATA_DIR, "experience.
 
 # ✅ NIEUW: Scoreboard (gemaakt door history_simulator.py)
 SCOREBOARD_PATH = os.getenv("SCOREBOARD_PATH", os.path.join(DATA_DIR, "scoreboard.json"))
-
-# ==========================================================
-# ✅ B1 – PENDING APPROVALS NAAR POSTGRES
-# ==========================================================
-def _epoch_to_dt(ts: Optional[int]) -> Optional[datetime]:
-    if ts is None:
-        return None
-    try:
-        return datetime.fromtimestamp(int(ts), tz=timezone.utc)
-    except Exception:
-        return None
-
-def insert_pending_to_db(prebuy: Dict[str, Any]) -> None:
-    """
-    ✅ B1: schrijf Pre-BUY naar Postgres (tabel: pending_approvals)
-    - Geen logica wijziging; alleen centrale opslag toevoegen.
-    - Werkt ook veilig: bij fout gaat hij gewoon door (je flow blijft werken).
-    """
-    if not DATABASE_URL:
-        log("⚠️ DATABASE_URL ontbreekt -> DB insert overgeslagen")
-        return
-
-    # Let op: jouw tabel heeft expires_at als TIMESTAMPTZ (bij jou aangemaakt in Postgres).
-    # Daarom zetten we epoch -> datetime.
-    expires_dt = _epoch_to_dt(prebuy.get("expires_at"))
-
-    sql = """
-    INSERT INTO pending_approvals
-      (id, symbol, setup_type, regime, score, label, entry, stop, target, expires_at, payload_json)
-    VALUES
-      (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (id) DO UPDATE SET
-      symbol = EXCLUDED.symbol,
-      setup_type = EXCLUDED.setup_type,
-      regime = EXCLUDED.regime,
-      score = EXCLUDED.score,
-      label = EXCLUDED.label,
-      entry = EXCLUDED.entry,
-      stop = EXCLUDED.stop,
-      target = EXCLUDED.target,
-      expires_at = EXCLUDED.expires_at,
-      payload_json = EXCLUDED.payload_json;
-    """
-
-    payload_json = json.dumps(prebuy, ensure_ascii=False)
-
-    conn = psycopg2.connect(DATABASE_URL, sslmode="require")
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    sql,
-                    (
-                        str(prebuy["id"]),
-                        str(prebuy["coin"]),
-                        str(prebuy.get("setup_type") or "UNKNOWN"),
-                        str(prebuy.get("market_regime") or ""),
-                        int(prebuy.get("score") or 0),
-                        str(prebuy.get("grade") or ""),
-                        float(prebuy.get("entry") or 0.0),
-                        float(prebuy.get("stop_loss") or 0.0),
-                        float(prebuy.get("target") or 0.0),
-                        expires_dt,
-                        payload_json,
-                    ),
-                )
-        log(f"[DB] pending opgeslagen: {prebuy['id']}")
-    finally:
-        conn.close()
 
 # ==========================================================
 # MARKET SETTINGS
@@ -197,6 +129,87 @@ def safe_prepare_storage() -> None:
         SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")
         ensure_dir(DATA_DIR)
         ensure_dir(LOGS_DIR)
+
+# ==========================================================
+# ✅ POSTGRES HELPERS (optioneel, maar nu toegevoegd)
+# ==========================================================
+def db_available() -> bool:
+    if not DATABASE_URL:
+        return False
+    try:
+        import psycopg2  # type: ignore
+        _ = psycopg2
+        return True
+    except Exception:
+        return False
+
+def db_upsert_prebuy(prebuy: Dict[str, Any]) -> bool:
+    """
+    Slaat Pre-BUY op in Postgres (pending_approvals).
+    Werkt alleen als DATABASE_URL bestaat én psycopg2 geïnstalleerd is.
+    """
+    if not db_available():
+        return False
+
+    try:
+        import psycopg2  # type: ignore
+        from psycopg2.extras import Json  # type: ignore
+
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+
+        # Let op: jouw tabel moet minimaal id/symbol/status/created_at hebben.
+        # We stoppen de volledige prebuy in payload zodat je later niks kwijt bent.
+        cur.execute(
+            """
+            INSERT INTO pending_approvals (
+                id, symbol, setup_type, regime, score, label,
+                entry, stop, target,
+                status, created_at, expires_at, updated_at, payload
+            )
+            VALUES (
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, NOW(), to_timestamp(%s), NOW(), %s
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                symbol = EXCLUDED.symbol,
+                setup_type = EXCLUDED.setup_type,
+                regime = EXCLUDED.regime,
+                score = EXCLUDED.score,
+                label = EXCLUDED.label,
+                entry = EXCLUDED.entry,
+                stop = EXCLUDED.stop,
+                target = EXCLUDED.target,
+                status = EXCLUDED.status,
+                expires_at = EXCLUDED.expires_at,
+                updated_at = NOW(),
+                payload = EXCLUDED.payload
+            """,
+            (
+                prebuy["id"],
+                prebuy["coin"],
+                prebuy.get("setup_type", ""),
+                prebuy.get("market_regime", ""),
+                int(prebuy.get("score", 0) or 0),
+                prebuy.get("grade", ""),
+                float(prebuy.get("entry", 0.0) or 0.0),
+                float(prebuy.get("stop_loss", 0.0) or 0.0),
+                float(prebuy.get("target", 0.0) or 0.0),
+                prebuy.get("status", "PENDING"),
+                int(prebuy.get("expires_at", now_utc()) or now_utc()),
+                Json(prebuy),
+            ),
+        )
+
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+
+    except Exception:
+        traceback.print_exc()
+        return False
 
 # ==========================================================
 # BINANCE DATA
@@ -522,6 +535,12 @@ def main() -> None:
     else:
         log(f"📘 Scoreboard niet gevonden/leeg: {SCOREBOARD_PATH} (gaat alsnog door)")
 
+    # DB status log
+    if db_available():
+        log("🗄️ Postgres: AAN (DATABASE_URL gevonden + psycopg2 aanwezig)")
+    else:
+        log("🗄️ Postgres: UIT (geen DATABASE_URL of psycopg2 ontbreekt)")
+
     # Force test: maakt 1 fake prebuy + schrijft ervaring weg
     if FORCE_TEST_PREBUY:
         fake_details = {
@@ -534,12 +553,6 @@ def main() -> None:
         }
         sb_ctx = scoreboard_context(sb, "BTCUSDT", "TREND_PULLBACK", "RANGE") if sb else None
         prebuy = build_prebuy("BTCUSDT", 79, fake_details, 100.0, sb_ctx=sb_ctx)
-
-        # ✅ B1: ook naar Postgres schrijven (centrale pending_approvals)
-        try:
-            insert_pending_to_db(prebuy)
-        except Exception as e:
-            log(f"[DB ERROR] {e}")
 
         append_experience_row({
             "timestamp": prebuy["created_at"],
@@ -560,8 +573,12 @@ def main() -> None:
             "bot_confidence": prebuy.get("bot_confidence", prebuy["score"]),
             "overextended": 0.0,
         })
-        send_to_webservice(prebuy)
-        log("✅ FORCE_TEST_PREBUY: 1 test Pre-BUY + experience opgeslagen")
+
+        # ✅ Nieuw: ook naar DB proberen
+        db_ok = db_upsert_prebuy(prebuy)
+        sent = send_to_webservice(prebuy)
+
+        log(f"✅ FORCE_TEST_PREBUY: experience opgeslagen | db={'OK' if db_ok else 'NO'} | webhook={'OK' if sent else 'NO'}")
         return
 
     for symbol in COINS:
@@ -594,12 +611,6 @@ def main() -> None:
                 log(f"⏭️ Skip duplicate {symbol} {prebuy['setup_type']} ({prebuy['grade']})")
                 continue
 
-            # ✅ B1: ook naar Postgres schrijven (centrale pending_approvals)
-            try:
-                insert_pending_to_db(prebuy)
-            except Exception as e:
-                log(f"[DB ERROR] {e}")
-
             # 1) Opslaan als ervaring (GO én WATCH)
             overext = calc_overextended(price, float(details["sma20"]))
             why_note = ""
@@ -628,22 +639,20 @@ def main() -> None:
                 "overextended": overext,
             })
 
-            # 2) Optioneel naar WhatsApp-webservice sturen
+            # 2) ✅ Nieuw: ook in Postgres zetten (centrale pending)
+            db_ok = db_upsert_prebuy(prebuy)
+
+            # 3) Optioneel naar WhatsApp-webservice sturen (mag blijven)
             sent = send_to_webservice(prebuy)
 
-            # 3) Fingerprint opslaan (anti-duplicate)
+            # 4) Fingerprint opslaan (anti-duplicate)
             store_fingerprint(fp, symbol, prebuy["setup_type"], prebuy["grade"])
 
-            if sent:
-                log(
-                    f"✅ Pre-BUY verzonden ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
-                    f"score={score} conf={prebuy.get('bot_confidence',score)} sb={prebuy['scoreboard'].get('verdict','')}"
-                )
-            else:
-                log(
-                    f"✅ Experience opgeslagen ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
-                    f"score={score} conf={prebuy.get('bot_confidence',score)} sb={prebuy['scoreboard'].get('verdict','')}"
-                )
+            log(
+                f"✅ Pre-BUY ({prebuy['grade']}): {symbol} {prebuy['setup_type']} "
+                f"score={score} conf={prebuy.get('bot_confidence',score)} "
+                f"db={'OK' if db_ok else 'NO'} webhook={'OK' if sent else 'NO'} sb={prebuy['scoreboard'].get('verdict','')}"
+            )
 
         except Exception:
             traceback.print_exc()
@@ -652,4 +661,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-main()
