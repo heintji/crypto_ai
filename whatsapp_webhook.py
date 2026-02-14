@@ -2,458 +2,488 @@
 from __future__ import annotations
 
 import os
-import re
-import json
 import time
+import json
 import traceback
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg2.extras
 from flask import Flask, request, Response
 
-# Twilio (TwiML response)
+# Twilio (WhatsApp)
 from twilio.twiml.messaging_response import MessagingResponse
 
-# ==========================================================
-# ENV
-# ==========================================================
-DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower()) or "").strip()
-INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
-
-# Optional (voor logging/links)
-WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
-
-# Allowed stake amounts
-ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
-
-# Validity (seconds)
-PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-
-# Live trading toggle (alleen als je live buy echt hebt gebouwd)
-LIVE_TRADING = (os.getenv("LIVE_TRADING") or "0").strip() == "1"
-
-# ==========================================================
-# APP
-# ==========================================================
 app = Flask(__name__)
 
+# =========================
+# ENV
+# =========================
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
+WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
 
-# ==========================================================
-# Helpers
-# ==========================================================
-def now_epoch() -> int:
-    return int(time.time())
+LIVE_TRADING = (os.getenv("LIVE_TRADING") or "0").strip() == "1"
+ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
+# hoeveel items tonen
+LIST_LIMIT = int(os.getenv("LIST_LIMIT") or "8")
+TOP_LIMIT = int(os.getenv("TOP_LIMIT") or "5")
 
-def dt_to_epoch(v: Any) -> Optional[int]:
-    """Convert DB datetime/timestamp/epoch to int epoch safely."""
-    if v is None:
-        return None
-    if isinstance(v, (int, float)):
-        return int(v)
-    if isinstance(v, datetime):
-        if v.tzinfo is None:
-            v = v.replace(tzinfo=timezone.utc)
-        return int(v.timestamp())
-    # string?
-    try:
-        # try parse ISO
-        vv = str(v).strip()
-        if not vv:
-            return None
-        # If already numeric
-        if vv.isdigit():
-            return int(vv)
-        # ISO datetime
-        dt = datetime.fromisoformat(vv.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return int(dt.timestamp())
-    except Exception:
-        return None
-
-
-def twiml(text: str) -> Response:
-    resp = MessagingResponse()
-    resp.message(text)
-    return Response(str(resp), mimetype="application/xml")
-
-
-def log(msg: str) -> None:
-    print(msg, flush=True)
-
-
+# =========================
+# DB helpers
+# =========================
 def db_conn():
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL ontbreekt in env.")
+        raise RuntimeError("DATABASE_URL ontbreekt (Render env var).")
     return psycopg2.connect(DATABASE_URL)
 
-
-def ensure_schema() -> None:
+def ensure_tables() -> None:
+    """
+    pending_approvals tabel voor Pre-BUY opslag.
+    We bewaren created_at/expires_at als BIGINT epoch seconds om datetime-bugs te voorkomen.
+    """
     sql = """
     CREATE TABLE IF NOT EXISTS pending_approvals (
         id TEXT PRIMARY KEY,
         symbol TEXT NOT NULL,
         setup_type TEXT,
-        market_regime TEXT,
+        regime TEXT,
         score INT,
         label TEXT,
+        grade TEXT,
         entry NUMERIC,
         stop NUMERIC,
         target NUMERIC,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        created_at BIGINT,
         expires_at BIGINT,
-        payload_json JSONB,
-        bot_confidence INT
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        payload_json JSONB
     );
 
-    CREATE INDEX IF NOT EXISTS idx_pending_status_created
-        ON pending_approvals(status, created_at DESC);
-
-    CREATE INDEX IF NOT EXISTS idx_pending_score
-        ON pending_approvals(score DESC);
+    CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_approvals(status);
+    CREATE INDEX IF NOT EXISTS idx_pending_score ON pending_approvals(score);
+    CREATE INDEX IF NOT EXISTS idx_pending_created ON pending_approvals(created_at);
     """
     conn = db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(sql)
+        cur.close()
     finally:
         conn.close()
 
+def now_ts() -> int:
+    return int(time.time())
 
-def fetch_pending(limit: int = 10) -> List[Dict[str, Any]]:
+def as_int_ts(value: Any) -> int:
+    """
+    Fix voor jouw error:
+    TypeError: int() argument must be ... not datetime.datetime
+    We accepteren:
+    - int/float
+    - string digits
+    - datetime (heeft .timestamp)
+    - None => 0
+    """
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(value)
+    # datetime-like
+    if hasattr(value, "timestamp"):
+        try:
+            return int(value.timestamp())
+        except Exception:
+            return 0
+    # string
+    try:
+        s = str(value).strip()
+        if s.isdigit():
+            return int(s)
+    except Exception:
+        pass
+    return 0
+
+def fetch_pending(limit: int = LIST_LIMIT) -> List[Dict[str, Any]]:
     conn = db_conn()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # created_at houden we als datetime -> later veilig converteren
-            cur.execute(
-                """
-                SELECT id, symbol, setup_type, market_regime, score, label, entry, stop, target,
-                       status, created_at, expires_at
-                FROM pending_approvals
-                WHERE status='PENDING'
-                ORDER BY created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall() or []
-            return [dict(r) for r in rows]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT *
+            FROM pending_approvals
+            WHERE status='PENDING'
+            ORDER BY created_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
-
-def fetch_top(limit: int = 5) -> List[Dict[str, Any]]:
+def fetch_top_pending(limit: int = TOP_LIMIT) -> List[Dict[str, Any]]:
     conn = db_conn()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, symbol, setup_type, market_regime, score, label, entry, stop, target,
-                       status, created_at, expires_at
-                FROM pending_approvals
-                WHERE status='PENDING'
-                ORDER BY score DESC NULLS LAST, created_at DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
-            rows = cur.fetchall() or []
-            return [dict(r) for r in rows]
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT *
+            FROM pending_approvals
+            WHERE status='PENDING'
+            ORDER BY score DESC NULLS LAST, created_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(r) for r in rows]
     finally:
         conn.close()
 
-
-def find_pending_by_id(prebuy_id: str) -> Optional[Dict[str, Any]]:
+def fetch_pending_by_id(pb_id: str) -> Optional[Dict[str, Any]]:
     conn = db_conn()
     try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT id, symbol, setup_type, market_regime, score, label, entry, stop, target,
-                       status, created_at, expires_at, payload_json
-                FROM pending_approvals
-                WHERE id=%s
-                """,
-                (prebuy_id,),
-            )
-            row = cur.fetchone()
-            return dict(row) if row else None
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(
+            """
+            SELECT *
+            FROM pending_approvals
+            WHERE id=%s
+            """,
+            (pb_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        return dict(row) if row else None
     finally:
         conn.close()
 
-
-def fetch_latest_pending() -> Optional[Dict[str, Any]]:
-    rows = fetch_pending(limit=1)
-    return rows[0] if rows else None
-
-
-def mark_approved(prebuy_id: str, stake_eur: int) -> None:
+def update_status(pb_id: str, status: str) -> None:
     conn = db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE pending_approvals
-                    SET status='APPROVED'
-                    WHERE id=%s AND status='PENDING'
-                    """,
-                    (prebuy_id,),
-                )
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE pending_approvals SET status=%s WHERE id=%s",
+            (status, pb_id),
+        )
+        cur.close()
     finally:
         conn.close()
 
+def upsert_prebuy(payload: Dict[str, Any]) -> Tuple[bool, str]:
+    """
+    Wordt gebruikt door /internal/prebuy (optioneel).
+    payload verwacht keys zoals:
+    id, symbol, setup_type, regime, score, grade/label, entry, stop/stop_loss, target, created_at, expires_at, payload_json
+    """
+    pb_id = str(payload.get("id") or "").strip()
+    symbol = str(payload.get("symbol") or payload.get("coin") or "").strip()
+    if not pb_id or not symbol:
+        return False, "id/symbol ontbreekt"
 
-def mark_rejected(prebuy_id: str) -> None:
+    setup_type = payload.get("setup_type")
+    regime = payload.get("regime") or payload.get("market_regime")
+    score = payload.get("score")
+    label = payload.get("label")
+    grade = payload.get("grade")
+
+    entry = payload.get("entry")
+    stop = payload.get("stop") if payload.get("stop") is not None else payload.get("stop_loss")
+    target = payload.get("target")
+
+    created_at = as_int_ts(payload.get("created_at"))
+    expires_at = as_int_ts(payload.get("expires_at"))
+
+    payload_json = payload.get("payload_json")
+    if payload_json is None:
+        # fallback: alles bewaren als JSON
+        payload_json = payload
+
     conn = db_conn()
     try:
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    UPDATE pending_approvals
-                    SET status='REJECTED'
-                    WHERE id=%s AND status='PENDING'
-                    """,
-                    (prebuy_id,),
-                )
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO pending_approvals
+            (id, symbol, setup_type, regime, score, label, grade, entry, stop, target, created_at, expires_at, status, payload_json)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s::jsonb)
+            ON CONFLICT (id) DO UPDATE SET
+              symbol=EXCLUDED.symbol,
+              setup_type=EXCLUDED.setup_type,
+              regime=EXCLUDED.regime,
+              score=EXCLUDED.score,
+              label=EXCLUDED.label,
+              grade=EXCLUDED.grade,
+              entry=EXCLUDED.entry,
+              stop=EXCLUDED.stop,
+              target=EXCLUDED.target,
+              created_at=EXCLUDED.created_at,
+              expires_at=EXCLUDED.expires_at,
+              status='PENDING',
+              payload_json=EXCLUDED.payload_json
+            """,
+            (
+                pb_id,
+                symbol,
+                setup_type,
+                regime,
+                score,
+                label,
+                grade,
+                entry,
+                stop,
+                target,
+                created_at,
+                expires_at,
+                json.dumps(payload_json),
+            ),
+        )
+        cur.close()
+        return True, f"upsert OK: {pb_id}"
     finally:
         conn.close()
 
-
-def is_expired(row: Dict[str, Any]) -> bool:
-    exp = row.get("expires_at")
-    exp_epoch = dt_to_epoch(exp)
-    if exp_epoch is None:
-        # fallback: created_at + PREBUY_VALID_SECONDS
-        created = dt_to_epoch(row.get("created_at")) or now_epoch()
-        exp_epoch = created + PREBUY_VALID_SECONDS
-    return now_epoch() > int(exp_epoch)
-
-
+# =========================
+# BUY execution wrapper (FIX)
+# =========================
 def try_execute_buy(row: Dict[str, Any], stake_eur: int) -> Tuple[bool, str]:
     """
-    Probeert BUY uit te voeren.
-    - Als LIVE_TRADING=1 en je hebt een live trader module: voer echte buy uit.
-    - Anders: paper buy (of skip met duidelijke melding).
+    Oplossing voor:
+    buy_eur() got an unexpected keyword argument 'eur_amount'
+    -> we proberen meerdere signatures, zodat het altijd werkt.
     """
-    symbol = row.get("symbol") or ""
+    symbol = (row.get("symbol") or "").strip()
     entry = float(row.get("entry") or 0.0)
     stop = float(row.get("stop") or 0.0)
     target = float(row.get("target") or 0.0)
 
-    # 1) Live trading (alleen als jij het echt hebt)
+    if not symbol:
+        return False, "symbol ontbreekt"
+
+    # LIVE (optioneel)
     if LIVE_TRADING:
         try:
-            # pas dit import-pad aan naar jouw echte live executor als die bestaat
             from trading.bitvavo_trader import buy_eur as live_buy_eur  # type: ignore
-            ok, info = live_buy_eur(symbol=symbol, eur_amount=stake_eur)
-            return bool(ok), f"LIVE BUY: {info}"
+            res = live_buy_eur(symbol=symbol, eur_amount=stake_eur)
+            return True, f"LIVE BUY OK: {res}"
         except Exception as e:
             return False, f"LIVE BUY faalde: {e}"
 
-    # 2) Paper trading (werkt in elk geval als module bestaat)
+    # PAPER (default)
     try:
         from trading.paper_trader import buy_eur  # type: ignore
 
-        ok, info = buy_eur(symbol=symbol, eur_amount=stake_eur, entry_hint=entry, stop_loss=stop, target=target)
-        return bool(ok), f"PAPER BUY: {info}"
+        # 1) eur_amount + extra hints
+        try:
+            res = buy_eur(symbol=symbol, eur_amount=stake_eur, entry_hint=entry, stop_loss=stop, target=target)
+            return True, f"PAPER BUY OK: {res}"
+        except TypeError:
+            pass
+
+        # 2) amount
+        try:
+            res = buy_eur(symbol=symbol, amount=stake_eur)
+            return True, f"PAPER BUY OK: {res}"
+        except TypeError:
+            pass
+
+        # 3) stake_eur
+        try:
+            res = buy_eur(symbol=symbol, stake_eur=stake_eur)
+            return True, f"PAPER BUY OK: {res}"
+        except TypeError:
+            pass
+
+        # 4) positional
+        try:
+            res = buy_eur(symbol, stake_eur)
+            return True, f"PAPER BUY OK: {res}"
+        except TypeError as e:
+            return False, f"PAPER BUY signature mismatch: {e}"
+
     except Exception as e:
-        return False, f"BUY niet uitgevoerd (geen paper/live koppeling): {e}"
+        return False, f"PAPER BUY import/fout: {e}"
 
+# =========================
+# Formatting
+# =========================
+def fmt_row(r: Dict[str, Any]) -> str:
+    pb_id = r.get("id")
+    symbol = r.get("symbol")
+    grade = r.get("grade") or r.get("label") or ""
+    score = r.get("score")
+    entry = r.get("entry")
+    stop = r.get("stop")
+    target = r.get("target")
+    exp = as_int_ts(r.get("expires_at"))
+    mins = max(0, int((exp - now_ts()) / 60)) if exp else 0
+    return f"{pb_id} | {symbol} | {grade} | score={score} | entry={entry} | stop={stop} | target={target} | exp {mins}m"
 
-# ==========================================================
+def help_text() -> str:
+    return (
+        "Commands:\n"
+        "HELP\n"
+        "LIST (laatste PENDING pre-buys)\n"
+        "TOP (beste 5 op score)\n"
+        "YES <bedrag> <ID>\n"
+        "NO <ID>\n\n"
+        "Voorbeeld: YES 10 PB-BTCUSDT-1771100252"
+    )
+
+def twilio_reply(text: str) -> Response:
+    resp = MessagingResponse()
+    resp.message(text)
+    return Response(str(resp), mimetype="application/xml")
+
+# =========================
 # Routes
-# ==========================================================
+# =========================
 @app.get("/")
-def root():
-    # health checks moeten nooit 502 geven
+def health():
     return "OK", 200
-
 
 @app.post("/internal/prebuy")
 def internal_prebuy():
-    """
-    Optioneel endpoint zodat multi_coin_score.py prebuys kan posten:
-    Headers:
-      X-Internal-Token: <INTERNAL_TOKEN>
-    Body JSON: {id, symbol, score, label, entry, stop, target, setup_type, market_regime, expires_at, payload_json, bot_confidence}
-    """
+    # beveiliging zodat niet iedereen je DB kan volspammen
+    token = (request.headers.get("X-Internal-Token") or "").strip()
+    if not INTERNAL_TOKEN or token != INTERNAL_TOKEN:
+        return {"ok": False, "error": "unauthorized"}, 401
+
     try:
-        token = (request.headers.get("X-Internal-Token") or "").strip()
-        if not INTERNAL_TOKEN or token != INTERNAL_TOKEN:
-            return ("Forbidden", 403)
-
-        data = request.get_json(force=True) or {}
-        prebuy_id = str(data.get("id") or "").strip()
-        symbol = str(data.get("symbol") or data.get("coin") or "").strip().upper()
-        if not prebuy_id or not symbol:
-            return ("Missing id/symbol", 400)
-
-        ensure_schema()
-
-        conn = db_conn()
-        try:
-            with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO pending_approvals
-                        (id, symbol, setup_type, market_regime, score, label, entry, stop, target, status, expires_at, payload_json, bot_confidence)
-                        VALUES
-                        (%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING',%s,%s,%s)
-                        ON CONFLICT (id) DO NOTHING
-                        """,
-                        (
-                            prebuy_id,
-                            symbol,
-                            data.get("setup_type"),
-                            data.get("market_regime"),
-                            data.get("score"),
-                            data.get("label") or data.get("grade"),
-                            data.get("entry"),
-                            data.get("stop") or data.get("stop_loss"),
-                            data.get("target"),
-                            int(data.get("expires_at")) if str(data.get("expires_at") or "").isdigit() else None,
-                            json.dumps(data.get("payload_json")) if isinstance(data.get("payload_json"), dict) else data.get("payload_json"),
-                            data.get("bot_confidence"),
-                        ),
-                    )
-            return ("OK", 200)
-        finally:
-            conn.close()
-
-    except Exception:
-        log("INTERNAL_PREBUY_ERROR\n" + traceback.format_exc())
-        return ("ERROR", 500)
-
+        payload = request.get_json(force=True, silent=False) or {}
+        ok, info = upsert_prebuy(payload)
+        return {"ok": ok, "info": info}, (200 if ok else 400)
+    except Exception as e:
+        return {"ok": False, "error": str(e)}, 500
 
 @app.post("/whatsapp")
 def whatsapp():
     """
-    Commands:
-      HELP
-      LIST  -> laatste PENDING prebuys
-      TOP   -> beste 5 op score (PENDING)
-      YES <bedrag> <ID>  (ID optioneel -> pakt laatste)
-      NO <ID>            (ID optioneel -> pakt laatste)
+    Twilio WhatsApp webhook endpoint.
     """
     try:
-        ensure_schema()
+        ensure_tables()
 
-        body_raw = (request.form.get("Body") or "").strip()
-        body = body_raw.upper().strip()
-        from_number = (request.form.get("From") or "").strip()
+        body_raw = request.form.get("Body", "") or ""
+        msg = body_raw.strip()
+        msg_u = msg.upper()
 
-        log(f"WHATSAPP_IN: from={from_number} body={body_raw}")
+        from_number = request.form.get("From", "") or ""
 
-        if not body:
-            return twiml("Stuur HELP voor commando’s.")
+        # HELP
+        if msg_u == "HELP":
+            return twilio_reply(help_text())
 
-        if body in ("HELP", "H"):
-            return twiml(
-                "Commands:\n"
-                "HELP\n"
-                "LIST (laatste PENDING pre-buys)\n"
-                "TOP (beste 5 op score)\n"
-                "YES <bedrag> <ID>\n"
-                "NO <ID>\n\n"
-                "Voorbeeld: YES 10 PB-BTCUSDT-1771100252"
-            )
-
-        if body.startswith("LIST"):
-            rows = fetch_pending(limit=10)
+        # LIST
+        if msg_u == "LIST":
+            rows = fetch_pending(LIST_LIMIT)
             if not rows:
-                return twiml("Geen PENDING Pre-BUYs gevonden.")
-            lines = []
+                return twilio_reply("Geen PENDING Pre-BUY’s gevonden.")
+            lines = ["PENDING pre-buys (laatste):"]
             for r in rows:
-                created = dt_to_epoch(r.get("created_at")) or now_epoch()
-                expires_at = dt_to_epoch(r.get("expires_at")) or (created + PREBUY_VALID_SECONDS)
-                mins_left = max(0, int((expires_at - now_epoch()) / 60))
-                lines.append(
-                    f"{r.get('id')} | {r.get('symbol')} | {r.get('label') or '-'} | score={r.get('score')} | "
-                    f"entry={r.get('entry')} | stop={r.get('stop')} | target={r.get('target')} | exp {mins_left}m"
-                )
-            return twiml("\n".join(lines) + "\n\nBevestig: YES <bedrag> <ID>")
+                lines.append(fmt_row(r))
+            lines.append("\nBevestig: YES <bedrag> <ID>")
+            return twilio_reply("\n".join(lines))
 
-        if body.startswith("TOP"):
-            rows = fetch_top(limit=5)
+        # TOP
+        if msg_u == "TOP":
+            rows = fetch_top_pending(TOP_LIMIT)
             if not rows:
-                return twiml("Geen PENDING Pre-BUYs gevonden.")
-            lines = []
+                return twilio_reply("Geen PENDING Pre-BUY’s gevonden.")
+            lines = ["TOP (beste op score):"]
             for r in rows:
-                created = dt_to_epoch(r.get("created_at")) or now_epoch()
-                expires_at = dt_to_epoch(r.get("expires_at")) or (created + PREBUY_VALID_SECONDS)
-                mins_left = max(0, int((expires_at - now_epoch()) / 60))
-                lines.append(
-                    f"{r.get('id')} | {r.get('symbol')} | {r.get('label') or '-'} | score={r.get('score')} | "
-                    f"entry={r.get('entry')} | stop={r.get('stop')} | target={r.get('target')} | exp {mins_left}m"
-                )
-            return twiml("TOP 5:\n" + "\n".join(lines) + "\n\nBevestig: YES <bedrag> <ID>")
+                lines.append(fmt_row(r))
+            lines.append("\nBevestig: YES <bedrag> <ID>")
+            return twilio_reply("\n".join(lines))
 
-        # YES <amount> <id?>
-        m_yes = re.match(r"^YES\s+(\d+)(?:\s+(.+))?$", body, re.IGNORECASE)
-        if m_yes:
-            amount = int(m_yes.group(1))
+        # NO <ID>
+        if msg_u.startswith("NO "):
+            parts = msg.split()
+            if len(parts) < 2:
+                return twilio_reply("Gebruik: NO <ID>")
+            pb_id = parts[1].strip()
+            row = fetch_pending_by_id(pb_id)
+            if not row:
+                return twilio_reply("Geen Pre-BUY gevonden met die ID.")
+            update_status(pb_id, "REJECTED")
+            return twilio_reply(f"❌ Afgewezen: {pb_id}")
+
+        # YES <bedrag> <ID>
+        if msg_u.startswith("YES "):
+            parts = msg.split()
+            if len(parts) < 3:
+                return twilio_reply("Gebruik: YES <bedrag> <ID>\nVoorbeeld: YES 10 PB-BTCUSDT-123")
+
+            try:
+                amount = int(parts[1])
+            except Exception:
+                return twilio_reply("Bedrag moet een getal zijn. Toegestaan: 5,10,15,20,30,100")
+
             if amount not in ALLOWED_AMOUNTS:
-                return twiml(f"Onjuist bedrag. Toegestaan: {sorted(ALLOWED_AMOUNTS)}")
+                return twilio_reply("Bedrag niet toegestaan. Toegestaan: 5,10,15,20,30,100")
 
-            prebuy_id = (m_yes.group(2) or "").strip()
-            row = find_pending_by_id(prebuy_id) if prebuy_id else fetch_latest_pending()
-
+            pb_id = parts[2].strip()
+            row = fetch_pending_by_id(pb_id)
             if not row:
-                return twiml("Geen PENDING Pre-BUY gevonden. Doe eerst LIST of TOP.")
+                return twilio_reply("Geen PENDING Pre-BUY gevonden (met die ID). Doe eerst LIST of TOP.")
 
-            if row.get("status") != "PENDING":
-                return twiml(f"Deze Pre-BUY is niet meer PENDING (status={row.get('status')}).")
+            if (row.get("status") or "").upper() != "PENDING":
+                return twilio_reply(f"Deze Pre-BUY is niet meer PENDING (status={row.get('status')}).")
 
-            if is_expired(row):
-                return twiml("Deze Pre-BUY is verlopen. Doe opnieuw LIST/TOP.")
+            # expiry check
+            exp = as_int_ts(row.get("expires_at"))
+            if exp and now_ts() > exp:
+                update_status(pb_id, "EXPIRED")
+                return twilio_reply("⏱️ Deze Pre-BUY is verlopen. Doe LIST of TOP voor nieuwe.")
 
-            mark_approved(row["id"], amount)
+            # OK -> approve + attempt BUY
+            update_status(pb_id, "APPROVED")
 
-            # Probeer BUY uit te voeren (paper of live)
             ok, info = try_execute_buy(row, amount)
+            if ok:
+                update_status(pb_id, "CONSUMED")
+                return twilio_reply(
+                    "✅ GOEDKEURING ONTVANGEN\n"
+                    f"ID: {pb_id}\n"
+                    f"Inzet: €{amount}\n"
+                    f"{row.get('symbol')} | {row.get('grade') or row.get('label')}\n"
+                    f"entry={row.get('entry')} stop={row.get('stop')} target={row.get('target')}\n\n"
+                    f"✅ BUY uitgevoerd.\n{info}"
+                )
+            else:
+                # keep APPROVED zodat jij later kunt herhalen / debuggen
+                return twilio_reply(
+                    "✅ GOEDKEURING ONTVANGEN\n"
+                    f"ID: {pb_id}\n"
+                    f"Inzet: €{amount}\n"
+                    f"{row.get('symbol')} | {row.get('grade') or row.get('label')}\n"
+                    f"entry={row.get('entry')} stop={row.get('stop')} target={row.get('target')}\n\n"
+                    f"⚠️ BUY niet uitgevoerd: {info}"
+                )
 
-            msg = (
-                "✅ GOEDKEURING ONTVANGEN\n"
-                f"ID: {row.get('id')}\n"
-                f"Inzet: €{amount}\n"
-                f"{row.get('symbol')} | {row.get('label') or '-'} | score={row.get('score')}\n"
-                f"entry={row.get('entry')} stop={row.get('stop')} target={row.get('target')}\n"
-                f"{'✅' if ok else '⚠️'} {info}"
-            )
-            return twiml(msg)
-
-        # NO <id?>
-        m_no = re.match(r"^NO(?:\s+(.+))?$", body, re.IGNORECASE)
-        if m_no:
-            prebuy_id = (m_no.group(1) or "").strip()
-            row = find_pending_by_id(prebuy_id) if prebuy_id else fetch_latest_pending()
-            if not row:
-                return twiml("Geen PENDING Pre-BUY gevonden om te weigeren. Doe eerst LIST/TOP.")
-            if row.get("status") != "PENDING":
-                return twiml(f"Deze Pre-BUY is niet meer PENDING (status={row.get('status')}).")
-            mark_rejected(row["id"])
-            return twiml(f"❌ Afgewezen: {row.get('id')} ({row.get('symbol')})")
-
-        return twiml("Onbekend commando. Stuur HELP.")
+        # Onbekend commando
+        return twilio_reply("Onbekend commando. Stuur HELP.")
 
     except Exception as e:
-        # NOOIT crashen richting Twilio: altijd nette response
-        log("WHATSAPP_WEBHOOK_ERROR\n" + traceback.format_exc())
-        return twiml(f"❌ Interne fout in webhook. Check Render logs. ({type(e).__name__}: {e})")
+        # Log naar Render + nette WhatsApp response
+        print("WEBHOOK_ERROR", str(e))
+        traceback.print_exc()
+        return twilio_reply(f"❌ Interne fout in webhook. Check Render logs (Traceback).")
 
-
-# ==========================================================
+# =========================
 # Main
-# ==========================================================
+# =========================
 if __name__ == "__main__":
-    ensure_schema()
+    # Render zet PORT
     port = int(os.getenv("PORT") or "10000")
+    ensure_tables()
     app.run(host="0.0.0.0", port=port, debug=False)
+
