@@ -96,6 +96,13 @@ def ensure_parent_dir(path: str) -> None:
         ensure_dir(parent)
 
 def load_state() -> Dict[str, Any]:
+    """
+    ✅ IMPORTANT:
+    paper_trader.py (LIVE) bewaart positions als dict per symbol:
+      positions[symbol] = {qty, entry, stop_loss, target, ...}
+    Oude paper versie bewaart soms qty als float.
+    Deze loader blijft compatibel met beide.
+    """
     ensure_parent_dir(STATE_PATH)
     if not os.path.isfile(STATE_PATH):
         return {"balance": 1000.0, "positions": {}, "open_trades": []}
@@ -121,16 +128,50 @@ def now_ts() -> int:
     return int(time.time())
 
 # =========================
-# ✅ Symbol mapping voor LIVE Bitvavo
+# Positions helpers (LIVE compatible)
 # =========================
-def to_bitvavo_market(symbol: str) -> str:
-    s = (symbol or "").upper().strip()
-    if s.endswith("USDT"):
-        base = s.replace("USDT", "")
-        return f"{base}-EUR"
-    if "-" in s:
-        return s
-    return f"{s}-EUR"
+def get_position_qty(positions: Dict[str, Any], symbol: str) -> float:
+    """
+    Support:
+    - positions[symbol] = float
+    - positions[symbol] = {"qty": float, ...}
+    """
+    pos = positions.get(symbol)
+    if pos is None:
+        return 0.0
+    if isinstance(pos, (int, float)):
+        return float(pos)
+    if isinstance(pos, dict):
+        try:
+            return float(pos.get("qty", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+    return 0.0
+
+def get_position_fields(positions: Dict[str, Any], trade: Dict[str, Any]) -> Dict[str, float]:
+    """
+    Zorgt dat entry/stop_loss/target consistent zijn.
+    Prefer state position dict if present, else fallback to trade values.
+    """
+    symbol = trade.get("symbol")
+    out = {
+        "entry": float(trade.get("entry", 0.0) or 0.0),
+        "stop_loss": float(trade.get("stop_loss", 0.0) or 0.0),
+        "target": float(trade.get("target", 0.0) or 0.0),
+    }
+    if not symbol:
+        return out
+
+    pos = positions.get(symbol)
+    if isinstance(pos, dict):
+        # override if present
+        if pos.get("entry") is not None:
+            out["entry"] = float(pos.get("entry") or out["entry"])
+        if pos.get("stop_loss") is not None:
+            out["stop_loss"] = float(pos.get("stop_loss") or out["stop_loss"])
+        if pos.get("target") is not None:
+            out["target"] = float(pos.get("target") or out["target"])
+    return out
 
 # =========================
 # Market data (voor R + structuur)
@@ -173,9 +214,12 @@ def _send_sell_close_message(
         )
         return
 
-    exit_price = float(sell_result.get("price", 0.0))
-    pnl = float(sell_result.get("pnl", 0.0))
-    balance = float(sell_result.get("balance", 0.0))
+    exit_price = float(sell_result.get("price", 0.0) or 0.0)
+    pnl = float(sell_result.get("pnl", 0.0) or 0.0)
+
+    # LIVE sell_result heeft vaak geen "balance" -> laat die weg als hij ontbreekt
+    bal = sell_result.get("balance")
+    balance_line = f"\nSaldo: €{float(bal):.2f}" if bal is not None else ""
 
     msg = (
         f"✅ SELL 100% uitgevoerd ({symbol})\n"
@@ -185,8 +229,8 @@ def _send_sell_close_message(
         f"Stop: {stop_loss:.6f}\n"
         f"Target: {target:.6f}\n"
         f"R (bij exit): {r_now:.2f}\n"
-        f"PnL: {pnl:.2f}\n"
-        f"Saldo: €{balance:.2f}"
+        f"PnL: {pnl:.2f}"
+        f"{balance_line}"
     )
     send_whatsapp(msg)
 
@@ -210,19 +254,20 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 
     trade = open_trades[0]
     symbol = trade.get("symbol")
-    entry = float(trade.get("entry", 0.0))
-    stop_loss = float(trade.get("stop_loss", 0.0))
-    target = float(trade.get("target", 0.0))
-
     if not symbol:
         _print("FORCE_TEST_EXIT: trade mist symbol.")
         return False
 
     positions = state.get("positions", {}) or {}
-    qty = float(positions.get(symbol, 0.0))
+    qty = get_position_qty(positions, symbol)
     if qty <= 0:
         _print(f"FORCE_TEST_EXIT: geen positie gevonden voor {symbol} (qty<=0).")
         return False
+
+    fields = get_position_fields(positions, trade)
+    entry = float(fields["entry"])
+    stop_loss = float(fields["stop_loss"])
+    target = float(fields["target"])
 
     try:
         price = get_price(symbol)
@@ -233,8 +278,8 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
-    market = to_bitvavo_market(symbol)
-    sell_res = sell(market, 1.0)
+    # ✅ BELANGRIJK: sell() moet hetzelfe symbool gebruiken als state-key (BTCUSDT etc.)
+    sell_res = sell(symbol, 1.0)
 
     trade["status"] = "CLOSED"
     trade["closed_reason"] = "FORCE_TEST_EXIT"
@@ -264,11 +309,18 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 # =========================
 def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Optional[float] = None) -> bool:
     symbol = trade.get("symbol")
-    entry = float(trade.get("entry", 0.0))
-    stop_loss = float(trade.get("stop_loss", 0.0))
-    target = float(trade.get("target", 0.0))
+    if not symbol:
+        _print(f"⚠️ Trade overslaan (mist symbol): {trade}")
+        return False
 
-    if not symbol or entry <= 0 or stop_loss <= 0:
+    positions = state.get("positions", {}) or {}
+    fields = get_position_fields(positions, trade)
+
+    entry = float(fields["entry"])
+    stop_loss = float(fields["stop_loss"])
+    target = float(fields["target"])
+
+    if entry <= 0 or stop_loss <= 0:
         _print(f"⚠️ Trade overslaan (ongeldige data): {trade}")
         return False
 
@@ -284,17 +336,23 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     trade.setdefault("target_reached_notified", False)
     trade.setdefault("last_check", now_ts())
 
+    trade["entry"] = entry
+    trade["stop_loss"] = stop_loss
+    trade["target"] = target
+
     trade["max_r"] = max(float(trade.get("max_r", 0.0)), r)
     if r >= 1.0:
         trade["had_over_1r"] = True
 
     _print(f"📊 {symbol} | price={price:.6f} | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
-    market = to_bitvavo_market(symbol)
+    # ✅ BELANGRIJK: sell() met USDT symbol (zelfde key als in state)
+    sell_symbol = symbol
 
+    # STOP-LOSS vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
-        sell_res = sell(market, 1.0)
+        sell_res = sell(sell_symbol, 1.0)
 
         trade["status"] = "CLOSED"
         trade["closed_reason"] = "STOP_LOSS_BEFORE_1R"
@@ -303,6 +361,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         _send_sell_close_message(symbol, "STOP-LOSS vóór 1R", entry, stop_loss, target, r, sell_res)
         return True
 
+    # TARGET bereikt -> STRUCTUUR MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -317,6 +376,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             f"Mode: STRUCTUUR-MODE"
         )
 
+    # STRUCTUUR MODE logic
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows = get_klines_lows(symbol)
@@ -333,7 +393,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f}")
                     elif last_closed_low < trailing:
                         _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100%")
-                        sell_res = sell(market, 1.0)
+                        sell_res = sell(sell_symbol, 1.0)
 
                         trade["status"] = "CLOSED"
                         trade["closed_reason"] = "STRUCTURE_LOWER_LOW"
@@ -347,25 +407,28 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
+    # Als r >= 1R: wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
         return False
 
+    # Als >1R geweest en terug <1R: SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
-        sell(market, 0.40)
+        sell(sell_symbol, 0.40)
         trade["partial_sold_40"] = True
         trade["below_1r_count"] = 1
         trade["last_check"] = now_ts()
         return False
 
+    # Na partial: 3 checks onder 1R => SELL rest 100%
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
         if trade["below_1r_count"] >= 3:
             _print(f"🔚 {symbol} 3x onder 1R gebleven -> SELL 100% (rest sluiten)")
-            sell_res = sell(market, 1.0)
+            sell_res = sell(sell_symbol, 1.0)
 
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "UNDER_1R_3X_CLOSE_REST"
@@ -395,13 +458,15 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
 
     closed_symbols: List[str] = []
 
+    positions = state.get("positions", {}) or {}
+
     for trade in list(open_trades):
         symbol = trade.get("symbol")
         if only_symbol and symbol != only_symbol:
             continue
 
-        positions = state.get("positions", {}) or {}
-        if float(positions.get(symbol, 0.0)) <= 0:
+        qty = get_position_qty(positions, symbol)
+        if qty <= 0:
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "NO_POSITION_FOUND"
             trade["closed_at"] = now_ts()
