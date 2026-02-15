@@ -3,425 +3,373 @@ from __future__ import annotations
 
 import os
 import re
-import time
+import traceback
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
-import psycopg2.extras
 from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 
 # ==========================================================
 # CONFIG
 # ==========================================================
-app = Flask(__name__)
-
-DEBUG = (os.getenv("DEBUG") or "0").strip() == "1"
-
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL ontbreekt (Render Postgres).")
 
-# Twilio creds (voor outbound WhatsApp berichten)
-TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
-TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+# Jij gebruikt deze (SET) ✅
+WHATSAPP_FROM = (os.getenv("WHATSAPP_FROM") or "").strip()
+WHATSAPP_TO = (os.getenv("WHATSAPP_TO") or "").strip()
 
-# Support beide naamvarianten (jij gebruikt WHATSAPP_FROM/TO)
-WHATSAPP_FROM = (os.getenv("WHATSAPP_FROM") or os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
-WHATSAPP_TO = (os.getenv("WHATSAPP_TO") or os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
+# Soms staan ze zo in andere modules — supporten we ook
+TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
+TWILIO_WHATSAPP_TO = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
 
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
-DEFAULT_TOP_LIMIT = int(os.getenv("DEFAULT_TOP_LIMIT") or "5")
-MAX_TOP_LIMIT = int(os.getenv("MAX_TOP_LIMIT") or "15")
+DEFAULT_TOP_N = 5
+MAX_LIST_N = 12  # zodat je whatsapp niet vol spam loopt
 
-# Kans-van-slagen weging
-# confidence 0-100 (als je die al logt), score (0-100), regime bonus
-WEIGHT_CONFIDENCE = float(os.getenv("WEIGHT_CONFIDENCE") or "0.65")
-WEIGHT_SCORE = float(os.getenv("WEIGHT_SCORE") or "0.35")
-
-REGIME_BONUS_BULL = float(os.getenv("REGIME_BONUS_BULL") or "6")     # bull = iets meer kans
-REGIME_BONUS_RANGE = float(os.getenv("REGIME_BONUS_RANGE") or "0")   # range = neutraal
-REGIME_BONUS_BEAR = float(os.getenv("REGIME_BONUS_BEAR") or "-8")    # bear = lagere kans
-
-# ==========================================================
-# DATA MODELS
-# ==========================================================
-@dataclass
-class PendingPrebuy:
-    id: str
-    symbol: str
-    setup_type: str
-    label: str
-    score: int
-    entry: float
-    stop_loss: float
-    target: float
-    regime: Optional[str]
-    expires_at: str
-    confidence: Optional[int] = None
-
+app = Flask(__name__)
 
 # ==========================================================
 # DB HELPERS
 # ==========================================================
-def _db_conn():
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL ontbreekt (Render Environment).")
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
-def _ensure_tables() -> None:
+def ensure_tables():
     """
-    Zorg dat minimaal de tabel(s) bestaan die webhook gebruikt.
+    Zorgt dat tabellen + kolommen bestaan.
+    Dit voorkomt precies de errors die jij nu ziet (missing columns).
     """
-    q1 = """
-    CREATE TABLE IF NOT EXISTS pending_approvals (
-        id TEXT PRIMARY KEY,
-        status TEXT NOT NULL DEFAULT 'PENDING',
-        symbol TEXT NOT NULL,
-        setup_type TEXT,
-        label TEXT,
-        score INTEGER,
-        entry DOUBLE PRECISION,
-        stop_loss DOUBLE PRECISION,
-        target DOUBLE PRECISION,
-        regime TEXT,
-        confidence INTEGER,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at TIMESTAMPTZ NOT NULL
-    );
+    conn = db_conn()
+    cur = conn.cursor()
+
+    # pending_approvals: PENDING -> APPROVED/REJECTED/EXPIRED/CONSUMED
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_approvals (
+            id TEXT PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            setup_type TEXT,
+            label TEXT,
+            score INTEGER,
+            grade TEXT,
+            entry DOUBLE PRECISION,
+            stop_loss DOUBLE PRECISION,
+            target DOUBLE PRECISION,
+            regime TEXT,
+            confidence INTEGER,
+            expires_at TIMESTAMPTZ,
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            approved_at TIMESTAMPTZ,
+            rejected_at TIMESTAMPTZ,
+            consumed_at TIMESTAMPTZ,
+            stake_eur INTEGER
+        );
+        """
+    )
+
+    # Add columns if someone created an older schema
+    cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS confidence INTEGER;")
+    cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();")
+    cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
+    cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'PENDING';")
+    cur.execute("ALTER TABLE pending_approvals ADD COLUMN IF NOT EXISTS stake_eur INTEGER;")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+@dataclass
+class PendingItem:
+    id: str
+    symbol: str
+    label: Optional[str]
+    score: Optional[int]
+    setup_type: Optional[str]
+    entry: Optional[float]
+    stop_loss: Optional[float]
+    target: Optional[float]
+    regime: Optional[str]
+    confidence: Optional[int]
+    expires_at: Optional[str]
+
+
+def fetch_pending(limit: int, order: str = "best") -> List[PendingItem]:
     """
-    q2 = "CREATE INDEX IF NOT EXISTS idx_pending_status_expires ON pending_approvals(status, expires_at);"
-
-    with _db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(q1)
-            cur.execute(q2)
-        conn.commit()
-
-
-def _twiml(text: str):
-    resp = MessagingResponse()
-    resp.message(text)
-    return str(resp)
-
-
-def _parse_top_limit(msg: str) -> int:
+    order='best' -> confidence desc, score desc, created_at desc
+    order='new'  -> created_at desc
     """
-    TOP -> default limit
-    TOP 10 -> limit=10
-    """
-    m = re.search(r"\bTOP\s+(\d+)\b", msg.upper())
-    if not m:
-        return DEFAULT_TOP_LIMIT
-    n = int(m.group(1))
-    if n < 1:
-        return DEFAULT_TOP_LIMIT
-    return min(n, MAX_TOP_LIMIT)
+    conn = db_conn()
+    cur = conn.cursor()
 
+    # Expiry check: timestamptz vergelijken met NOW() ✅
+    base_where = "WHERE status='PENDING' AND (expires_at IS NULL OR expires_at > NOW())"
 
-def _derive_confidence(score: Optional[int]) -> int:
-    """
-    Als confidence niet aanwezig is: schat grof op basis van score.
-    """
-    s = int(score or 0)
-    # eenvoudige mapping (kan later beter met scoreboard)
-    if s >= 90:
-        return 85
-    if s >= 85:
-        return 78
-    if s >= 80:
-        return 72
-    if s >= 75:
-        return 65
-    if s >= 70:
-        return 58
-    return 45
+    if order == "new":
+        order_by = "ORDER BY created_at DESC"
+    else:
+        order_by = """
+        ORDER BY
+          confidence DESC NULLS LAST,
+          score DESC NULLS LAST,
+          created_at DESC
+        """
 
-
-def _regime_bonus(regime: Optional[str]) -> float:
-    r = (regime or "").strip().upper()
-    if r == "BULL":
-        return REGIME_BONUS_BULL
-    if r in ("RANGE", "SIDEWAYS", "ZIJWAARTS"):
-        return REGIME_BONUS_RANGE
-    if r == "BEAR":
-        return REGIME_BONUS_BEAR
-    return 0.0
-
-
-def _chance_score(p: PendingPrebuy) -> float:
-    """
-    Dit is “beste kans van slagen”.
-    Higher = better.
-    """
-    conf = p.confidence if p.confidence is not None else _derive_confidence(p.score)
-    base = (WEIGHT_CONFIDENCE * conf) + (WEIGHT_SCORE * float(p.score or 0))
-    return base + _regime_bonus(p.regime)
-
-
-def _fetch_pending() -> List[PendingPrebuy]:
-    q = """
-    SELECT id, symbol, setup_type, label, score, entry, stop_loss, target, regime,
-           expires_at, confidence
+    q = f"""
+    SELECT
+      id, symbol, label, score, setup_type,
+      entry, stop_loss, target, regime,
+      confidence,
+      COALESCE(expires_at::text,'')
     FROM pending_approvals
-    WHERE status = 'PENDING'
-      AND expires_at > NOW()
-    ORDER BY created_at DESC;
+    {base_where}
+    {order_by}
+    LIMIT %s;
     """
-    with _db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(q)
-            rows = cur.fetchall()
 
-    out: List[PendingPrebuy] = []
+    cur.execute(q, (limit,))
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    items: List[PendingItem] = []
     for r in rows:
-        out.append(
-            PendingPrebuy(
-                id=r["id"],
-                symbol=r["symbol"],
-                setup_type=(r["setup_type"] or "UNKNOWN"),
-                label=(r["label"] or ""),
-                score=int(r["score"] or 0),
-                entry=float(r["entry"] or 0.0),
-                stop_loss=float(r["stop_loss"] or 0.0),
-                target=float(r["target"] or 0.0),
-                regime=r["regime"],
-                expires_at=str(r["expires_at"]),
-                confidence=(int(r["confidence"]) if r["confidence"] is not None else None),
+        items.append(
+            PendingItem(
+                id=r[0],
+                symbol=r[1],
+                label=r[2],
+                score=r[3],
+                setup_type=r[4],
+                entry=r[5],
+                stop_loss=r[6],
+                target=r[7],
+                regime=r[8],
+                confidence=r[9],
+                expires_at=r[10] or None,
             )
         )
-    return out
+    return items
 
 
-def _fetch_top(limit: int) -> List[PendingPrebuy]:
-    # We halen pending op en sorteren in Python zodat kansformule flexibel blijft.
-    items = _fetch_pending()
-    items.sort(key=_chance_score, reverse=True)
-    return items[:limit]
+def mark_status(item_id: str, status: str, stake_eur: Optional[int] = None):
+    conn = db_conn()
+    cur = conn.cursor()
+
+    if status == "APPROVED":
+        cur.execute(
+            """
+            UPDATE pending_approvals
+            SET status='APPROVED',
+                approved_at=NOW(),
+                stake_eur=%s
+            WHERE id=%s;
+            """,
+            (stake_eur, item_id),
+        )
+    elif status == "REJECTED":
+        cur.execute(
+            """
+            UPDATE pending_approvals
+            SET status='REJECTED',
+                rejected_at=NOW()
+            WHERE id=%s;
+            """,
+            (item_id,),
+        )
+    elif status == "CONSUMED":
+        cur.execute(
+            """
+            UPDATE pending_approvals
+            SET status='CONSUMED',
+                consumed_at=NOW()
+            WHERE id=%s;
+            """,
+            (item_id,),
+        )
+    else:
+        cur.execute("UPDATE pending_approvals SET status=%s WHERE id=%s;", (status, item_id))
+
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
-def _find_pending_by_id(prebuy_id: str) -> Optional[PendingPrebuy]:
-    q = """
-    SELECT id, symbol, setup_type, label, score, entry, stop_loss, target, regime,
-           expires_at, confidence
-    FROM pending_approvals
-    WHERE id = %s
-      AND status = 'PENDING'
-      AND expires_at > NOW()
-    LIMIT 1;
-    """
-    with _db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(q, (prebuy_id,))
-            r = cur.fetchone()
+# ==========================================================
+# FORMATTERS
+# ==========================================================
+def fmt_float(x: Optional[float]) -> str:
+    if x is None:
+        return "-"
+    try:
+        return f"{x:.5f}".rstrip("0").rstrip(".")
+    except Exception:
+        return str(x)
 
-    if not r:
-        return None
 
-    return PendingPrebuy(
-        id=r["id"],
-        symbol=r["symbol"],
-        setup_type=(r["setup_type"] or "UNKNOWN"),
-        label=(r["label"] or ""),
-        score=int(r["score"] or 0),
-        entry=float(r["entry"] or 0.0),
-        stop_loss=float(r["stop_loss"] or 0.0),
-        target=float(r["target"] or 0.0),
-        regime=r["regime"],
-        expires_at=str(r["expires_at"]),
-        confidence=(int(r["confidence"]) if r["confidence"] is not None else None),
+def format_list(items: List[PendingItem], title: str) -> str:
+    if not items:
+        return "Geen PENDING Pre-BUYs gevonden (of alles is verlopen)."
+
+    lines = [f"📌 {title}:"]
+    for i, it in enumerate(items, 1):
+        conf = f"{it.confidence}" if it.confidence is not None else "-"
+        lines.append(
+            f"{i}) {it.symbol} | {it.label or '-'} | score {it.score if it.score is not None else '-'} | "
+            f"{it.setup_type or '-'} | entry {fmt_float(it.entry)} | SL {fmt_float(it.stop_loss)} | "
+            f"TG {fmt_float(it.target)} | regime {it.regime or '-'} | conf {conf}\n"
+            f"   ID: {it.id}"
+        )
+
+    lines.append("")
+    lines.append("✅ Goedkeuren: YES 10 [ID]")
+    lines.append("❌ Afwijzen: NO [ID]")
+    lines.append("🏆 Top 5: TOP")
+    lines.append("ℹ️ Help: HELP")
+    return "\n".join(lines)
+
+
+def help_text() -> str:
+    return (
+        "📣 Commando’s:\n"
+        "• LIST → toon openstaande Pre-BUYs\n"
+        "• TOP → top 5 beste kans van slagen (op confidence/score)\n"
+        "• YES <bedrag> [ID] → approve + BUY (bedrag: 5/10/15/20/30/100)\n"
+        "• NO [ID] → afwijzen\n"
+        "• HELP → dit overzicht\n\n"
+        "Voorbeeld: YES 20 PB-XRPUSDT-1700000000"
     )
 
 
-def _pick_oldest_pending() -> Optional[PendingPrebuy]:
-    q = """
-    SELECT id, symbol, setup_type, label, score, entry, stop_loss, target, regime,
-           expires_at, confidence
-    FROM pending_approvals
-    WHERE status = 'PENDING'
-      AND expires_at > NOW()
-    ORDER BY created_at ASC
-    LIMIT 1;
+# ==========================================================
+# BUY EXECUTION (paper_trader)
+# ==========================================================
+def execute_buy(symbol: str, stake_eur: int, entry: Optional[float], stop_loss: Optional[float], target: Optional[float]) -> str:
     """
-    with _db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.DictCursor) as cur:
-            cur.execute(q)
-            r = cur.fetchone()
-
-    if not r:
-        return None
-
-    return PendingPrebuy(
-        id=r["id"],
-        symbol=r["symbol"],
-        setup_type=(r["setup_type"] or "UNKNOWN"),
-        label=(r["label"] or ""),
-        score=int(r["score"] or 0),
-        entry=float(r["entry"] or 0.0),
-        stop_loss=float(r["stop_loss"] or 0.0),
-        target=float(r["target"] or 0.0),
-        regime=r["regime"],
-        expires_at=str(r["expires_at"]),
-        confidence=(int(r["confidence"]) if r["confidence"] is not None else None),
-    )
-
-
-def _mark_status(prebuy_id: str, new_status: str) -> None:
-    q = "UPDATE pending_approvals SET status = %s WHERE id = %s;"
-    with _db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(q, (new_status, prebuy_id))
-        conn.commit()
-
-
-# ==========================================================
-# (OPTIONEEL) EXECUTION HOOK
-# ==========================================================
-def _execute_buy(prebuy: PendingPrebuy, amount_eur: int) -> Tuple[bool, str]:
+    Past bij jouw architectuur: webhook = human gate → start BUY.
+    We proberen buy_eur() te gebruiken, anders buy().
     """
-    Koppel hier je paper_trader of live execution.
-    Voor nu: placeholder zodat flow klopt.
-    """
-    # TODO: import jouw paper_trader buy functie indien je die hier al gebruikt.
-    # from trading.paper_trader import buy_eur
-    # ok, msg = buy_eur(symbol=prebuy.symbol, eur_amount=amount_eur, entry=prebuy.entry, stop=prebuy.stop_loss, target=prebuy.target)
-    # return ok, msg
+    try:
+        from trading.paper_trader import buy_eur  # type: ignore
 
-    return True, f"BUY gestart (mock). {prebuy.symbol} €{amount_eur}"
+        buy_eur(symbol=symbol, eur_amount=stake_eur, entry_price=entry, stop_loss=stop_loss, target=target)
+        return "OK"
+    except Exception:
+        try:
+            from trading.paper_trader import buy  # type: ignore
 
-
-# ==========================================================
-# COMMAND PARSING
-# ==========================================================
-YES_RE = re.compile(r"^\s*YES\s+(\d+)(?:\s+([A-Z0-9\-\_]+))?\s*$", re.IGNORECASE)
-NO_RE = re.compile(r"^\s*NO(?:\s+([A-Z0-9\-\_]+))?\s*$", re.IGNORECASE)
-
-HELP_TEXT = (
-    "📌 Commando’s:\n"
-    "• LIST → toon openstaande Pre-BUYs\n"
-    "• TOP [n] → beste kans van slagen (default 5). Voorbeeld: TOP 10\n"
-    "• YES <bedrag> [ID] → approve + BUY (bedrag: 5/10/15/20/30/100)\n"
-    "• NO [ID] → afwijzen\n"
-    "• HELP → dit overzicht\n\n"
-    "Voorbeeld: YES 20 PB-XRPUSDT-1700000000"
-)
+            buy(symbol=symbol, eur_amount=stake_eur, entry_price=entry, stop_loss=stop_loss, target=target)
+            return "OK"
+        except Exception as e:
+            return f"ERROR: BUY failed: {e}"
 
 
 # ==========================================================
-# ROUTE
+# COMMAND PARSER
 # ==========================================================
+YES_RE = re.compile(r"^YES\s+(\d+)(?:\s+(.+))?$", re.IGNORECASE)
+NO_RE = re.compile(r"^NO(?:\s+(.+))?$", re.IGNORECASE)
+
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_webhook():
-    _ensure_tables()
+    resp = MessagingResponse()
 
-    body = (request.form.get("Body") or "").strip()
-    up = body.upper().strip()
+    try:
+        ensure_tables()
 
-    if DEBUG:
-        print(f"[IN] {body}")
+        body = (request.form.get("Body") or "").strip()
+        msg = body.upper().strip()
 
-    # HELP
-    if up in {"HELP", "H", "?"}:
-        return _twiml(HELP_TEXT)
+        if not msg:
+            resp.message(help_text())
+            return str(resp)
 
-    # LIST
-    if up in {"LIST", "LS", "PENDING"}:
-        items = _fetch_pending()
-        if not items:
-            return _twiml("Geen PENDING Pre-BUYs gevonden (of alles is verlopen).")
+        # HELP
+        if msg in {"HELP", "H"}:
+            resp.message(help_text())
+            return str(resp)
 
-        lines = ["📌 PENDING Pre-BUYs:"]
-        for i, p in enumerate(items, start=1):
-            entry = f"{p.entry:.6g}" if p.entry else "?"
-            sl = f"{p.stop_loss:.6g}" if p.stop_loss else "auto"
-            tg = f"{p.target:.6g}" if p.target else "auto"
-            regime = (p.regime or "UNKNOWN").upper()
-            conf = p.confidence if p.confidence is not None else _derive_confidence(p.score)
-            chance = _chance_score(p)
+        # LIST
+        if msg == "LIST":
+            items = fetch_pending(limit=MAX_LIST_N, order="new")
+            resp.message(format_list(items, "PENDING Pre-BUYs"))
+            return str(resp)
 
-            lines.append(
-                f"{i}) {p.symbol} | {p.label} | score {p.score} | conf {conf} | chance {chance:.1f}\n"
-                f"   {p.setup_type} | entry {entry} | SL {sl} | TG {tg} | regime {regime}\n"
-                f"   ID: {p.id}"
-            )
+        # TOP (top 5 best chance)
+        if msg.startswith("TOP"):
+            items = fetch_pending(limit=DEFAULT_TOP_N, order="best")
+            resp.message(format_list(items, f"TOP {DEFAULT_TOP_N} (beste kans van slagen)"))
+            return str(resp)
 
-        lines.append("")
-        lines.append("✅ Goedkeuren: YES 10 [ID]")
-        lines.append("❌ Afwijzen: NO [ID]")
-        lines.append("🔥 Beste 5: TOP")
-        return _twiml("\n".join(lines))
+        # YES amount [id]
+        m = YES_RE.match(body.strip())
+        if m:
+            amount = int(m.group(1))
+            if amount not in ALLOWED_AMOUNTS:
+                resp.message(f"❌ Bedrag niet toegestaan. Kies uit: {sorted(ALLOWED_AMOUNTS)}")
+                return str(resp)
 
-    # TOP (beste kans van slagen)
-    if up.startswith("TOP") or up in {"BEST", "TOP5"}:
-        limit = _parse_top_limit(body)
-        items = _fetch_top(limit=limit)
+            raw_id = (m.group(2) or "").strip()
+            if raw_id:
+                pick_id = raw_id
+                items = fetch_pending(limit=MAX_LIST_N, order="best")
+                chosen = next((x for x in items if x.id == pick_id), None)
+                if not chosen:
+                    resp.message("❌ ID niet gevonden of niet meer PENDING.\n\n" + help_text())
+                    return str(resp)
+            else:
+                # geen ID: pak de beste
+                items = fetch_pending(limit=1, order="best")
+                if not items:
+                    resp.message("Geen PENDING Pre-BUYs om goed te keuren.")
+                    return str(resp)
+                chosen = items[0]
 
-        if not items:
-            return _twiml("Geen TOP trades gevonden (geen PENDING of alles verlopen).")
+            # Mark approved + execute buy
+            mark_status(chosen.id, "APPROVED", stake_eur=amount)
+            buy_result = execute_buy(chosen.symbol, amount, chosen.entry, chosen.stop_loss, chosen.target)
 
-        lines = [f"🔥 TOP {len(items)} (beste kans van slagen):"]
-        for i, p in enumerate(items, start=1):
-            entry = f"{p.entry:.6g}" if p.entry else "?"
-            sl = f"{p.stop_loss:.6g}" if p.stop_loss else "auto"
-            tg = f"{p.target:.6g}" if p.target else "auto"
-            regime = (p.regime or "UNKNOWN").upper()
-            conf = p.confidence if p.confidence is not None else _derive_confidence(p.score)
-            chance = _chance_score(p)
+            if buy_result == "OK":
+                resp.message(
+                    f"✅ GOEDGEKEURD + BUY gestart\n"
+                    f"{chosen.symbol} | {chosen.setup_type or '-'} | {chosen.label or '-'}\n"
+                    f"€{amount} | entry {fmt_float(chosen.entry)} | SL {fmt_float(chosen.stop_loss)} | TG {fmt_float(chosen.target)}\n"
+                    f"ID: {chosen.id}"
+                )
+            else:
+                resp.message(
+                    f"⚠️ GOEDGEKEURD, maar BUY faalde.\n"
+                    f"{buy_result}\n"
+                    f"ID: {chosen.id}"
+                )
+            return str(resp)
 
-            lines.append(
-                f"{i}) {p.symbol} | chance {chance:.1f} | conf {conf} | score {p.score}\n"
-                f"   {p.setup_type} | entry {entry} | SL {sl} | TG {tg} | regime {regime}\n"
-                f"   ID: {p.id}"
-            )
+        # NO [id]
+        m = NO_RE.match(body.strip())
+        if m:
+            raw_id = (m.group(1) or "").strip()
+            if not raw_id:
+                resp.message("❌ Geef een ID mee.\nVoorbeeld: NO PB-XRPUSDT-1700000000")
+                return str(resp)
 
-        lines.append("")
-        lines.append("Goedkeuren: YES 10 [ID]")
-        return _twiml("\n".join(lines))
+            mark_status(raw_id, "REJECTED")
+            resp.message(f"❌ Afgewezen: {raw_id}")
+            return str(resp)
 
-    # YES <amount> [ID]
-    m = YES_RE.match(body)
-    if m:
-        amount = int(m.group(1))
-        if amount not in ALLOWED_AMOUNTS:
-            return _twiml(f"❌ Bedrag niet toegestaan. Kies uit: {sorted(ALLOWED_AMOUNTS)}")
+        # Unknown
+        resp.message("Onbekend commando.\n\n" + help_text())
+        return str(resp)
 
-        prebuy_id = (m.group(2) or "").strip()
-        prebuy = _find_pending_by_id(prebuy_id) if prebuy_id else _pick_oldest_pending()
-
-        if not prebuy:
-            return _twiml("Geen geldige PENDING Pre-BUY gevonden (misschien verlopen).")
-
-        # Mark as APPROVED (optional status)
-        _mark_status(prebuy.id, "APPROVED")
-
-        ok, msg = _execute_buy(prebuy, amount)
-        if ok:
-            _mark_status(prebuy.id, "CONSUMED")
-            return _twiml(f"✅ Goedgekeurd + BUY gestart\n{msg}\nID: {prebuy.id}")
-        else:
-            _mark_status(prebuy.id, "PENDING")  # rollback
-            return _twiml(f"❌ BUY mislukt: {msg}\nID: {prebuy.id}")
-
-    # NO [ID]
-    m = NO_RE.match(body)
-    if m:
-        prebuy_id = (m.group(1) or "").strip()
-        prebuy = _find_pending_by_id(prebuy_id) if prebuy_id else _pick_oldest_pending()
-
-        if not prebuy:
-            return _twiml("Geen geldige PENDING Pre-BUY gevonden om af te wijzen.")
-
-        _mark_status(prebuy.id, "REJECTED")
-        return _twiml(f"❌ Afgewezen.\nID: {prebuy.id}")
-
-    # Unknown
-    return _twiml("Onbekend commando.\n\n" + HELP_TEXT)
-
-
-# ==========================================================
-# MAIN
-# ==========================================================
-if __name__ == "__main__":
-    port = int(os.getenv("PORT") or "10000")
-    app.run(host="0.0.0.0", port=port)
+    except Exception as e:
+        # Twilio moet altijd antwoord krijgen (anders retrypogingen)
+        resp.message("❌ Interne fout in webhook. Check Render logs (Traceback).")
+        print("ERROR:", e)
+        traceback.print_exc()
+        return str(resp)
