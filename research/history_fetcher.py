@@ -6,7 +6,7 @@ import time
 import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 
 import requests
 
@@ -31,7 +31,7 @@ HISTORY_DIR = os.path.join(DATA_DIR, "history")
 # =========================
 # Database
 # =========================
-DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower()) or "").strip()
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
 # =========================
 # ENV controls
@@ -40,6 +40,10 @@ DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower()) o
 # HIST_SYMBOLS=BTCUSDT,ETHUSDT,XRPUSDT
 # HIST_TIMEFRAMES=1h,4h
 # HIST_YEARS=3
+# HIST_WRITE_CSV=1
+# HIST_WRITE_DB=1
+# HIST_RESET_CSV=0   (0 = append/resume-friendly, 1 = overschrijven)
+# HIST_CHUNK_COMMIT=1 (1 = commit per chunk)
 HIST_SYMBOLS = (os.getenv("HIST_SYMBOLS") or os.getenv("HIST_SYMBOL") or "BTCUSDT").strip()
 HIST_TIMEFRAMES = (os.getenv("HIST_TIMEFRAMES") or os.getenv("HIST_INTERVAL") or "1h,4h").strip()
 HIST_YEARS = int((os.getenv("HIST_YEARS") or os.getenv("HIST_YEARS_BACK") or "3").strip() or "3")
@@ -50,6 +54,12 @@ SLEEP_S = float((os.getenv("HIST_SLEEP_SECONDS") or os.getenv("HIST_SLEEP_S") or
 # Write modes
 WRITE_CSV = (os.getenv("HIST_WRITE_CSV") or "1").strip() == "1"
 WRITE_DB = (os.getenv("HIST_WRITE_DB") or "1").strip() == "1"
+
+# CSV behavior
+RESET_CSV = (os.getenv("HIST_RESET_CSV") or "0").strip() == "1"
+
+# DB commit strategy
+COMMIT_PER_CHUNK = (os.getenv("HIST_CHUNK_COMMIT") or "1").strip() == "1"
 
 
 @dataclass
@@ -74,6 +84,42 @@ def _utc_ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
+def _parse_interval_ms(interval: str) -> int:
+    """
+    Binance intervals: 1m,3m,5m,15m,30m,1h,2h,4h,6h,8h,12h,1d,3d,1w,1M
+    """
+    s = (interval or "").strip()
+    if not s:
+        return 60 * 60 * 1000  # default 1h
+
+    unit = s[-1]
+    num_s = s[:-1]
+    try:
+        n = int(num_s)
+    except Exception:
+        n = 1
+
+    minute = 60 * 1000
+    hour = 60 * minute
+    day = 24 * hour
+    week = 7 * day
+
+    if unit == "m":
+        return n * minute
+    if unit == "h":
+        return n * hour
+    if unit == "d":
+        return n * day
+    if unit == "w":
+        return n * week
+    if unit == "M":
+        # maandelijks is niet strak in ms, maar voor overlap is dit prima
+        return n * 30 * day
+
+    # fallback
+    return 60 * 60 * 1000
+
+
 def _request_klines(symbol: str, interval: str, start_ms: int, limit: int = BINANCE_LIMIT) -> List[List]:
     r = requests.get(
         BINANCE_KLINES,
@@ -93,6 +139,8 @@ def _db_connect():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
+# Let op: candles table + UNIQUE/INDEX heb jij al via shell gezet.
+# Deze UPSERT verwacht die UNIQUE constraint op (exchange,symbol,timeframe,open_time).
 UPSERT_SQL = """
 INSERT INTO candles (
   exchange, symbol, timeframe, open_time,
@@ -168,9 +216,49 @@ def _db_resume_start_ms(symbol: str, interval: str, fallback_start_ms: int) -> i
     if not mx:
         return fallback_start_ms
 
-    # 1 candle overlap om gaten te voorkomen
+    # overlap = 2 candles terug (veilig bij kleine gaten/partial fetch)
+    interval_ms = _parse_interval_ms(interval)
     ms = int(mx.replace(tzinfo=timezone.utc).timestamp() * 1000)
-    return max(ms - (5 * 60 * 1000), 0)
+    return max(ms - (2 * interval_ms), 0)
+
+
+def _csv_open(out_path: str, do_reset: bool) -> Tuple[csv.writer, Any]:
+    """
+    Resume-friendly CSV:
+    - reset: overschrijven + header
+    - anders: append; header alleen als file nieuw/leeg is
+    """
+    header = [
+        "open_time_ms",
+        "open_time_utc",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time_ms",
+        "trades",
+        "quote_volume",
+        "taker_buy_base",
+        "taker_buy_quote",
+    ]
+
+    if do_reset:
+        f = open(out_path, "w", newline="", encoding="utf-8")
+        w = csv.writer(f)
+        w.writerow(header)
+        return w, f
+
+    # append mode
+    file_exists = os.path.exists(out_path)
+    f = open(out_path, "a", newline="", encoding="utf-8")
+    w = csv.writer(f)
+
+    # header alleen als nieuw bestand of leeg bestand
+    if (not file_exists) or os.path.getsize(out_path) == 0:
+        w.writerow(header)
+
+    return w, f
 
 
 def fetch_history(cfg: FetchConfig) -> str:
@@ -198,30 +286,14 @@ def fetch_history(cfg: FetchConfig) -> str:
     print(f"From: {datetime.fromtimestamp(cursor/1000, tz=timezone.utc).isoformat()} -> To: {end_dt.isoformat()}")
     print(f"CSV: {'ON' if WRITE_CSV else 'OFF'} | DB: {'ON' if WRITE_DB else 'OFF'}")
     if WRITE_CSV:
-        print(f"Output CSV: {out_path}")
+        print(f"Output CSV: {out_path} | reset={1 if RESET_CSV else 0}")
     print("")
 
     csv_file = None
     writer = None
 
     if WRITE_CSV:
-        header = [
-            "open_time_ms",
-            "open_time_utc",
-            "open",
-            "high",
-            "low",
-            "close",
-            "volume",
-            "close_time_ms",
-            "trades",
-            "quote_volume",
-            "taker_buy_base",
-            "taker_buy_quote",
-        ]
-        csv_file = open(out_path, "w", newline="", encoding="utf-8")
-        writer = csv.writer(csv_file)
-        writer.writerow(header)
+        writer, csv_file = _csv_open(out_path, do_reset=RESET_CSV)
 
     conn = None
     cur = None
@@ -246,7 +318,9 @@ def fetch_history(cfg: FetchConfig) -> str:
                 print("ℹ️ Geen data meer terug van Binance. Stop.")
                 break
 
-            # schrijf rows
+            # DB: batch upsert voor snelheid
+            db_rows: List[Dict[str, Any]] = []
+
             for k in chunk:
                 open_time_ms = int(k[0])
                 close_time_ms = int(k[6])
@@ -265,14 +339,17 @@ def fetch_history(cfg: FetchConfig) -> str:
                     ])
 
                 if WRITE_DB and cur:
-                    row = _kline_to_dbrow(cfg.symbol, cfg.interval, k)
-                    cur.execute(UPSERT_SQL, row)
+                    db_rows.append(_kline_to_dbrow(cfg.symbol, cfg.interval, k))
 
                 total_rows += 1
 
-            if WRITE_DB and conn:
-                conn.commit()
+            if WRITE_DB and cur and db_rows:
+                # executemany = sneller dan 1000 losse executes
+                cur.executemany(UPSERT_SQL, db_rows)
+                if COMMIT_PER_CHUNK and conn:
+                    conn.commit()
 
+            # cursor update
             last_open_ms = int(chunk[-1][0])
             last_close_ms = int(chunk[-1][6])
 
@@ -285,10 +362,14 @@ def fetch_history(cfg: FetchConfig) -> str:
 
             if loops % 5 == 0:
                 print(
-                    f"✅ chunks={loops} | rows={total_rows} | cursor={datetime.fromtimestamp(cursor/1000, tz=timezone.utc).isoformat()}"
+                    f"✅ {cfg.symbol}:{cfg.interval} | chunks={loops} | rows={total_rows} | cursor={datetime.fromtimestamp(cursor/1000, tz=timezone.utc).isoformat()}"
                 )
 
             time.sleep(cfg.sleep_s)
+
+        # final commit als we niet per chunk committen
+        if WRITE_DB and conn and (not COMMIT_PER_CHUNK):
+            conn.commit()
 
     finally:
         if csv_file:
@@ -313,6 +394,7 @@ def main():
     print("SYMBOLS:", symbols)
     print("TIMEFRAMES:", tfs)
     print("YEARS:", HIST_YEARS)
+    print(f"WRITE_CSV={1 if WRITE_CSV else 0} | WRITE_DB={1 if WRITE_DB else 0} | RESET_CSV={1 if RESET_CSV else 0}")
     print("")
 
     for sym in symbols:
