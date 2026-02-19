@@ -45,8 +45,9 @@ SCOREBOARD_PATH = (os.getenv("SCOREBOARD_PATH") or "/data/scoreboard.json").stri
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip().lower()
 
-COINS = (os.getenv("COINS") or "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,SOLUSDT,DOGEUSDT").split(",")
-COINS = [c.strip().upper() for c in COINS if c.strip()]
+# ✅ DB universe scanning settings
+ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
+CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")  # jij hebt nu CORE=28 in DB
 
 # Live fallback interval (alleen als candles-table geen data heeft)
 INTERVAL_1H = (os.getenv("INTERVAL_1H") or "1h").strip()
@@ -152,6 +153,28 @@ def db_init() -> None:
             );
             """)
 
+            # ✅ Coin universe + scan cursor (voor 400+ coins batching)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS coin_universe (
+                symbol TEXT PRIMARY KEY,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                tier TEXT NOT NULL DEFAULT 'ROTATE', -- CORE / ROTATE / LONGTAIL
+                priority INTEGER NOT NULL DEFAULT 100
+            );
+            """)
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS scan_cursor (
+                key TEXT PRIMARY KEY,
+                value INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """)
+            cur.execute("""
+            INSERT INTO scan_cursor(key, value)
+            VALUES ('rotate_batch_index', 0)
+            ON CONFLICT (key) DO NOTHING;
+            """)
+
         conn.commit()
 
 # ==========================================================
@@ -165,6 +188,85 @@ def utc_now() -> datetime:
 
 def log(msg: str) -> None:
     print(msg, flush=True)
+
+# ==========================================================
+# ✅ Universe selection (CORE + ROTATE batch)
+# ==========================================================
+def db_get_core_symbols(limit: int) -> List[str]:
+    q = """
+    SELECT symbol
+    FROM coin_universe
+    WHERE is_active = TRUE AND tier = 'CORE'
+    ORDER BY priority ASC, symbol ASC
+    LIMIT %s
+    """
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(q, (int(limit),))
+            rows = cur.fetchall() or []
+    return [r[0] for r in rows]
+
+def db_get_rotate_batch(batch_size: int) -> Tuple[List[str], int, int]:
+    """
+    Returns: (batch_symbols, batch_index, num_batches)
+    """
+    with db_conn() as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT value FROM scan_cursor WHERE key='rotate_batch_index' LIMIT 1;")
+            row = cur.fetchone()
+            idx = int(row["value"]) if row else 0
+
+            cur.execute("""
+                SELECT symbol
+                FROM coin_universe
+                WHERE is_active = TRUE AND tier = 'ROTATE'
+                ORDER BY priority ASC, symbol ASC
+            """)
+            all_syms = [r["symbol"] for r in (cur.fetchall() or [])]
+
+            total = len(all_syms)
+            if total == 0:
+                return [], 0, 0
+
+            num_batches = (total + batch_size - 1) // batch_size
+            idx = idx % max(num_batches, 1)
+
+            start = idx * batch_size
+            end = min(start + batch_size, total)
+            batch = all_syms[start:end]
+
+            next_idx = (idx + 1) % max(num_batches, 1)
+            cur.execute("""
+                INSERT INTO scan_cursor(key, value, updated_at)
+                VALUES ('rotate_batch_index', %s, NOW())
+                ON CONFLICT (key)
+                DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()
+            """, (int(next_idx),))
+        conn.commit()
+
+    return batch, idx, num_batches
+
+def get_scan_symbols() -> Tuple[List[str], Dict[str, Any]]:
+    """
+    Bepaalt de coins die deze run worden gescand.
+    CORE altijd + 1 ROTATE batch.
+    """
+    core = db_get_core_symbols(CORE_LIMIT)
+    rotate_batch, batch_idx, num_batches = db_get_rotate_batch(ROTATE_BATCH_SIZE)
+
+    # voorkom dubbel
+    rotate_batch = [s for s in rotate_batch if s not in set(core)]
+    scan = core + rotate_batch
+
+    info = {
+        "core_count": len(core),
+        "rotate_batch_count": len(rotate_batch),
+        "rotate_batch_idx": int(batch_idx),
+        "rotate_num_batches": int(num_batches),
+        "total_scan": len(scan),
+        "batch_size": int(ROTATE_BATCH_SIZE),
+    }
+    return scan, info
 
 # ==========================================================
 # Data fetch: DB candles first, Binance fallback
@@ -189,7 +291,6 @@ def db_fetch_candles(symbol: str, timeframe: str, limit: int) -> List[Dict[str, 
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(q, (EXCHANGE, symbol, timeframe, int(limit)))
             rows = cur.fetchall() or []
-    # omdraaien naar oud->nieuw
     rows.reverse()
     return rows
 
@@ -221,7 +322,6 @@ def get_ohlcv(symbol: str, timeframe: str, limit: int) -> Tuple[List[float], Lis
     except Exception as e:
         log(f"⚠️ DB candles fetch failed {symbol} {timeframe}: {e}")
 
-    # fallback: Binance
     kl = binance_fetch_klines(symbol, timeframe, limit)
     if not kl:
         return [], [], [], []
@@ -377,11 +477,8 @@ def determine_setup_type(regime_4h: str, rsi_1h: float, s20_1h: float, s50_1h: f
     - TREND_PULLBACK
     - BREAKOUT_RETEST
     """
-    # Trend pullback: voorkeur in BULL of als 1h alignment goed is
     if regime_4h == "BULL" and (not math.isnan(rsi_1h) and rsi_1h >= 50) and (not math.isnan(s20_1h) and not math.isnan(s50_1h) and s20_1h >= s50_1h):
         return "TREND_PULLBACK"
-
-    # Breakout retest: default/overig
     return "BREAKOUT_RETEST"
 
 def overextended_pct(closes: List[float], period: int = 20) -> float:
@@ -413,7 +510,6 @@ def compute_base_score(closes_1h: List[float]) -> Tuple[int, Dict[str, Any]]:
         else:
             score += 10
 
-    # lichte momentum check
     if len(closes_1h) >= 6 and closes_1h[-1] > closes_1h[-6]:
         score += 15
     else:
@@ -484,20 +580,14 @@ def load_scoreboard() -> Dict[str, Any]:
         return {}
 
 def scoreboard_factor(scoreboard: Dict[str, Any], setup_type: str, regime_4h: str) -> Tuple[float, Dict[str, Any]]:
-    """
-    Probeert meerdere mogelijke structuren. We blijven tolerant.
-    Doel: factor op basis van winrate/expectancy + sample size.
-    """
     node: Dict[str, Any] = {}
 
-    # structuur A: scoreboard[setup][regime]
     try:
         if isinstance(scoreboard.get(setup_type), dict):
             node = scoreboard.get(setup_type, {}).get(regime_4h, {}) or {}
     except Exception:
         node = {}
 
-    # structuur B: scoreboard["global"][ "SETUP|REGIME" ]
     if not node:
         try:
             key = f"{setup_type}|{regime_4h}"
@@ -510,7 +600,6 @@ def scoreboard_factor(scoreboard: Dict[str, Any], setup_type: str, regime_4h: st
     expectancy = float(node.get("expectancy", node.get("avg_r", 0.0)) or 0.0)
     n = int(node.get("n", node.get("trades", node.get("count", 0))) or 0)
 
-    # sample-size vertrouwen
     sample_boost = 1.0
     if n >= 300:
         sample_boost = 1.03
@@ -547,7 +636,6 @@ def decide_label(score: int) -> Optional[str]:
     return None
 
 def calc_stop_target(entry: float) -> Tuple[float, float]:
-    # Default: stop 2% onder entry, target 2R
     stop = entry * 0.98
     risk = entry - stop
     target = entry + 2.0 * risk
@@ -557,11 +645,6 @@ def fingerprint(symbol: str, setup_type: str, entry: float, target: float) -> st
     return f"{symbol}|{setup_type}|{round(entry, 8)}|{round(target, 8)}"
 
 def chance_from_score(final_score: int) -> float:
-    """
-    Kans voor TOP-sortering (simpel en stabiel):
-    score 70 -> 0.70
-    score 95 -> 0.95
-    """
     x = max(0, min(100, int(final_score)))
     return float(round(x / 100.0, 3))
 
@@ -592,12 +675,6 @@ def db_inc_daily_count() -> None:
         conn.commit()
 
 def db_dedupe_allowed(fp: str) -> bool:
-    """
-    True als:
-    - fingerprint niet bestaat -> ok
-    - bestaat maar cooldown voorbij -> ok
-    - bestaat en cooldown nog actief -> NO
-    """
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -626,9 +703,6 @@ def db_touch_fingerprint(fp: str) -> None:
         conn.commit()
 
 def db_insert_prebuy(row: Dict[str, Any]) -> bool:
-    """
-    Insert als ID nog niet bestaat.
-    """
     with db_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("""
@@ -685,7 +759,18 @@ def main() -> None:
     created_today = db_get_daily_count()
     created = 0
 
-    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(COINS)}")
+    # ✅ coins voor deze run: CORE + ROTATE batch
+    COINS, uni = get_scan_symbols()
+    if uni.get("rotate_num_batches", 0) > 0:
+        log(
+            f"🧠 universe: core={uni['core_count']} + rotate_batch={uni['rotate_batch_count']} "
+            f"(batch {uni['rotate_batch_idx']+1}/{uni['rotate_num_batches']}, size={uni['batch_size']}) "
+            f"=> scan_total={uni['total_scan']}"
+        )
+    else:
+        log(f"🧠 universe: core={uni['core_count']} rotate_batch=0 => scan_total={uni['total_scan']}")
+
+    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | scan_coins={len(COINS)}")
 
     # BTC heat (4h)
     _, _, btc_closes_4h, _ = get_ohlcv("BTCUSDT", INTERVAL_4H, LIMIT_4H)
@@ -697,7 +782,6 @@ def main() -> None:
             break
 
         try:
-            # 1h candles (setup + base score + atr)
             highs_1h, lows_1h, closes_1h, _ = get_ohlcv(sym, INTERVAL_1H, LIMIT_1H)
             if not closes_1h or len(closes_1h) < 80:
                 log(f"⏭️ skip {sym}: not enough 1h data")
@@ -710,17 +794,14 @@ def main() -> None:
             s20_1h = float(meta.get("sma20", float("nan")))
             s50_1h = float(meta.get("sma50", float("nan")))
 
-            # 4h candles (regime + trend strength)
             highs_4h, lows_4h, closes_4h, _ = get_ohlcv(sym, INTERVAL_4H, LIMIT_4H)
             if not closes_4h or len(closes_4h) < 120:
-                # geen 4h? dan RANGE aannemen, maar wel doorgaan
                 regime_4h = "RANGE"
             else:
                 regime_4h = detect_regime_4h(closes_4h)
 
             setup_type = determine_setup_type(regime_4h, rsi_1h, s20_1h, s50_1h)
 
-            # Filters
             atr_ok, atr_info = atr_percentile_filter(
                 highs_1h, lows_1h, closes_1h,
                 period=ATR_PERIOD,
@@ -734,15 +815,12 @@ def main() -> None:
                 min_abs_slope=EMA_MIN_ABS_SLOPE,
             )
 
-            # Factors
             htf_factor = htf_alignment_factor(regime_4h)
 
-            # Scoreboard historical factor
             sb_factor, sb_info = scoreboard_factor(scoreboard, setup_type, regime_4h) if scoreboard else (1.0, {
                 "sb_winrate": 0.0, "sb_expectancy": 0.0, "sb_n": 0, "sb_factor": 1.0
             })
 
-            # Normalize score
             final_score, norm_info = normalize_score(
                 base_score=float(base_score) * float(sb_factor),
                 regime_4h=regime_4h,
@@ -751,19 +829,14 @@ def main() -> None:
                 btc_factor=btc_factor,
             )
 
-            # Low volatility => downgrade (niet skippen)
             if not atr_ok:
                 final_score = min(int(final_score), int(LOWVOL_MAX_SCORE))
 
-            # Trend strenghte info (je kan dit later als hard rule zetten met EMA_MIN_ABS_SLOPE)
-            # Als trend_ok False en regime niet RANGE: iets strenger
             if (not trend_ok) and regime_4h in {"BULL", "BEAR"}:
                 final_score = min(int(final_score), 75)
 
-            # Label beslissen
             label = decide_label(int(final_score))
 
-            # Force test: altijd minimaal WATCH
             if FORCE_TEST_PREBUY and label is None:
                 label = "WATCH"
                 final_score = max(int(final_score), WATCH_MIN_SCORE)
@@ -773,7 +846,6 @@ def main() -> None:
 
             stop_loss, target = calc_stop_target(entry)
 
-            # Dedupe exact dezelfde trade (coin+setup+entry+target)
             fp = fingerprint(sym, setup_type, entry, target)
             if not db_dedupe_allowed(fp) and not FORCE_TEST_PREBUY:
                 log(f"⏭️ dedupe {sym} {setup_type}")
@@ -824,7 +896,6 @@ def main() -> None:
                 db_inc_daily_count()
                 created += 1
 
-                # Optioneel pushen (niet nodig als webhook alleen DB leest)
                 _ = send_to_webhook({
                     "id": prebuy_id,
                     "symbol": sym,
