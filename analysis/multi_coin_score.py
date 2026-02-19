@@ -1,226 +1,318 @@
 # analysis/multi_coin_score.py
+# ------------------------------------------------------------
+# Doel:
+# - Alleen ANALYSE + Pre-BUY aanmaken (GEEN BUY/SELL).
+# - Schrijft Pre-BUY's naar Postgres (pending_approvals).
+# - Optioneel: AUTO_UNIVERSE = scan over hele USDT markt via candles-table.
+#
+# Belangrijk:
+# - Als AUTO_UNIVERSE=1 moet je in logs zien:
+#   "🧠 universe: core=28 + rotate_batch=50 ... => scan_total=78"
+#   en NIET meer "coins=7"
+# ------------------------------------------------------------
+
 from __future__ import annotations
 
 import os
-import time
+import sys
 import math
+import time
 import json
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Set
+import uuid
+import traceback
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-import requests
 import psycopg2
 import psycopg2.extras
 
-# ==========================================================
+# -----------------------------
+# Project root in sys.path
+# -----------------------------
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+# -----------------------------
 # ENV
-# ==========================================================
+# -----------------------------
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-if not DATABASE_URL:
-    raise RuntimeError("❌ DATABASE_URL ontbreekt (Render Postgres).")
 
-WEBHOOK_BASE_URL = (os.getenv("WEBHOOK_BASE_URL") or "").strip().rstrip("/")
-INTERNAL_TOKEN = (os.getenv("INTERNAL_TOKEN") or "").strip()
+AUTO_UNIVERSE = (os.getenv("AUTO_UNIVERSE") or "0").strip() == "1"
+CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")
+ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
 
-FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+# fallback coins als AUTO_UNIVERSE=0
+DEFAULT_COINS = (os.getenv("COINS") or "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,SOLUSDT,DOGEUSDT").strip()
 
-PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
+# scoring thresholds
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")   # GO
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")           # WATCH
 MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
 
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
+# timeframe / candles
+TF_SIGNAL = (os.getenv("TF_SIGNAL") or "4h").strip()   # hoofd timeframe voor setup
+TF_CONTEXT = (os.getenv("TF_CONTEXT") or "1h").strip() # context timeframe
+CANDLE_LIMIT = int(os.getenv("CANDLE_LIMIT") or "200")
 
+# cooldown / expiry
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "15")
+PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 
+# force test
+FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+
+# logging
+LOGS_DIR = (os.getenv("LOGS_DIR") or "/data").strip()
+os.makedirs(LOGS_DIR, exist_ok=True)
+
+# optional scoreboard op disk (mag ontbreken)
 SCOREBOARD_PATH = (os.getenv("SCOREBOARD_PATH") or "/data/scoreboard.json").strip()
 
-# Tabellen (laat pending_approvals/trade_fingerprints zoals jij ze al gebruikt)
-PENDING_TABLE = (os.getenv("PENDING_TABLE") or "pending_approvals").strip()
-FINGERPRINT_TABLE = (os.getenv("FINGERPRINT_TABLE") or "trade_fingerprints").strip()
 
-# ✅ Belangrijk: NIET je bestaande prebuy_state gebruiken (die heeft een NOT NULL key)
-# We gebruiken een schone daily state tabel:
-STATE_TABLE = (os.getenv("STATE_TABLE") or "prebuy_state_daily").strip()
-
-# ==========================================================
-# MARKETS / DATA
-# ==========================================================
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip().lower()
-
-COINS = (os.getenv("COINS") or "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,SOLUSDT,DOGEUSDT").split(",")
-COINS = [c.strip().upper() for c in COINS if c.strip()]
-
-INTERVAL_1H = (os.getenv("INTERVAL_1H") or "1h").strip()
-INTERVAL_4H = (os.getenv("INTERVAL_4H") or "4h").strip()
-
-LIMIT_1H = int(os.getenv("LIMIT_1H") or "300")
-LIMIT_4H = int(os.getenv("LIMIT_4H") or "300")
-
-# ==========================================================
-# PROFESSIONAL UPGRADE KNOBS
-# ==========================================================
-ATR_PERIOD = int(os.getenv("ATR_PERIOD") or "14")
-ATR_PERCENTILE_WINDOW = int(os.getenv("ATR_PERCENTILE_WINDOW") or "300")
-ATR_MIN_PERCENTILE = float(os.getenv("ATR_MIN_PERCENTILE") or "0.20")
-
-EMA_TREND_PERIOD = int(os.getenv("EMA_TREND_PERIOD") or "200")
-EMA_SLOPE_LOOKBACK = int(os.getenv("EMA_SLOPE_LOOKBACK") or "30")
-EMA_MIN_ABS_SLOPE = float(os.getenv("EMA_MIN_ABS_SLOPE") or "0.0")
-
-SETUP_FACTOR_TREND_PULLBACK = float(os.getenv("SETUP_FACTOR_TREND_PULLBACK") or "1.05")
-SETUP_FACTOR_BREAKOUT_RETEST = float(os.getenv("SETUP_FACTOR_BREAKOUT_RETEST") or "1.00")
-
-REGIME_FACTOR_BULL = float(os.getenv("REGIME_FACTOR_BULL") or "1.05")
-REGIME_FACTOR_RANGE = float(os.getenv("REGIME_FACTOR_RANGE") or "0.95")
-REGIME_FACTOR_BEAR = float(os.getenv("REGIME_FACTOR_BEAR") or "0.85")
-
-HTF_FACTOR_BULL = float(os.getenv("HTF_FACTOR_BULL") or "1.05")
-HTF_FACTOR_RANGE = float(os.getenv("HTF_FACTOR_RANGE") or "0.95")
-HTF_FACTOR_BEAR = float(os.getenv("HTF_FACTOR_BEAR") or "0.85")
-
-BTC_FACTOR_BULL = float(os.getenv("BTC_FACTOR_BULL") or "1.05")
-BTC_FACTOR_RANGE = float(os.getenv("BTC_FACTOR_RANGE") or "0.95")
-BTC_FACTOR_BEAR = float(os.getenv("BTC_FACTOR_BEAR") or "0.80")
-
-LOWVOL_MAX_SCORE = int(os.getenv("LOWVOL_MAX_SCORE") or "72")
-
-# ==========================================================
-# DB
-# ==========================================================
-_PENDING_COLS: Set[str] = set()
-
-def db_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
+# -----------------------------
+# Utils
+# -----------------------------
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 def log(msg: str) -> None:
     print(msg, flush=True)
 
-def now_ts() -> int:
-    return int(time.time())
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-def table_columns(table_name: str) -> Set[str]:
-    q = """
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema='public' AND table_name=%s
-    """
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(q, (table_name,))
-            rows = cur.fetchall() or []
-    return {r[0] for r in rows}
-
-def db_init() -> None:
-    global _PENDING_COLS
-
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            # pending approvals (als jij hem al hebt, blijft hij bestaan; create is "safe")
-            cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {PENDING_TABLE} (
-                id TEXT
-            );
-            """)
-
-            # fingerprints
-            cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {FINGERPRINT_TABLE} (
-                fingerprint TEXT PRIMARY KEY,
-                last_created_at TIMESTAMPTZ DEFAULT NOW()
-            );
-            """)
-
-            # ✅ nieuwe daily state table (zonder key)
-            cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
-                day DATE PRIMARY KEY,
-                created_count INTEGER NOT NULL DEFAULT 0
-            );
-            """)
-
-            # indexen die ON CONFLICT / performance helpen (veilig, IF NOT EXISTS)
-            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{PENDING_TABLE}_id ON {PENDING_TABLE} (id);")
-            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{FINGERPRINT_TABLE}_fp ON {FINGERPRINT_TABLE} (fingerprint);")
-            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{STATE_TABLE}_day ON {STATE_TABLE} (day);")
-
-        conn.commit()
-
-    _PENDING_COLS = table_columns(PENDING_TABLE)
-    log(f"🧩 pending_approvals columns detected: {len(_PENDING_COLS)}")
-
-# ==========================================================
-# Data fetch: DB candles first, Binance fallback
-# ==========================================================
-def db_fetch_candles(symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
-    q = """
-    SELECT
-      open_time,
-      open, high, low, close, volume,
-      close_time,
-      trades
-    FROM candles
-    WHERE exchange=%s AND symbol=%s AND timeframe=%s
-    ORDER BY open_time DESC
-    LIMIT %s
-    """
-    with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(q, (EXCHANGE, symbol, timeframe, int(limit)))
-            rows = cur.fetchall() or []
-    rows.reverse()
-    return rows
-
-def binance_fetch_klines(symbol: str, interval: str, limit: int) -> List[List[Any]]:
-    r = requests.get(
-        BINANCE_KLINES_URL,
-        params={"symbol": symbol, "interval": interval, "limit": int(limit)},
-        timeout=HTTP_TIMEOUT,
-    )
-    r.raise_for_status()
-    data = r.json()
-    return data if isinstance(data, list) else []
-
-def get_ohlcv(symbol: str, timeframe: str, limit: int) -> Tuple[List[float], List[float], List[float], List[float]]:
+def safe_float(x: Any, default: float = 0.0) -> float:
     try:
-        rows = db_fetch_candles(symbol, timeframe, limit)
-        if rows and len(rows) >= max(60, min(120, limit // 2)):
-            opens = [float(r["open"]) for r in rows]
-            highs = [float(r["high"]) for r in rows]
-            lows = [float(r["low"]) for r in rows]
-            closes = [float(r["close"]) for r in rows]
-            return highs, lows, closes, opens
-    except Exception as e:
-        log(f"⚠️ DB candles fetch failed {symbol} {timeframe}: {e}")
+        return float(x)
+    except Exception:
+        return default
 
-    kl = binance_fetch_klines(symbol, timeframe, limit)
-    if not kl:
-        return [], [], [], []
-    opens = [float(k[1]) for k in kl]
-    highs = [float(k[2]) for k in kl]
-    lows = [float(k[3]) for k in kl]
-    closes = [float(k[4]) for k in kl]
-    return highs, lows, closes, opens
+def clamp(v: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, v))
 
-# ==========================================================
-# Indicators
-# ==========================================================
-def sma(values: List[float], period: int) -> float:
-    if len(values) < period:
-        return float("nan")
-    return sum(values[-period:]) / float(period)
+def iso(dt: datetime) -> str:
+    return dt.astimezone(timezone.utc).isoformat()
 
-def rsi14(closes: List[float], period: int = 14) -> float:
-    if len(closes) < period + 1:
-        return float("nan")
+
+# -----------------------------
+# DB helpers
+# -----------------------------
+def db_conn():
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL ontbreekt in env.")
+    return psycopg2.connect(DATABASE_URL)
+
+def db_fetchone(q: str, params: tuple = ()) -> Optional[tuple]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(q, params)
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+def db_fetchall(q: str, params: tuple = ()) -> List[tuple]:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(q, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+def db_execute(q: str, params: tuple = ()) -> None:
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(q, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+def get_table_columns(table_name: str) -> List[str]:
+    rows = db_fetchall(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=%s
+        ORDER BY ordinal_position
+        """,
+        (table_name,),
+    )
+    return [r[0] for r in rows]
+
+
+# -----------------------------
+# Scoreboard (optioneel)
+# -----------------------------
+def load_scoreboard() -> Dict[str, Any]:
+    try:
+        if os.path.exists(SCOREBOARD_PATH) and os.path.getsize(SCOREBOARD_PATH) > 0:
+            with open(SCOREBOARD_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            log(f"📘 Scoreboard loaded: {SCOREBOARD_PATH}")
+            return data if isinstance(data, dict) else {}
+        log(f"📘 Scoreboard missing/empty: {SCOREBOARD_PATH} (ok, continue)")
+        return {}
+    except Exception:
+        log(f"⚠️ Scoreboard load failed: {SCOREBOARD_PATH} (ok, continue)")
+        return {}
+
+
+# -----------------------------
+# Universe (AUTO_UNIVERSE)
+# -----------------------------
+def get_rotate_offset(day_key: str) -> int:
+    """
+    Houd rotatie-offset bij in prebuy_state (DB).
+    We maken hem super-robust: als table/kolom niet bestaat -> offset=0.
+    """
+    try:
+        row = db_fetchone("SELECT rotate_offset FROM prebuy_state WHERE day=%s", (day_key,))
+        if row and row[0] is not None:
+            return int(row[0])
+    except Exception:
+        return 0
+    return 0
+
+def set_rotate_offset(day_key: str, new_offset: int) -> None:
+    try:
+        # probeer update, anders insert (zonder ON CONFLICT afhankelijkheid)
+        updated = False
+        try:
+            conn = db_conn()
+            with conn.cursor() as cur:
+                cur.execute("UPDATE prebuy_state SET rotate_offset=%s WHERE day=%s", (new_offset, day_key))
+                updated = cur.rowcount > 0
+            conn.commit()
+            conn.close()
+        except Exception:
+            updated = False
+
+        if not updated:
+            conn = db_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO prebuy_state(day, rotate_offset) VALUES (%s, %s)",
+                        (day_key, new_offset),
+                    )
+                conn.commit()
+            finally:
+                conn.close()
+    except Exception:
+        # als schema geen rotate_offset heeft: ignore
+        pass
+
+def get_auto_universe(day_key: str) -> List[str]:
+    """
+    pakt:
+    - core: top volume (1h) => CORE_LIMIT
+    - rotate: batch van overige USDT symbols => ROTATE_BATCH_SIZE, met offset
+    """
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            # Core coins: hoogste volume
+            cur.execute(
+                """
+                SELECT symbol
+                FROM candles
+                WHERE timeframe='1h'
+                GROUP BY symbol
+                ORDER BY MAX(volume) DESC
+                LIMIT %s
+                """,
+                (CORE_LIMIT,),
+            )
+            core = [r[0] for r in cur.fetchall()]
+
+            # Rotating pool: alle symbols (stable order) - meestal USDT
+            offset = get_rotate_offset(day_key)
+
+            cur.execute(
+                """
+                SELECT DISTINCT symbol
+                FROM candles
+                WHERE timeframe='1h'
+                ORDER BY symbol
+                OFFSET %s
+                LIMIT %s
+                """,
+                (offset, ROTATE_BATCH_SIZE),
+            )
+            rotate_all = [r[0] for r in cur.fetchall()]
+            rotate = [s for s in rotate_all if s not in set(core)]
+
+            universe = core + rotate
+
+            # update offset voor volgende run (wrap)
+            try:
+                total_row = db_fetchone(
+                    "SELECT COUNT(DISTINCT symbol) FROM candles WHERE timeframe='1h'"
+                )
+                rotate_total = int(total_row[0] or 0) if total_row else 0
+                new_offset = offset + ROTATE_BATCH_SIZE
+                if rotate_total > 0 and new_offset >= rotate_total:
+                    new_offset = 0
+                set_rotate_offset(day_key, new_offset)
+
+                log(
+                    f"🧠 universe: core={len(core)} + rotate_batch={len(rotate)} "
+                    f"(offset={offset}, size={ROTATE_BATCH_SIZE}, rotate_total={rotate_total}) "
+                    f"=> scan_total={len(universe)}"
+                )
+            except Exception:
+                log(
+                    f"🧠 universe: core={len(core)} + rotate_batch={len(rotate)} "
+                    f"(offset={offset}, size={ROTATE_BATCH_SIZE}) => scan_total={len(universe)}"
+                )
+
+            return universe
+    finally:
+        conn.close()
+
+
+# -----------------------------
+# Candles + Indicators (DB)
+# -----------------------------
+def get_recent_candles(symbol: str, timeframe: str, limit: int = 200) -> List[Dict[str, Any]]:
+    rows = db_fetchall(
+        """
+        SELECT ts, open, high, low, close, volume
+        FROM candles
+        WHERE symbol=%s AND timeframe=%s
+        ORDER BY ts DESC
+        LIMIT %s
+        """,
+        (symbol, timeframe, limit),
+    )
+    # reverse naar oud->nieuw
+    out = []
+    for r in reversed(rows):
+        out.append(
+            {
+                "ts": r[0],
+                "open": safe_float(r[1]),
+                "high": safe_float(r[2]),
+                "low": safe_float(r[3]),
+                "close": safe_float(r[4]),
+                "volume": safe_float(r[5]),
+            }
+        )
+    return out
+
+def sma(values: List[float], n: int) -> Optional[float]:
+    if len(values) < n:
+        return None
+    return sum(values[-n:]) / float(n)
+
+def rsi(values: List[float], n: int = 14) -> Optional[float]:
+    if len(values) < n + 1:
+        return None
     gains = 0.0
     losses = 0.0
-    for i in range(-period, 0):
-        diff = closes[i] - closes[i - 1]
+    for i in range(-n, 0):
+        diff = values[i] - values[i - 1]
         if diff >= 0:
             gains += diff
         else:
@@ -230,566 +322,331 @@ def rsi14(closes: List[float], period: int = 14) -> float:
     rs = gains / losses
     return 100.0 - (100.0 / (1.0 + rs))
 
-def ema(values: List[float], period: int) -> List[float]:
-    if len(values) < period:
-        return []
-    k = 2 / (period + 1)
-    out: List[float] = []
-    ema_prev = sum(values[:period]) / period
-    out.append(ema_prev)
-    for v in values[period:]:
-        ema_prev = v * k + ema_prev * (1 - k)
-        out.append(ema_prev)
-    return out
+def slope(values: List[float], n: int = 10) -> Optional[float]:
+    if len(values) < n:
+        return None
+    # simpele slope: last - first over n
+    return (values[-1] - values[-n]) / float(n)
 
-def linear_slope(values: List[float], lookback: int = 20) -> float:
-    if len(values) < lookback:
-        return 0.0
-    y = values[-lookback:]
-    n = lookback
-    x_mean = (n - 1) / 2
-    y_mean = sum(y) / n
-    num = 0.0
-    den = 0.0
-    for i in range(n):
-        dx = i - x_mean
-        dy = y[i] - y_mean
-        num += dx * dy
-        den += dx * dx
-    return 0.0 if den == 0 else num / den
 
-def true_range(high: float, low: float, prev_close: float) -> float:
-    return max(high - low, abs(high - prev_close), abs(low - prev_close))
+# -----------------------------
+# Scoring (simpel, robuust)
+# -----------------------------
+@dataclass
+class Signal:
+    symbol: str
+    label: str         # GO / WATCH
+    score: int
+    chance: float
+    entry: float
+    stop: float
+    target: float
+    setup_type: str
+    regime: str
+    timeframe: str
+    why: str
 
-def atr(highs: List[float], lows: List[float], closes: List[float], period: int = 14) -> List[float]:
-    if len(closes) < period + 1:
-        return []
-    trs: List[float] = []
-    for i in range(1, len(closes)):
-        trs.append(true_range(highs[i], lows[i], closes[i - 1]))
-    out: List[float] = []
-    atr_prev = sum(trs[:period]) / period
-    out.append(atr_prev)
-    for tr in trs[period:]:
-        atr_prev = (atr_prev * (period - 1) + tr) / period
-        out.append(atr_prev)
-    return out
-
-def atr_percentile_filter(
-    highs: List[float],
-    lows: List[float],
-    closes: List[float],
-    period: int = 14,
-    percentile_window: int = 300,
-    min_percentile: float = 0.20,
-) -> Tuple[bool, Dict[str, Any]]:
-    a = atr(highs, lows, closes, period=period)
-    if len(a) < 10:
-        return True, {"atr_ok": True, "atr_reason": "not_enough_data"}
-
-    last_atr = a[-1]
-    window = a[-percentile_window:] if len(a) >= percentile_window else a[:]
-    sorted_w = sorted(window)
-    idx = int((len(sorted_w) - 1) * min_percentile)
-    threshold = sorted_w[idx]
-    ok = last_atr >= threshold
-
-    return ok, {
-        "atr_ok": ok,
-        "atr_last": float(last_atr),
-        "atr_threshold": float(threshold),
-        "atr_min_percentile": float(min_percentile),
-        "atr_window": int(len(window)),
-    }
-
-def trend_strength_filter(
-    closes: List[float],
-    ema_period: int = 200,
-    slope_lb: int = 30,
-    min_abs_slope: float = 0.0,
-) -> Tuple[bool, Dict[str, Any]]:
-    e = ema(closes, ema_period)
-    if len(e) < slope_lb + 5:
-        return True, {"trend_ok": True, "trend_reason": "not_enough_data"}
-
-    slope = linear_slope(e, lookback=slope_lb)
-    ok = abs(slope) >= min_abs_slope
-
-    return ok, {
-        "trend_ok": ok,
-        "ema_period": int(ema_period),
-        "slope_lb": int(slope_lb),
-        "ema_slope": float(slope),
-        "min_abs_slope": float(min_abs_slope),
-    }
-
-def detect_regime_4h(closes_4h: List[float]) -> str:
-    e200 = ema(closes_4h, EMA_TREND_PERIOD)
-    if len(e200) < 30:
-        return "RANGE"
-    last_close = closes_4h[-1]
-    last_ema = e200[-1]
-    slope = linear_slope(e200, lookback=min(EMA_SLOPE_LOOKBACK, len(e200)))
-    if last_close > last_ema and slope > 0:
+def detect_regime(closes_4h: List[float], sma_fast: Optional[float], sma_slow: Optional[float]) -> str:
+    if sma_fast is None or sma_slow is None:
+        return "UNKNOWN"
+    if sma_fast > sma_slow:
         return "BULL"
-    if last_close < last_ema and slope < 0:
+    if sma_fast < sma_slow:
         return "BEAR"
     return "RANGE"
 
-def determine_setup_type(regime_4h: str, rsi_1h: float, s20_1h: float, s50_1h: float) -> str:
-    if regime_4h == "BULL" and (not math.isnan(rsi_1h) and rsi_1h >= 50) and (not math.isnan(s20_1h) and not math.isnan(s50_1h) and s20_1h >= s50_1h):
-        return "TREND_PULLBACK"
-    return "BREAKOUT_RETEST"
+def build_signal(symbol: str, scoreboard: Dict[str, Any]) -> Optional[Signal]:
+    # Pak candles
+    c4 = get_recent_candles(symbol, TF_SIGNAL, CANDLE_LIMIT)
+    if len(c4) < 60 and not FORCE_TEST_PREBUY:
+        return None
 
-def overextended_pct(closes: List[float], period: int = 20) -> float:
-    s = sma(closes, period)
-    if math.isnan(s) or s <= 0:
-        return 0.0
-    return float(round(((closes[-1] - s) / s) * 100.0, 3))
+    closes4 = [x["close"] for x in c4]
+    entry = closes4[-1] if closes4 else 0.0
+    if entry <= 0:
+        return None
 
-# ==========================================================
-# Score Model (base)
-# ==========================================================
-def compute_base_score(closes_1h: List[float]) -> Tuple[int, Dict[str, Any]]:
-    s20 = sma(closes_1h, 20)
-    s50 = sma(closes_1h, 50)
-    rsi = rsi14(closes_1h, 14)
+    sma20 = sma(closes4, 20)
+    sma50 = sma(closes4, 50)
+    rsi14 = rsi(closes4, 14)
+    slp20 = slope(closes4, 20)
 
+    # basis score
     score = 0
-    if not math.isnan(s20) and not math.isnan(s50):
-        score += 40 if s20 > s50 else 15
 
-    if not math.isnan(rsi):
-        if rsi >= 55:
-            score += 35
-        elif rsi >= 45:
+    # trend component
+    if sma20 is not None and sma50 is not None:
+        if sma20 > sma50:
+            score += 40
+        else:
+            score += 20
+
+    # momentum component
+    if rsi14 is not None:
+        if 45 <= rsi14 <= 65:
+            score += 25
+        elif rsi14 > 65:
+            score += 15
+        else:
+            score += 10
+
+    # slope component
+    if slp20 is not None:
+        if slp20 > 0:
             score += 20
         else:
             score += 10
 
-    if len(closes_1h) >= 6 and closes_1h[-1] > closes_1h[-6]:
-        score += 15
-    else:
-        score += 5
+    # force test: minimaal WATCH laten zien
+    if FORCE_TEST_PREBUY:
+        score = max(score, WATCH_MIN_SCORE)
 
-    score = max(0, min(100, score))
-    meta = {"sma20": float(s20), "sma50": float(s50), "rsi14": float(rsi)}
-    return int(score), meta
+    # clamp 0..100
+    score = int(clamp(score, 0, 100))
 
-def htf_alignment_factor(regime_4h: str) -> float:
-    if regime_4h == "BULL":
-        return HTF_FACTOR_BULL
-    if regime_4h == "RANGE":
-        return HTF_FACTOR_RANGE
-    return HTF_FACTOR_BEAR
-
-def btc_heat_factor(btc_regime_4h: str) -> float:
-    if btc_regime_4h == "BULL":
-        return BTC_FACTOR_BULL
-    if btc_regime_4h == "RANGE":
-        return BTC_FACTOR_RANGE
-    return BTC_FACTOR_BEAR
-
-def normalize_score(
-    base_score: float,
-    regime_4h: str,
-    setup_type: str,
-    htf_factor: float,
-    btc_factor: float,
-) -> Tuple[int, Dict[str, Any]]:
-    setup_factor = SETUP_FACTOR_TREND_PULLBACK if setup_type == "TREND_PULLBACK" else SETUP_FACTOR_BREAKOUT_RETEST
-
-    if regime_4h == "BULL":
-        regime_factor = REGIME_FACTOR_BULL
-    elif regime_4h == "BEAR":
-        regime_factor = REGIME_FACTOR_BEAR
-    else:
-        regime_factor = REGIME_FACTOR_RANGE
-
-    raw = base_score * regime_factor * setup_factor * htf_factor * btc_factor
-    final = max(0, min(100, int(round(raw))))
-
-    return final, {
-        "base_score": float(base_score),
-        "regime_factor": float(regime_factor),
-        "setup_factor": float(setup_factor),
-        "htf_factor": float(htf_factor),
-        "btc_factor": float(btc_factor),
-        "raw": float(raw),
-        "final": int(final),
-        "regime_4h": regime_4h,
-        "setup_type": setup_type,
-    }
-
-# ==========================================================
-# Scoreboard
-# ==========================================================
-def load_scoreboard() -> Dict[str, Any]:
-    try:
-        if not os.path.exists(SCOREBOARD_PATH):
-            return {}
-        with open(SCOREBOARD_PATH, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except Exception:
-        return {}
-
-def scoreboard_factor(scoreboard: Dict[str, Any], setup_type: str, regime_4h: str) -> Tuple[float, Dict[str, Any]]:
-    node: Dict[str, Any] = {}
-    try:
-        if isinstance(scoreboard.get(setup_type), dict):
-            node = scoreboard.get(setup_type, {}).get(regime_4h, {}) or {}
-    except Exception:
-        node = {}
-
-    if not node:
-        try:
-            key = f"{setup_type}|{regime_4h}"
-            gl = scoreboard.get("global", {}) if isinstance(scoreboard.get("global", {}), dict) else {}
-            node = gl.get(key, {}) if isinstance(gl, dict) else {}
-        except Exception:
-            node = {}
-
-    winrate = float(node.get("winrate", node.get("wr", 0.50)) or 0.50)
-    expectancy = float(node.get("expectancy", node.get("avg_r", 0.0)) or 0.0)
-    n = int(node.get("n", node.get("trades", node.get("count", 0))) or 0)
-
-    sample_boost = 1.0
-    if n >= 300:
-        sample_boost = 1.03
-    elif n >= 150:
-        sample_boost = 1.02
-    elif n >= 75:
-        sample_boost = 1.01
-
-    f = 1.0
-    if winrate >= 0.60 and expectancy > 0:
-        f = 1.06
-    elif winrate >= 0.55 and expectancy >= 0:
-        f = 1.03
-    elif winrate < 0.45 or expectancy < 0:
-        f = 0.92
-
-    f *= sample_boost
-
-    return float(f), {
-        "sb_winrate": float(winrate),
-        "sb_expectancy": float(expectancy),
-        "sb_n": int(n),
-        "sb_factor": float(f),
-    }
-
-# ==========================================================
-# Label + stop/target + chance
-# ==========================================================
-def decide_label(score: int) -> Optional[str]:
+    # label
     if score >= MIN_SCORE_TO_PREBUY:
-        return "GO"
-    if score >= WATCH_MIN_SCORE:
-        return "WATCH"
-    return None
+        label = "GO"
+    elif score >= WATCH_MIN_SCORE:
+        label = "WATCH"
+    else:
+        return None
 
-def calc_stop_target(entry: float) -> Tuple[float, float]:
+    # setup_type (simpel nu; later uitbreiden)
+    setup_type = "TREND_PULLBACK"
+
+    # regime
+    regime = detect_regime(closes4, sma20, sma50)
+
+    # risk/targets (default: stop 2% onder entry, target 2R)
     stop = entry * 0.98
     risk = entry - stop
     target = entry + 2.0 * risk
-    return stop, target
 
-def fingerprint(symbol: str, setup_type: str, entry: float, target: float) -> str:
-    return f"{symbol}|{setup_type}|{round(entry, 8)}|{round(target, 8)}"
+    chance = round(score / 100.0, 2)
+    why = f"SMA20>{'SMA50' if (sma20 and sma50 and sma20 > sma50) else 'SMA50?'} | RSI={rsi14:.1f}" if rsi14 else "Basic trend/momentum"
 
-def chance_from_score(final_score: int) -> float:
-    x = max(0, min(100, int(final_score)))
-    return float(round(x / 100.0, 3))
+    return Signal(
+        symbol=symbol,
+        label=label,
+        score=score,
+        chance=chance,
+        entry=entry,
+        stop=stop,
+        target=target,
+        setup_type=setup_type,
+        regime=regime,
+        timeframe=TF_SIGNAL,
+        why=why,
+    )
 
-# ==========================================================
-# DB functions (state + dedupe + insert)
-# ==========================================================
-def db_get_daily_count() -> int:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                SELECT created_count
-                FROM {STATE_TABLE}
-                WHERE day = CURRENT_DATE
-                LIMIT 1
-            """)
-            row = cur.fetchone()
-            return int(row[0]) if row else 0
 
-def db_inc_daily_count() -> None:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO {STATE_TABLE}(day, created_count)
-                VALUES (CURRENT_DATE, 1)
-                ON CONFLICT (day)
-                DO UPDATE SET created_count = {STATE_TABLE}.created_count + 1
-            """)
-        conn.commit()
+# -----------------------------
+# Dedup / Fingerprints (DB)
+# -----------------------------
+def make_fingerprint(sig: Signal) -> str:
+    # dezelfde trade = zelfde coin + entry + target + setup_type
+    # rond af om microverschillen te vermijden
+    e = round(sig.entry, 6)
+    t = round(sig.target, 6)
+    return f"{sig.symbol}|{sig.setup_type}|{e}|{t}"
 
-def db_dedupe_allowed(fp: str) -> bool:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                SELECT EXTRACT(EPOCH FROM (NOW() - last_created_at))::BIGINT AS age_seconds
-                FROM {FINGERPRINT_TABLE}
-                WHERE fingerprint=%s
-                LIMIT 1
-            """, (fp,))
-            row = cur.fetchone()
-
-    if not row:
-        return True
-    age = int(row[0] or 0)
-    return age >= TRADE_COOLDOWN_SECONDS
-
-def db_touch_fingerprint(fp: str) -> None:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(f"""
-                INSERT INTO {FINGERPRINT_TABLE}(fingerprint, last_created_at)
-                VALUES (%s, NOW())
-                ON CONFLICT (fingerprint)
-                DO UPDATE SET last_created_at = NOW()
-            """, (fp,))
-        conn.commit()
-
-def _pick_stop_col() -> str:
-    # jouw table heeft vaak "stop" (en soms ook "stop_loss")
-    if "stop" in _PENDING_COLS:
-        return "stop"
-    if "stop_loss" in _PENDING_COLS:
-        return "stop_loss"
-    return "stop"
-
-def db_insert_prebuy(row: Dict[str, Any]) -> bool:
+def is_duplicate_recent(fp: str) -> bool:
     """
-    Tolerant insert: vult alleen kolommen die echt bestaan.
-    Vereist: UNIQUE/INDEX op id (die heb je gemaakt).
+    Check in trade_fingerprints of deze fingerprint recent is aangemaakt.
+    Geen ON CONFLICT afhankelijkheid; puur SELECT.
     """
-    cols: List[str] = []
-    vals: List[str] = []
-    params: Dict[str, Any] = {}
-
-    stop_col = _pick_stop_col()
-
-    mapping = {
-        "id": row.get("id"),
-        "symbol": row.get("symbol"),
-        "coin": row.get("symbol"),                 # sommige schema's gebruiken coin
-        "setup_type": row.get("setup_type"),
-        "regime": row.get("regime"),
-        "market_regime": row.get("regime"),
-        "score": row.get("score"),
-        "label": row.get("label"),
-        "grade": row.get("grade"),
-        "entry": row.get("entry"),
-        stop_col: row.get("stop_loss"),
-        "stop_loss": row.get("stop_loss"),
-        "target": row.get("target"),
-        "expires_at": row.get("expires_at"),
-        "payload_json": row.get("details"),        # jouw schema heeft payload_json vaak als text
-        "details": row.get("details"),
-        "chance": row.get("chance"),
-        "confidence": row.get("confidence"),
-    }
-
-    # timestamps: als created_at bestaat, laat default werken, anders vullen we hem niet
-    for k, v in mapping.items():
-        if k in _PENDING_COLS and v is not None:
-            cols.append(k)
-            vals.append(f"%({k})s")
-            params[k] = v
-
-    sql = f"""
-    INSERT INTO {PENDING_TABLE} ({", ".join(cols)})
-    VALUES ({", ".join(vals)})
-    ON CONFLICT (id) DO NOTHING
-    """
-
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, params)
-            inserted = (cur.rowcount == 1)
-        conn.commit()
-    return inserted
-
-# ==========================================================
-# Optional: internal push
-# ==========================================================
-def send_to_webhook(payload: Dict[str, Any]) -> bool:
-    if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
-        return False
     try:
-        r = requests.post(
-            f"{WEBHOOK_BASE_URL}/internal/prebuy",
-            json=payload,
-            headers={"X-Internal-Token": INTERNAL_TOKEN},
-            timeout=HTTP_TIMEOUT,
+        row = db_fetchone(
+            "SELECT last_created_at FROM trade_fingerprints WHERE fingerprint=%s",
+            (fp,),
         )
-        return r.status_code < 300
+        if not row or not row[0]:
+            return False
+        last_dt = row[0]
+        # last_dt kan naive/tz zijn, psycopg2 geeft meestal tz-aware
+        cutoff = now_utc() - timedelta(seconds=TRADE_COOLDOWN_SECONDS)
+        return last_dt >= cutoff
     except Exception:
         return False
 
-# ==========================================================
+def upsert_fingerprint(fp: str) -> None:
+    """
+    Geen ON CONFLICT, want jouw error liet zien dat constraints soms ontbreken.
+    We doen: UPDATE -> als 0 rows dan INSERT. Bij INSERT-fail -> ignore.
+    """
+    try:
+        conn = db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE trade_fingerprints SET last_created_at=%s WHERE fingerprint=%s",
+                    (now_utc(), fp),
+                )
+                updated = cur.rowcount > 0
+            conn.commit()
+
+            if not updated:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO trade_fingerprints(fingerprint, last_created_at) VALUES (%s, %s)",
+                        (fp, now_utc()),
+                    )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        # als table/kolom (nog) niet klopt: liever geen crash
+        pass
+
+
+# -----------------------------
+# Prebuy counter per dag (DB)
+# -----------------------------
+def get_day_key() -> str:
+    # UTC day key
+    return now_utc().strftime("%Y-%m-%d")
+
+def get_created_today(day_key: str) -> int:
+    try:
+        row = db_fetchone("SELECT created_count FROM prebuy_state WHERE day=%s", (day_key,))
+        if row and row[0] is not None:
+            return int(row[0])
+    except Exception:
+        return 0
+    return 0
+
+def set_created_today(day_key: str, new_val: int) -> None:
+    try:
+        conn = db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE prebuy_state SET created_count=%s WHERE day=%s", (new_val, day_key))
+                updated = cur.rowcount > 0
+            conn.commit()
+
+            if not updated:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO prebuy_state(day, created_count) VALUES (%s, %s)",
+                        (day_key, new_val),
+                    )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+
+
+# -----------------------------
+# Insert pending_approvals (robust)
+# -----------------------------
+def insert_pending(sig: Signal, prebuy_id: str) -> None:
+    cols = get_table_columns("pending_approvals")
+
+    created_at = now_utc()
+    expires_at = created_at + timedelta(seconds=PREBUY_VALID_SECONDS)
+
+    payload: Dict[str, Any] = {
+        "id": prebuy_id,
+        "symbol": sig.symbol,
+        "label": sig.label,
+        "score": sig.score,
+        "chance": sig.chance,
+        "confidence": int(round(sig.chance * 100)),
+        "status": "PENDING",
+        "created_at": created_at,
+        "expires_at": expires_at,
+        "approved_at": None,
+        "rejected_at": None,
+        "consumed_at": None,
+        "timeframe": sig.timeframe,
+        "setup_type": sig.setup_type,
+        "regime": sig.regime,
+        "entry": sig.entry,
+        "stop": sig.stop,
+        "target": sig.target,
+        "why": sig.why,
+        "source": "multi_coin_score",
+    }
+
+    # Filter alleen bestaande kolommen
+    clean = {k: v for k, v in payload.items() if k in cols}
+
+    if not clean:
+        raise RuntimeError("pending_approvals schema niet herkend (geen overlap in kolommen).")
+
+    keys = list(clean.keys())
+    values = [clean[k] for k in keys]
+    placeholders = ", ".join(["%s"] * len(keys))
+
+    q = f"INSERT INTO pending_approvals ({', '.join(keys)}) VALUES ({placeholders})"
+
+    conn = db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(q, tuple(values))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# -----------------------------
 # Main
-# ==========================================================
-def make_id(symbol: str) -> str:
-    return f"PB-{symbol}-{now_ts()}"
-
-def main() -> None:
-    db_init()
-
+# -----------------------------
+def main() -> int:
     scoreboard = load_scoreboard()
-    if scoreboard:
-        log(f"📘 Scoreboard loaded: {SCOREBOARD_PATH}")
+
+    day_key = get_day_key()
+    created_today = get_created_today(day_key)
+
+    # Universe bepalen
+    if AUTO_UNIVERSE:
+        coins = get_auto_universe(day_key)
     else:
-        log(f"📘 Scoreboard missing/empty: {SCOREBOARD_PATH} (ok, continue)")
+        coins = [c.strip().upper() for c in DEFAULT_COINS.split(",") if c.strip()]
 
-    created_today = db_get_daily_count()
+    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(coins)}")
+
     created = 0
-
-    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(COINS)}")
-
-    # BTC heat (4h)
-    _, _, btc_closes_4h, _ = get_ohlcv("BTCUSDT", INTERVAL_4H, LIMIT_4H)
-    btc_regime = detect_regime_4h(btc_closes_4h) if btc_closes_4h else "RANGE"
-    btc_factor = btc_heat_factor(btc_regime)
-
-    for sym in COINS:
+    for sym in coins:
         if created_today + created >= MAX_PREBUY_PER_DAY and not FORCE_TEST_PREBUY:
             break
 
         try:
-            highs_1h, lows_1h, closes_1h, _ = get_ohlcv(sym, INTERVAL_1H, LIMIT_1H)
-            if not closes_1h or len(closes_1h) < 80:
+            sig = build_signal(sym, scoreboard)
+            if not sig:
                 continue
 
-            entry = float(closes_1h[-1])
-
-            base_score, meta = compute_base_score(closes_1h)
-            rsi_1h = float(meta.get("rsi14", float("nan")))
-            s20_1h = float(meta.get("sma20", float("nan")))
-            s50_1h = float(meta.get("sma50", float("nan")))
-
-            _, _, closes_4h, _ = get_ohlcv(sym, INTERVAL_4H, LIMIT_4H)
-            regime_4h = detect_regime_4h(closes_4h) if (closes_4h and len(closes_4h) >= 120) else "RANGE"
-
-            setup_type = determine_setup_type(regime_4h, rsi_1h, s20_1h, s50_1h)
-
-            atr_ok, atr_info = atr_percentile_filter(
-                highs_1h, lows_1h, closes_1h,
-                period=ATR_PERIOD,
-                percentile_window=ATR_PERCENTILE_WINDOW,
-                min_percentile=ATR_MIN_PERCENTILE,
-            )
-            trend_ok, trend_info = trend_strength_filter(
-                closes_4h if closes_4h else closes_1h,
-                ema_period=EMA_TREND_PERIOD,
-                slope_lb=EMA_SLOPE_LOOKBACK,
-                min_abs_slope=EMA_MIN_ABS_SLOPE,
-            )
-
-            htf_factor = htf_alignment_factor(regime_4h)
-
-            sb_factor, sb_info = scoreboard_factor(scoreboard, setup_type, regime_4h) if scoreboard else (1.0, {
-                "sb_winrate": 0.0, "sb_expectancy": 0.0, "sb_n": 0, "sb_factor": 1.0
-            })
-
-            final_score, norm_info = normalize_score(
-                base_score=float(base_score) * float(sb_factor),
-                regime_4h=regime_4h,
-                setup_type=setup_type,
-                htf_factor=htf_factor,
-                btc_factor=btc_factor,
-            )
-
-            if not atr_ok:
-                final_score = min(int(final_score), int(LOWVOL_MAX_SCORE))
-
-            if (not trend_ok) and regime_4h in {"BULL", "BEAR"}:
-                final_score = min(int(final_score), 75)
-
-            label = decide_label(int(final_score))
-            if FORCE_TEST_PREBUY and label is None:
-                label = "WATCH"
-                final_score = max(int(final_score), WATCH_MIN_SCORE)
-
-            if label is None:
+            fp = make_fingerprint(sig)
+            if is_duplicate_recent(fp) and not FORCE_TEST_PREBUY:
                 continue
 
-            stop_loss, target = calc_stop_target(entry)
+            prebuy_id = f"PB-{sig.symbol}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+            insert_pending(sig, prebuy_id)
+            upsert_fingerprint(fp)
 
-            fp = fingerprint(sym, setup_type, entry, target)
-            if not db_dedupe_allowed(fp) and not FORCE_TEST_PREBUY:
-                continue
-
-            prebuy_id = make_id(sym)
-            expires_at_dt = utc_now() + timedelta(seconds=PREBUY_VALID_SECONDS)
-
-            grade = "A" if final_score >= 90 else "B" if final_score >= 80 else "C"
-            chance = chance_from_score(int(final_score))
-            confidence = int(final_score)
-
-            details: Dict[str, Any] = {}
-            details.update(meta)
-            details.update({"overextended": overextended_pct(closes_1h, 20)})
-            details.update(atr_info)
-            details.update(trend_info)
-            details.update(norm_info)
-            details.update(sb_info)
-            details.update({
-                "btc_regime_4h": btc_regime,
-                "btc_factor": btc_factor,
-                "regime_4h": regime_4h,
-                "setup_type": setup_type,
-                "base_score": int(base_score),
-            })
-
-            row = {
-                "id": prebuy_id,
-                "symbol": sym,
-                "setup_type": setup_type,
-                "label": label,
-                "score": int(final_score),
-                "grade": grade,
-                "entry": float(entry),
-                "stop_loss": float(stop_loss),
-                "target": float(target),
-                "regime": regime_4h,
-                "expires_at": expires_at_dt,
-                "chance": float(chance),
-                "confidence": int(confidence),
-                "details": json.dumps(details),
-            }
-
-            inserted = db_insert_prebuy(row)
-            if inserted:
-                db_touch_fingerprint(fp)
-                db_inc_daily_count()
-                created += 1
-
-                _ = send_to_webhook({
-                    "id": prebuy_id,
-                    "symbol": sym,
-                    "setup_type": setup_type,
-                    "label": label,
-                    "score": int(final_score),
-                    "chance": chance,
-                    "entry": float(entry),
-                    "stop_loss": float(stop_loss),
-                    "target": float(target),
-                    "regime": regime_4h,
-                    "expires_at": expires_at_dt.isoformat(),
-                })
-
-                log(f"✅ created: {prebuy_id} | {sym} | {label} | score={final_score} | chance={chance}")
+            created += 1
+            log(f"✅ created: {prebuy_id} | {sig.symbol} | {sig.label} | score={sig.score} | chance={sig.chance}")
 
         except Exception as e:
+            # No crash: log en door
             log(f"⚠️ ERROR {sym}: {e}")
+            # optioneel: log stacktrace (uitcommenten als te noisy)
+            # log(traceback.format_exc())
             continue
 
+    # update day counter
+    if created > 0:
+        set_created_today(day_key, created_today + created)
+
     log(f"done. created={created}")
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        raise SystemExit(main())
+    except Exception:
+        log("💥 FATAL:\n" + traceback.format_exc())
+        raise
