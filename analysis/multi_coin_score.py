@@ -6,7 +6,7 @@ import time
 import math
 import json
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import requests
 import psycopg2
@@ -31,24 +31,26 @@ MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
 WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
 
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
-
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "15")
 
-# Scoreboard (van simulator)
 SCOREBOARD_PATH = (os.getenv("SCOREBOARD_PATH") or "/data/scoreboard.json").strip()
 
-# ==========================================================
-# COIN UNIVERSE SETTINGS (DB)
-# ==========================================================
-CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")
-ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
-SCAN_STATE_KEY = (os.getenv("SCAN_STATE_KEY") or "rotate_offset").strip()
+# Tabellen (laat pending_approvals/trade_fingerprints zoals jij ze al gebruikt)
+PENDING_TABLE = (os.getenv("PENDING_TABLE") or "pending_approvals").strip()
+FINGERPRINT_TABLE = (os.getenv("FINGERPRINT_TABLE") or "trade_fingerprints").strip()
+
+# ✅ Belangrijk: NIET je bestaande prebuy_state gebruiken (die heeft een NOT NULL key)
+# We gebruiken een schone daily state tabel:
+STATE_TABLE = (os.getenv("STATE_TABLE") or "prebuy_state_daily").strip()
 
 # ==========================================================
 # MARKETS / DATA
 # ==========================================================
 BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip().lower()
+
+COINS = (os.getenv("COINS") or "BTCUSDT,ETHUSDT,BNBUSDT,XRPUSDT,ADAUSDT,SOLUSDT,DOGEUSDT").split(",")
+COINS = [c.strip().upper() for c in COINS if c.strip()]
 
 INTERVAL_1H = (os.getenv("INTERVAL_1H") or "1h").strip()
 INTERVAL_4H = (os.getenv("INTERVAL_4H") or "4h").strip()
@@ -61,7 +63,7 @@ LIMIT_4H = int(os.getenv("LIMIT_4H") or "300")
 # ==========================================================
 ATR_PERIOD = int(os.getenv("ATR_PERIOD") or "14")
 ATR_PERCENTILE_WINDOW = int(os.getenv("ATR_PERCENTILE_WINDOW") or "300")
-ATR_MIN_PERCENTILE = float(os.getenv("ATR_MIN_PERCENTILE") or "0.20")  # 20e percentiel
+ATR_MIN_PERCENTILE = float(os.getenv("ATR_MIN_PERCENTILE") or "0.20")
 
 EMA_TREND_PERIOD = int(os.getenv("EMA_TREND_PERIOD") or "200")
 EMA_SLOPE_LOOKBACK = int(os.getenv("EMA_SLOPE_LOOKBACK") or "30")
@@ -87,6 +89,8 @@ LOWVOL_MAX_SCORE = int(os.getenv("LOWVOL_MAX_SCORE") or "72")
 # ==========================================================
 # DB
 # ==========================================================
+_PENDING_COLS: Set[str] = set()
+
 def db_conn():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
@@ -99,171 +103,55 @@ def now_ts() -> int:
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
-def db_init() -> None:
-    """
-    Veilig init: alleen CREATE IF NOT EXISTS + UNIQUE/INDEX toevoegen waar nodig.
-    Geen drops.
+def table_columns(table_name: str) -> Set[str]:
+    q = """
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema='public' AND table_name=%s
     """
     with db_conn() as conn:
         with conn.cursor() as cur:
-            # coin_universe (bestaat bij jou al, maar we maken hem safe als hij mist)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS coin_universe (
-                symbol     TEXT PRIMARY KEY,
-                tier       TEXT,
-                priority   INTEGER,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            cur.execute(q, (table_name,))
+            rows = cur.fetchall() or []
+    return {r[0] for r in rows}
+
+def db_init() -> None:
+    global _PENDING_COLS
+
+    with db_conn() as conn:
+        with conn.cursor() as cur:
+            # pending approvals (als jij hem al hebt, blijft hij bestaan; create is "safe")
+            cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {PENDING_TABLE} (
+                id TEXT
             );
             """)
 
-            # scan_state voor rotate offset
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS scan_state (
-                key   TEXT PRIMARY KEY,
-                value BIGINT NOT NULL DEFAULT 0
-            );
-            """)
-
-            # pending approvals (centrale queue) - maakt alleen aan als hij er nog niet is
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS pending_approvals (
-                id              TEXT PRIMARY KEY,
-                symbol          TEXT NOT NULL,
-                setup_type      TEXT,
-                label           TEXT,
-                score           INTEGER,
-                grade           TEXT,
-                entry           DOUBLE PRECISION,
-                stop_loss       DOUBLE PRECISION,
-                target          DOUBLE PRECISION,
-                regime          TEXT,
-
-                status          TEXT NOT NULL DEFAULT 'PENDING',
-                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                expires_at      TIMESTAMPTZ NOT NULL,
-
-                approved_amount DOUBLE PRECISION,
-                approved_at     TIMESTAMPTZ,
-                consumed_at     TIMESTAMPTZ,
-                rejected_at     TIMESTAMPTZ,
-
-                chance          DOUBLE PRECISION,
-                confidence      INTEGER,
-                details         JSONB
-            );
-            """)
-            cur.execute("""
-            CREATE INDEX IF NOT EXISTS idx_pending_approvals_status_expires
-            ON pending_approvals(status, expires_at);
-            """)
-
-            # Dedupe fingerprints
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS trade_fingerprints (
-                fingerprint     TEXT PRIMARY KEY,
+            # fingerprints
+            cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {FINGERPRINT_TABLE} (
+                fingerprint TEXT PRIMARY KEY,
                 last_created_at TIMESTAMPTZ DEFAULT NOW()
             );
             """)
 
-            # Daily state (daglimiet)
-            cur.execute("""
-            CREATE TABLE IF NOT EXISTS prebuy_state (
-                day           DATE PRIMARY KEY,
+            # ✅ nieuwe daily state table (zonder key)
+            cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
+                day DATE PRIMARY KEY,
                 created_count INTEGER NOT NULL DEFAULT 0
             );
             """)
 
-            # Extra safety: UNIQUE op coin_universe(symbol) (als iemand primary key veranderde)
-            cur.execute("""
-            DO $$
-            BEGIN
-              IF NOT EXISTS (
-                SELECT 1 FROM pg_constraint
-                WHERE conname = 'coin_universe_symbol_key'
-              ) THEN
-                BEGIN
-                  ALTER TABLE coin_universe ADD CONSTRAINT coin_universe_symbol_key UNIQUE (symbol);
-                EXCEPTION WHEN duplicate_table THEN
-                  -- ignore
-                END;
-              END IF;
-            END $$;
-            """)
+            # indexen die ON CONFLICT / performance helpen (veilig, IF NOT EXISTS)
+            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{PENDING_TABLE}_id ON {PENDING_TABLE} (id);")
+            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{FINGERPRINT_TABLE}_fp ON {FINGERPRINT_TABLE} (fingerprint);")
+            cur.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS ux_{STATE_TABLE}_day ON {STATE_TABLE} (day);")
 
         conn.commit()
 
-def db_get_scan_offset() -> int:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT value FROM scan_state WHERE key=%s LIMIT 1", (SCAN_STATE_KEY,))
-            row = cur.fetchone()
-            return int(row[0]) if row else 0
-
-def db_set_scan_offset(v: int) -> None:
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO scan_state(key, value)
-                VALUES (%s, %s)
-                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-            """, (SCAN_STATE_KEY, int(v)))
-        conn.commit()
-
-def db_fetch_universe(core_limit: int, rotate_batch: int) -> Tuple[List[str], int, int, int]:
-    """
-    Returns: (symbols_to_scan, core_count, rotate_count_total, rotate_offset_used)
-    """
-    offset = db_get_scan_offset()
-
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT symbol
-                FROM coin_universe
-                WHERE tier='CORE'
-                ORDER BY priority ASC NULLS LAST, symbol ASC
-                LIMIT %s
-            """, (int(core_limit),))
-            core = [r[0].upper() for r in (cur.fetchall() or [])]
-
-            cur.execute("""
-                SELECT COUNT(*)
-                FROM coin_universe
-                WHERE tier='ROTATE'
-            """)
-            rotate_total = int(cur.fetchone()[0] or 0)
-
-            rotate: List[str] = []
-            if rotate_total > 0 and rotate_batch > 0:
-                cur.execute("""
-                    SELECT symbol
-                    FROM coin_universe
-                    WHERE tier='ROTATE'
-                    ORDER BY symbol ASC
-                    OFFSET %s
-                    LIMIT %s
-                """, (int(offset), int(rotate_batch)))
-                rotate = [r[0].upper() for r in (cur.fetchall() or [])]
-
-    # wrap als offset te ver is
-    if rotate_total > 0 and offset >= rotate_total:
-        offset = 0
-
-    # nieuwe offset voor volgende run
-    new_offset = offset + len(rotate)
-    if rotate_total > 0 and new_offset >= rotate_total:
-        new_offset = 0
-    db_set_scan_offset(new_offset)
-
-    # combine + dedupe
-    out = []
-    seen = set()
-    for s in core + rotate:
-        if s and s not in seen:
-            seen.add(s)
-            out.append(s)
-
-    return out, len(core), rotate_total, offset
+    _PENDING_COLS = table_columns(PENDING_TABLE)
+    log(f"🧩 pending_approvals columns detected: {len(_PENDING_COLS)}")
 
 # ==========================================================
 # Data fetch: DB candles first, Binance fallback
@@ -295,9 +183,7 @@ def binance_fetch_klines(symbol: str, interval: str, limit: int) -> List[List[An
     )
     r.raise_for_status()
     data = r.json()
-    if not isinstance(data, list):
-        return []
-    return data
+    return data if isinstance(data, list) else []
 
 def get_ohlcv(symbol: str, timeframe: str, limit: int) -> Tuple[List[float], List[float], List[float], List[float]]:
     try:
@@ -370,9 +256,7 @@ def linear_slope(values: List[float], lookback: int = 20) -> float:
         dy = y[i] - y_mean
         num += dx * dy
         den += dx * dx
-    if den == 0:
-        return 0.0
-    return num / den
+    return 0.0 if den == 0 else num / den
 
 def true_range(high: float, low: float, prev_close: float) -> float:
     return max(high - low, abs(high - prev_close), abs(low - prev_close))
@@ -443,11 +327,9 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
     e200 = ema(closes_4h, EMA_TREND_PERIOD)
     if len(e200) < 30:
         return "RANGE"
-
     last_close = closes_4h[-1]
     last_ema = e200[-1]
     slope = linear_slope(e200, lookback=min(EMA_SLOPE_LOOKBACK, len(e200)))
-
     if last_close > last_ema and slope > 0:
         return "BULL"
     if last_close < last_ema and slope < 0:
@@ -455,9 +337,7 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
     return "RANGE"
 
 def determine_setup_type(regime_4h: str, rsi_1h: float, s20_1h: float, s50_1h: float) -> str:
-    if regime_4h == "BULL" and (not math.isnan(rsi_1h) and rsi_1h >= 50) and (
-        not math.isnan(s20_1h) and not math.isnan(s50_1h) and s20_1h >= s50_1h
-    ):
+    if regime_4h == "BULL" and (not math.isnan(rsi_1h) and rsi_1h >= 50) and (not math.isnan(s20_1h) and not math.isnan(s50_1h) and s20_1h >= s50_1h):
         return "TREND_PULLBACK"
     return "BREAKOUT_RETEST"
 
@@ -468,7 +348,7 @@ def overextended_pct(closes: List[float], period: int = 20) -> float:
     return float(round(((closes[-1] - s) / s) * 100.0, 3))
 
 # ==========================================================
-# Score Model
+# Score Model (base)
 # ==========================================================
 def compute_base_score(closes_1h: List[float]) -> Tuple[int, Dict[str, Any]]:
     s20 = sma(closes_1h, 20)
@@ -487,7 +367,10 @@ def compute_base_score(closes_1h: List[float]) -> Tuple[int, Dict[str, Any]]:
         else:
             score += 10
 
-    score += 15 if (len(closes_1h) >= 6 and closes_1h[-1] > closes_1h[-6]) else 5
+    if len(closes_1h) >= 6 and closes_1h[-1] > closes_1h[-6]:
+        score += 15
+    else:
+        score += 5
 
     score = max(0, min(100, score))
     meta = {"sma20": float(s20), "sma50": float(s50), "rsi14": float(rsi)}
@@ -515,6 +398,7 @@ def normalize_score(
     btc_factor: float,
 ) -> Tuple[int, Dict[str, Any]]:
     setup_factor = SETUP_FACTOR_TREND_PULLBACK if setup_type == "TREND_PULLBACK" else SETUP_FACTOR_BREAKOUT_RETEST
+
     if regime_4h == "BULL":
         regime_factor = REGIME_FACTOR_BULL
     elif regime_4h == "BEAR":
@@ -538,7 +422,7 @@ def normalize_score(
     }
 
 # ==========================================================
-# Scoreboard (optional)
+# Scoreboard
 # ==========================================================
 def load_scoreboard() -> Dict[str, Any]:
     try:
@@ -595,7 +479,7 @@ def scoreboard_factor(scoreboard: Dict[str, Any], setup_type: str, regime_4h: st
     }
 
 # ==========================================================
-# Prebuy logic
+# Label + stop/target + chance
 # ==========================================================
 def decide_label(score: int) -> Optional[str]:
     if score >= MIN_SCORE_TO_PREBUY:
@@ -618,14 +502,14 @@ def chance_from_score(final_score: int) -> float:
     return float(round(x / 100.0, 3))
 
 # ==========================================================
-# DB state + dedupe + insert
+# DB functions (state + dedupe + insert)
 # ==========================================================
 def db_get_daily_count() -> int:
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT created_count
-                FROM prebuy_state
+                FROM {STATE_TABLE}
                 WHERE day = CURRENT_DATE
                 LIMIT 1
             """)
@@ -635,20 +519,20 @@ def db_get_daily_count() -> int:
 def db_inc_daily_count() -> None:
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO prebuy_state(day, created_count)
+            cur.execute(f"""
+                INSERT INTO {STATE_TABLE}(day, created_count)
                 VALUES (CURRENT_DATE, 1)
                 ON CONFLICT (day)
-                DO UPDATE SET created_count = prebuy_state.created_count + 1
+                DO UPDATE SET created_count = {STATE_TABLE}.created_count + 1
             """)
         conn.commit()
 
 def db_dedupe_allowed(fp: str) -> bool:
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT EXTRACT(EPOCH FROM (NOW() - last_created_at))::BIGINT AS age_seconds
-                FROM trade_fingerprints
+                FROM {FINGERPRINT_TABLE}
                 WHERE fingerprint=%s
                 LIMIT 1
             """, (fp,))
@@ -656,45 +540,82 @@ def db_dedupe_allowed(fp: str) -> bool:
 
     if not row:
         return True
-
     age = int(row[0] or 0)
     return age >= TRADE_COOLDOWN_SECONDS
 
 def db_touch_fingerprint(fp: str) -> None:
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO trade_fingerprints(fingerprint, last_created_at)
+            cur.execute(f"""
+                INSERT INTO {FINGERPRINT_TABLE}(fingerprint, last_created_at)
                 VALUES (%s, NOW())
                 ON CONFLICT (fingerprint)
                 DO UPDATE SET last_created_at = NOW()
             """, (fp,))
         conn.commit()
 
+def _pick_stop_col() -> str:
+    # jouw table heeft vaak "stop" (en soms ook "stop_loss")
+    if "stop" in _PENDING_COLS:
+        return "stop"
+    if "stop_loss" in _PENDING_COLS:
+        return "stop_loss"
+    return "stop"
+
 def db_insert_prebuy(row: Dict[str, Any]) -> bool:
+    """
+    Tolerant insert: vult alleen kolommen die echt bestaan.
+    Vereist: UNIQUE/INDEX op id (die heb je gemaakt).
+    """
+    cols: List[str] = []
+    vals: List[str] = []
+    params: Dict[str, Any] = {}
+
+    stop_col = _pick_stop_col()
+
+    mapping = {
+        "id": row.get("id"),
+        "symbol": row.get("symbol"),
+        "coin": row.get("symbol"),                 # sommige schema's gebruiken coin
+        "setup_type": row.get("setup_type"),
+        "regime": row.get("regime"),
+        "market_regime": row.get("regime"),
+        "score": row.get("score"),
+        "label": row.get("label"),
+        "grade": row.get("grade"),
+        "entry": row.get("entry"),
+        stop_col: row.get("stop_loss"),
+        "stop_loss": row.get("stop_loss"),
+        "target": row.get("target"),
+        "expires_at": row.get("expires_at"),
+        "payload_json": row.get("details"),        # jouw schema heeft payload_json vaak als text
+        "details": row.get("details"),
+        "chance": row.get("chance"),
+        "confidence": row.get("confidence"),
+    }
+
+    # timestamps: als created_at bestaat, laat default werken, anders vullen we hem niet
+    for k, v in mapping.items():
+        if k in _PENDING_COLS and v is not None:
+            cols.append(k)
+            vals.append(f"%({k})s")
+            params[k] = v
+
+    sql = f"""
+    INSERT INTO {PENDING_TABLE} ({", ".join(cols)})
+    VALUES ({", ".join(vals)})
+    ON CONFLICT (id) DO NOTHING
+    """
+
     with db_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO pending_approvals(
-                    id, symbol, setup_type, label, score, grade,
-                    entry, stop_loss, target, regime,
-                    status, created_at, expires_at,
-                    chance, confidence, details
-                )
-                VALUES (
-                    %(id)s, %(symbol)s, %(setup_type)s, %(label)s, %(score)s, %(grade)s,
-                    %(entry)s, %(stop_loss)s, %(target)s, %(regime)s,
-                    'PENDING', NOW(), %(expires_at)s,
-                    %(chance)s, %(confidence)s, %(details)s
-                )
-                ON CONFLICT (id) DO NOTHING
-            """, row)
+            cur.execute(sql, params)
             inserted = (cur.rowcount == 1)
         conn.commit()
     return inserted
 
 # ==========================================================
-# Optional push
+# Optional: internal push
 # ==========================================================
 def send_to_webhook(payload: Dict[str, Any]) -> bool:
     if not WEBHOOK_BASE_URL or not INTERNAL_TOKEN:
@@ -710,31 +631,32 @@ def send_to_webhook(payload: Dict[str, Any]) -> bool:
     except Exception:
         return False
 
-def make_id(symbol: str) -> str:
-    return f"PB-{symbol}-{now_ts()}"
-
 # ==========================================================
 # Main
 # ==========================================================
+def make_id(symbol: str) -> str:
+    return f"PB-{symbol}-{now_ts()}"
+
 def main() -> None:
     db_init()
 
     scoreboard = load_scoreboard()
-    log(f"📘 Scoreboard {'loaded' if scoreboard else 'missing/empty'}: {SCOREBOARD_PATH} (ok, continue)")
+    if scoreboard:
+        log(f"📘 Scoreboard loaded: {SCOREBOARD_PATH}")
+    else:
+        log(f"📘 Scoreboard missing/empty: {SCOREBOARD_PATH} (ok, continue)")
 
     created_today = db_get_daily_count()
     created = 0
 
-    scan_symbols, core_count, rotate_total, rotate_offset = db_fetch_universe(CORE_LIMIT, ROTATE_BATCH_SIZE)
-    log(f"🧠 universe: core={core_count} + rotate_batch={ROTATE_BATCH_SIZE} (offset={rotate_offset}, rotate_total={rotate_total}) => scan_total={len(scan_symbols)}")
-    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | scan_coins={len(scan_symbols)}")
+    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(COINS)}")
 
     # BTC heat (4h)
     _, _, btc_closes_4h, _ = get_ohlcv("BTCUSDT", INTERVAL_4H, LIMIT_4H)
     btc_regime = detect_regime_4h(btc_closes_4h) if btc_closes_4h else "RANGE"
     btc_factor = btc_heat_factor(btc_regime)
 
-    for sym in scan_symbols:
+    for sym in COINS:
         if created_today + created >= MAX_PREBUY_PER_DAY and not FORCE_TEST_PREBUY:
             break
 
@@ -750,8 +672,8 @@ def main() -> None:
             s20_1h = float(meta.get("sma20", float("nan")))
             s50_1h = float(meta.get("sma50", float("nan")))
 
-            highs_4h, lows_4h, closes_4h, _ = get_ohlcv(sym, INTERVAL_4H, LIMIT_4H)
-            regime_4h = detect_regime_4h(closes_4h) if closes_4h and len(closes_4h) >= 120 else "RANGE"
+            _, _, closes_4h, _ = get_ohlcv(sym, INTERVAL_4H, LIMIT_4H)
+            regime_4h = detect_regime_4h(closes_4h) if (closes_4h and len(closes_4h) >= 120) else "RANGE"
 
             setup_type = determine_setup_type(regime_4h, rsi_1h, s20_1h, s50_1h)
 
@@ -838,7 +760,7 @@ def main() -> None:
                 "expires_at": expires_at_dt,
                 "chance": float(chance),
                 "confidence": int(confidence),
-                "details": psycopg2.extras.Json(details),
+                "details": json.dumps(details),
             }
 
             inserted = db_insert_prebuy(row)
@@ -861,7 +783,7 @@ def main() -> None:
                     "expires_at": expires_at_dt.isoformat(),
                 })
 
-                log(f"✅ created: {prebuy_id} | {sym} | {label} | score={final_score} | chance={chance} | regime={regime_4h} setup={setup_type}")
+                log(f"✅ created: {prebuy_id} | {sym} | {label} | score={final_score} | chance={chance}")
 
         except Exception as e:
             log(f"⚠️ ERROR {sym}: {e}")
@@ -871,4 +793,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
