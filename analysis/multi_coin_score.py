@@ -23,7 +23,7 @@ if PROJECT_ROOT not in sys.path:
 
 
 # ==========================================================
-# ENV / SETTINGS (DB-only)
+# ENV / SETTINGS
 # ==========================================================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
@@ -31,32 +31,33 @@ AUTO_UNIVERSE = (os.getenv("AUTO_UNIVERSE") or "0").strip() == "1"
 CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")
 ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
 
-TIMEFRAME_CORE = (os.getenv("TIMEFRAME_CORE") or "1h").strip()
-TIMEFRAME_TREND = (os.getenv("TIMEFRAME_TREND") or "4h").strip()
+# Analyse scope
+TIMEFRAME_CORE = (os.getenv("TIMEFRAME_CORE") or "1h").strip()    # universe selectie + scan
+TIMEFRAME_TREND = (os.getenv("TIMEFRAME_TREND") or "4h").strip()  # regime/trend context
 
 CANDLE_LIMIT_1H = int(os.getenv("CANDLE_LIMIT_1H") or "120")
 CANDLE_LIMIT_4H = int(os.getenv("CANDLE_LIMIT_4H") or "180")
 
+# Prebuy beperkingen
 MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
 
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
+# Scores
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")  # GO
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")          # WATCH
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 
+# 🔥 Universe quality filter (24h notional in USDT)
+MIN_NOTIONAL_24H_USDT = float(os.getenv("MIN_NOTIONAL_24H_USDT") or "5000000")  # 5M default
+
+# Fallback coins (alleen als AUTO_UNIVERSE=0 en COINS env leeg)
 DEFAULT_COINS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "SOLUSDT", "DOGEUSDT"]
 COINS_ENV = (os.getenv("COINS") or "").strip()
 
-# >>> BELANGRIJK: vermijd jouw bestaande prebuy_state (met key kolom)
-PREBUY_STATE_TABLE = (os.getenv("PREBUY_STATE_TABLE") or "prebuy_state_daily").strip()
-FINGERPRINT_TABLE = (os.getenv("FINGERPRINT_TABLE") or "trade_fingerprints").strip()
-PENDING_TABLE = (os.getenv("PENDING_TABLE") or "pending_approvals").strip()
-SCOREBOARD_TABLE = (os.getenv("SCOREBOARD_TABLE") or "scoreboards").strip()
-
 
 # ==========================================================
-# LOGGING HELPERS (stdout only)
+# LOGGING HELPERS
 # ==========================================================
 def log(msg: str) -> None:
     print(msg, flush=True)
@@ -95,31 +96,36 @@ def get_table_columns(conn, table: str) -> List[str]:
 
 
 def ensure_min_tables(conn) -> None:
+    """
+    DB-only: we maken alleen tabellen aan die we zéker nodig hebben.
+    LET OP: we gebruiken expres NIET 'prebuy_state' (jij had daar al een tabel met andere constraints).
+    Daarom: 'prebuy_daily_state' als veilige, eigen dagteller.
+    """
     with conn.cursor() as cur:
-        # prebuy_state_daily (dagtelling)
+        # dagteller (veilig, eigen tabel)
         cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS public.{PREBUY_STATE_TABLE} (
+            """
+            CREATE TABLE IF NOT EXISTS public.prebuy_daily_state (
                 day DATE PRIMARY KEY,
                 created_count INTEGER NOT NULL DEFAULT 0
             )
             """
         )
 
-        # fingerprints
+        # dedupe fingerprints
         cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS public.{FINGERPRINT_TABLE} (
+            """
+            CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
                 fingerprint TEXT PRIMARY KEY,
                 last_created_at TIMESTAMPTZ
             )
             """
         )
 
-        # pending approvals (minimal)
+        # pending approvals (minimaal; jouw schema kan uitgebreider zijn)
         cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS public.{PENDING_TABLE} (
+            """
+            CREATE TABLE IF NOT EXISTS public.pending_approvals (
                 id TEXT PRIMARY KEY,
                 symbol TEXT,
                 setup_type TEXT,
@@ -141,12 +147,12 @@ def ensure_min_tables(conn) -> None:
             """
         )
 
-        # scoreboards (DB-only opslag)
+        # optioneel: scoreboards (jij maakte 'scoreboards' eerder al aan — prima)
         cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS public.{SCOREBOARD_TABLE} (
+            """
+            CREATE TABLE IF NOT EXISTS public.scoreboards (
                 key TEXT PRIMARY KEY,
-                payload JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
@@ -155,48 +161,23 @@ def ensure_min_tables(conn) -> None:
     conn.commit()
 
 
-def ensure_candles_table_exists(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT EXISTS (
-              SELECT 1
-              FROM information_schema.tables
-              WHERE table_schema='public' AND table_name='candles'
-            )
-            """
-        )
-        ok = bool(cur.fetchone()[0])
-    if not ok:
-        raise RuntimeError("Tabel public.candles bestaat niet. Run eerst history_fetcher.")
-
-
-def get_candles_time_column(conn) -> str:
-    cols = get_table_columns(conn, "candles")
-    if "open_time" in cols:
-        return "open_time"
-    if "ts" in cols:
-        return "ts"
-    raise RuntimeError("candles heeft geen open_time en geen ts. Check schema: \\d candles")
-
-
 def get_created_today(conn) -> int:
     d = today_utc_date()
     with conn.cursor() as cur:
-        cur.execute(f"SELECT created_count FROM public.{PREBUY_STATE_TABLE} WHERE day=%s", (d,))
+        cur.execute("SELECT created_count FROM public.prebuy_daily_state WHERE day=%s", (d,))
         row = cur.fetchone()
-        return int(row[0]) if row else 0
+    return int(row[0]) if row else 0
 
 
 def inc_created_today(conn, inc: int = 1) -> int:
     d = today_utc_date()
     with conn.cursor() as cur:
         cur.execute(
-            f"""
-            INSERT INTO public.{PREBUY_STATE_TABLE}(day, created_count)
+            """
+            INSERT INTO public.prebuy_daily_state(day, created_count)
             VALUES (%s, %s)
             ON CONFLICT (day) DO UPDATE
-              SET created_count = public.{PREBUY_STATE_TABLE}.created_count + EXCLUDED.created_count
+              SET created_count = public.prebuy_daily_state.created_count + EXCLUDED.created_count
             RETURNING created_count
             """,
             (d, inc),
@@ -209,7 +190,7 @@ def inc_created_today(conn, inc: int = 1) -> int:
 def fingerprint_exists_recent(conn, fingerprint: str, cooldown_seconds: int) -> bool:
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT last_created_at FROM public.{FINGERPRINT_TABLE} WHERE fingerprint=%s",
+            "SELECT last_created_at FROM public.trade_fingerprints WHERE fingerprint=%s",
             (fingerprint,),
         )
         row = cur.fetchone()
@@ -224,48 +205,36 @@ def fingerprint_exists_recent(conn, fingerprint: str, cooldown_seconds: int) -> 
 def upsert_fingerprint(conn, fingerprint: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            f"""
-            INSERT INTO public.{FINGERPRINT_TABLE}(fingerprint, last_created_at)
+            """
+            INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
             VALUES (%s, %s)
-            ON CONFLICT (fingerprint) DO UPDATE
-              SET last_created_at = EXCLUDED.last_created_at
+            ON CONFLICT (fingerprint)
+            DO UPDATE SET last_created_at = EXCLUDED.last_created_at
             """,
             (fingerprint, now_utc()),
         )
     conn.commit()
 
 
-def load_scoreboard(conn, key: str = "main") -> Dict[str, Any]:
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            f"SELECT payload FROM public.{SCOREBOARD_TABLE} WHERE key=%s",
-            (key,),
-        )
-        row = cur.fetchone()
-    if not row:
-        return {}
-    payload = row.get("payload") or {}
-    return dict(payload)
-
-
 # ==========================================================
 # CANDLES FETCH
+# Schema: exchange, symbol, timeframe, open_time, open, high, low, close, volume, ...
 # ==========================================================
-def fetch_candles(conn, symbol: str, timeframe: str, limit: int, tcol: str) -> List[Dict[str, Any]]:
+def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            f"""
-            SELECT {tcol} AS open_time, open, high, low, close, volume
+            """
+            SELECT open_time, open, high, low, close, volume
             FROM public.candles
             WHERE symbol=%s AND timeframe=%s
-            ORDER BY {tcol} DESC
+            ORDER BY open_time DESC
             LIMIT %s
             """,
             (symbol, timeframe, limit),
         )
         rows = cur.fetchall()
 
-    rows = list(reversed(rows))
+    rows = list(reversed(rows))  # oud -> nieuw
     return [dict(r) for r in rows]
 
 
@@ -307,11 +276,15 @@ def pct(a: float, b: float) -> float:
     return (a - b) / b * 100.0
 
 
+# ==========================================================
+# REGIME DETECT (simpel, stabiel)
+# ==========================================================
 def detect_regime(closes: List[float]) -> str:
     s20 = sma(closes, 20)
     s50 = sma(closes, 50)
     if s20 is None or s50 is None:
         return "UNKNOWN"
+
     diff = pct(s20, s50)
     if diff > 0.4:
         return "BULL"
@@ -321,14 +294,14 @@ def detect_regime(closes: List[float]) -> str:
 
 
 # ==========================================================
-# SCORING
+# SCORING (simpel, uitbreidbaar)
 # ==========================================================
 @dataclass
 class ScoreResult:
     score: int
-    label: str
-    chance: int
-    confidence: int
+    label: str        # GO / WATCH / SKIP
+    chance: int       # 0-100
+    confidence: int   # 0-100
     reason: str
 
 
@@ -347,11 +320,10 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
 
     score = 50
 
-    if s20 > s50:
-        score += 15
-    else:
-        score -= 15
+    # trend
+    score += 15 if s20 > s50 else -15
 
+    # RSI band
     if 45 <= r <= 65:
         score += 15
     elif r < 35:
@@ -359,11 +331,10 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
     elif r > 72:
         score -= 12
 
-    if sl > 0:
-        score += 10
-    else:
-        score -= 10
+    # slope / momentum
+    score += 10 if sl > 0 else -10
 
+    # regime bias
     if regime == "BULL":
         score += 8
     elif regime == "BEAR":
@@ -388,49 +359,73 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
 
 
 # ==========================================================
-# UNIVERSE SELECTIE
+# UNIVERSE: 24h NOTIONAL FILTER + CORE + ROTATE (DB-only)
 # ==========================================================
 def get_auto_universe(conn) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
+    """
+    Universe selectie:
+    - Pak alle symbols in candles voor TIMEFRAME_CORE
+    - Bereken 24h notional ~ SUM(volume * close) over laatste 24 uur (op TIMEFRAME_CORE)
+    - Filter: notional >= MIN_NOTIONAL_24H_USDT
+    - core = top CORE_LIMIT op notional
+    - rotate = volgende ROTATE_BATCH_SIZE uit de gefilterde lijst (alphabetisch), met tijd-based offset
+    """
+    # Exclude leveraged tokens / rommel (basic patterns)
+    # (werkt als jouw DB straks “alles” heeft)
+    exclude_like = [
+        "%UPUSDT", "%DOWNUSDT", "%BULLUSDT", "%BEARUSDT",
+    ]
+
+    where_excl = " AND ".join([f"symbol NOT LIKE '{p}'" for p in exclude_like])
+
     with conn.cursor() as cur:
         cur.execute(
-            """
+            f"""
+            WITH v AS (
+              SELECT
+                symbol,
+                SUM(volume * close) AS notional_24h
+              FROM public.candles
+              WHERE timeframe = %s
+                AND open_time >= (NOW() - INTERVAL '24 hours')
+                AND symbol LIKE '%USDT'
+                AND {where_excl}
+              GROUP BY symbol
+            )
             SELECT symbol
-            FROM public.candles
-            WHERE timeframe=%s
-            GROUP BY symbol
-            ORDER BY MAX(volume) DESC
-            LIMIT %s
+            FROM v
+            WHERE notional_24h >= %s
+            ORDER BY notional_24h DESC
             """,
-            (TIMEFRAME_CORE, CORE_LIMIT),
+            (TIMEFRAME_CORE, MIN_NOTIONAL_24H_USDT),
         )
-        core = [r[0] for r in cur.fetchall()]
+        eligible = [r[0] for r in cur.fetchall()]
 
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT DISTINCT symbol
-            FROM public.candles
-            WHERE timeframe=%s
-            ORDER BY symbol ASC
-            """,
-            (TIMEFRAME_CORE,),
-        )
-        all_syms = [r[0] for r in cur.fetchall()]
-
-    rotate_total = len(all_syms)
+    rotate_total = len(eligible)
     if rotate_total == 0:
-        return core, [], core, {"offset": 0, "rotate_total": 0, "core_count": len(core), "rotate_count": 0, "scan_total": len(core)}
+        return [], [], [], {"offset": 0, "rotate_total": 0, "core_count": 0, "rotate_count": 0, "scan_total": 0}
 
-    offset = int(time.time() // (30 * 60))
-    offset = (offset * ROTATE_BATCH_SIZE) % rotate_total
+    core = eligible[: min(CORE_LIMIT, rotate_total)]
+
+    # rotate = uit de resterende eligible (alphabetisch) met offset
+    eligible_sorted = sorted(eligible)
+    offset = int(time.time() // (30 * 60))  # elke 30 min andere offset
+    offset = (offset * max(1, ROTATE_BATCH_SIZE)) % rotate_total
 
     rotate: List[str] = []
     if ROTATE_BATCH_SIZE > 0:
-        for i in range(ROTATE_BATCH_SIZE):
-            rotate.append(all_syms[(offset + i) % rotate_total])
+        for i in range(min(ROTATE_BATCH_SIZE, rotate_total)):
+            rotate.append(eligible_sorted[(offset + i) % rotate_total])
 
-    universe = list(dict.fromkeys(core + rotate))
-    meta = {"offset": offset, "rotate_total": rotate_total, "core_count": len(core), "rotate_count": len(rotate), "scan_total": len(universe)}
+    universe = list(dict.fromkeys(core + rotate))  # unique, behoud volgorde
+
+    meta = {
+        "offset": offset,
+        "rotate_total": rotate_total,
+        "core_count": len(core),
+        "rotate_count": len(rotate),
+        "scan_total": len(universe),
+    }
     return core, rotate, universe, meta
 
 
@@ -442,12 +437,12 @@ def get_manual_universe() -> List[str]:
 
 
 # ==========================================================
-# INSERT PENDING (schema-robust)
+# PENDING INSERT (kolommen detectie => schema-robust)
 # ==========================================================
 def insert_pending(conn, payload: Dict[str, Any]) -> None:
-    cols = get_table_columns(conn, PENDING_TABLE)
+    cols = get_table_columns(conn, "pending_approvals")
     if not cols:
-        raise RuntimeError(f"{PENDING_TABLE} bestaat niet of is niet zichtbaar")
+        raise RuntimeError("pending_approvals tabel bestaat niet of is niet zichtbaar.")
 
     filtered = {k: v for k, v in payload.items() if k in cols}
     keys = list(filtered.keys())
@@ -459,12 +454,13 @@ def insert_pending(conn, payload: Dict[str, Any]) -> None:
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            INSERT INTO public.{PENDING_TABLE} ({colnames})
+            INSERT INTO public.pending_approvals ({colnames})
             VALUES ({placeholders})
             ON CONFLICT (id) DO NOTHING
             """,
             tuple(values),
         )
+
     conn.commit()
 
 
@@ -473,30 +469,28 @@ def insert_pending(conn, payload: Dict[str, Any]) -> None:
 # ==========================================================
 def main() -> int:
     start_ts = now_utc()
+
     try:
         with db_connect() as conn:
             ensure_min_tables(conn)
-            ensure_candles_table_exists(conn)
-            tcol = get_candles_time_column(conn)
 
-            scoreboard = load_scoreboard(conn, key="main")
-            if not scoreboard:
-                log("🟦 Scoreboard DB: geen record gevonden (ok, continue)")
-
-            created_today = get_created_today(conn)
-
+            # Universe bepalen
             if AUTO_UNIVERSE:
                 core, rotate, universe, meta = get_auto_universe(conn)
                 log(
                     f"🧠 universe: core={meta['core_count']} + rotate_batch={meta['rotate_count']} "
-                    f"(offset={meta['offset']}, rotate_total={meta['rotate_total']}) => scan_total={meta['scan_total']}"
+                    f"(offset={meta['offset']}, rotate_total={meta['rotate_total']}) => scan_total={meta['scan_total']} "
+                    f"| min_24h_notional={MIN_NOTIONAL_24H_USDT:.0f}"
                 )
             else:
+                core, rotate = [], []
                 universe = get_manual_universe()
-                log(f"🧠 universe: manual coins={len(universe)}")
+                meta = {"core_count": len(universe), "rotate_count": 0, "scan_total": len(universe)}
 
+            created_today = get_created_today(conn)
             log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
 
+            # Daglimiet (tenzij force)
             if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
                 log("✅ Daglimiet bereikt. Stop run.")
                 return 0
@@ -504,27 +498,35 @@ def main() -> int:
             created_now = 0
 
             for sym in universe:
+                # Daglimiet check
                 created_today = get_created_today(conn)
                 if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
                     break
 
                 try:
-                    c1h = fetch_candles(conn, sym, TIMEFRAME_CORE, CANDLE_LIMIT_1H, tcol)
-                    c4h = fetch_candles(conn, sym, TIMEFRAME_TREND, CANDLE_LIMIT_4H, tcol)
+                    c1h = fetch_candles(conn, sym, TIMEFRAME_CORE, CANDLE_LIMIT_1H)
+                    c4h = fetch_candles(conn, sym, TIMEFRAME_TREND, CANDLE_LIMIT_4H)
 
                     if len(c1h) < 60 or len(c4h) < 60:
                         continue
 
                     sr = compute_score(c1h, c4h)
+
                     if FORCE_TEST_PREBUY and sr.label == "SKIP":
-                        sr = ScoreResult(WATCH_MIN_SCORE, "WATCH", WATCH_MIN_SCORE, WATCH_MIN_SCORE, "FORCE_TEST_PREBUY")
+                        sr = ScoreResult(
+                            score=WATCH_MIN_SCORE,
+                            label="WATCH",
+                            chance=WATCH_MIN_SCORE,
+                            confidence=WATCH_MIN_SCORE,
+                            reason="FORCE_TEST_PREBUY",
+                        )
 
                     if sr.label == "SKIP":
                         continue
 
                     entry = float(c1h[-1]["close"])
                     stop = entry * 0.98
-                    target = entry + (entry - stop) * 2.0
+                    target = entry + (entry - stop) * 2.0  # 2R
 
                     setup_type = "TREND_PULLBACK" if sr.label == "GO" else "WATCHLIST"
                     regime = detect_regime([float(x["close"]) for x in c4h])
@@ -561,6 +563,7 @@ def main() -> int:
                     log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason}")
 
                 except Exception as e:
+                    # per coin fout mag run niet killen
                     log(f"⚠️ ERROR {sym}: {e}")
                     continue
 
