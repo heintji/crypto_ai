@@ -4,531 +4,616 @@ from __future__ import annotations
 import os
 import sys
 import json
-import time
 import math
+import time
+import uuid
 import traceback
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
 
 
-# =============================================================================
-# PATH / DIR HELPERS
-# =============================================================================
-
+# ==========================================================
+# PROJECT ROOT (zodat imports altijd werken)
+# ==========================================================
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 
-def _is_writable_dir(path: str) -> bool:
-    try:
-        os.makedirs(path, exist_ok=True)
-        test_file = os.path.join(path, ".write_test")
-        with open(test_file, "w", encoding="utf-8") as f:
-            f.write("ok")
-        os.remove(test_file)
-        return True
-    except Exception:
-        return False
-
-
-def resolve_data_dir() -> str:
-    """
-    Prefer DATA_DIR if writable, else fallback to /data if writable, else /tmp/crypto_ai_data.
-    This avoids PermissionError when Cron shell has no disk mount.
-    """
-    env_dir = (os.getenv("DATA_DIR") or "").strip()
-    candidates = []
-    if env_dir:
-        candidates.append(env_dir)
-    candidates.append("/data")
-    candidates.append("/tmp/crypto_ai_data")
-
-    for c in candidates:
-        if _is_writable_dir(c):
-            return c
-    # last resort: current working dir
-    return os.getcwd()
-
-
-DATA_DIR = resolve_data_dir()
-
-LOGS_DIR_ENV = (os.getenv("LOGS_DIR") or "").strip()
-LOGS_DIR = LOGS_DIR_ENV if LOGS_DIR_ENV else os.path.join(DATA_DIR, "logs")
-if not _is_writable_dir(LOGS_DIR):
-    # fallback if LOGS_DIR points to unwritable location
-    LOGS_DIR = os.path.join("/tmp", "crypto_ai_logs")
-    os.makedirs(LOGS_DIR, exist_ok=True)
-
-SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")
-
-
-# =============================================================================
+# ==========================================================
 # ENV / SETTINGS
-# =============================================================================
+# ==========================================================
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-DATABASE_URL = (os.getenv("DATABASE_URL") or os.getenv("DATABASE_URL".lower()) or "").strip()
-if not DATABASE_URL:
-    # You use DATABASE_URL in Render; but keep also DATABASE_URL env check
-    DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-
-USE_DB_APPROVALS = (os.getenv("USE_DB_APPROVALS") or "1").strip() == "1"
-
-# Universe controls
 AUTO_UNIVERSE = (os.getenv("AUTO_UNIVERSE") or "0").strip() == "1"
+CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")
+ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
 
-# Accept legacy env names too (in case you used older ones)
-CORE_LIMIT = int((os.getenv("CORE_LIMIT") or os.getenv("CORE") or "28").strip())
-ROTATE_BATCH_SIZE = int((os.getenv("ROTATE_BATCH_SIZE") or os.getenv("ROTATE_BATCH") or "50").strip())
+# Analyse scope
+TIMEFRAME_CORE = (os.getenv("TIMEFRAME_CORE") or "1h").strip()   # voor universe selectie + snelle scan
+TIMEFRAME_TREND = (os.getenv("TIMEFRAME_TREND") or "4h").strip() # context (regime/trend)
 
-# Scan candle history
-TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
-TF_CONTEXT = (os.getenv("TF_CONTEXT") or "1h").strip()
-LIMIT_MAIN = int((os.getenv("LIMIT_MAIN") or "240").strip())       # 4h candles
-LIMIT_CONTEXT = int((os.getenv("LIMIT_CONTEXT") or "240").strip()) # 1h candles
+CANDLE_LIMIT_1H = int(os.getenv("CANDLE_LIMIT_1H") or "120")
+CANDLE_LIMIT_4H = int(os.getenv("CANDLE_LIMIT_4H") or "180")
 
-# Prebuy controls
+# Prebuy beperkingen
+MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
+PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
+TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
+
+# Scores
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")   # GO
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")           # WATCH
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
-MAX_PREBUY_PER_DAY = int((os.getenv("MAX_PREBUY_PER_DAY") or "5").strip())
-MIN_SCORE_TO_PREBUY = int((os.getenv("MIN_SCORE_TO_PREBUY") or "80").strip())
-WATCH_MIN_SCORE = int((os.getenv("WATCH_MIN_SCORE") or "70").strip())
 
-# If AUTO_UNIVERSE is off, fallback list:
+# Fallback coins (alleen als AUTO_UNIVERSE=0 en COINS env leeg)
 DEFAULT_COINS = [
-    "BTCUSDT",
-    "ETHUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
-    "ADAUSDT",
-    "SOLUSDT",
-    "DOGEUSDT",
+    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT", "SOLUSDT", "DOGEUSDT"
 ]
+COINS_ENV = (os.getenv("COINS") or "").strip()
+
+# ==========================================================
+# DATA DIRECTORY (Render Disk first, fallback to /tmp)
+# ==========================================================
+DATA_DIR = os.getenv("DATA_DIR", "/data").strip()
+
+# Als /data niet bestaat (geen disk gekoppeld), val terug naar /tmp
+if not os.path.isdir(DATA_DIR):
+    print("⚠️  /data niet beschikbaar — fallback naar /tmp/crypto_ai_data")
+    DATA_DIR = "/tmp/crypto_ai_data"
+
+Path(DATA_DIR).mkdir(parents=True, exist_ok=True)
+
+SCOREBOARD_PATH = os.path.join(DATA_DIR, "scoreboard.json")  # optioneel (kan leeg/missing zijn)
+LOGS_DIR = os.path.join(DATA_DIR, "logs")
+Path(LOGS_DIR).mkdir(parents=True, exist_ok=True)
+
+print(f"📁 DATA_DIR actief: {DATA_DIR}")
 
 
-# =============================================================================
-# LOGGING
-# =============================================================================
-
+# ==========================================================
+# LOGGING HELPERS
+# ==========================================================
 def log(msg: str) -> None:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    line = f"{ts} | {msg}"
-    print(line, flush=True)
-
-    # best-effort file log
-    try:
-        fp = os.path.join(LOGS_DIR, "multi_coin_score.log")
-        with open(fp, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
-    except Exception:
-        pass
+    print(msg, flush=True)
 
 
-# =============================================================================
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def today_utc_date() -> str:
+    return now_utc().date().isoformat()
+
+
+# ==========================================================
 # DB HELPERS
-# =============================================================================
-
-def db_conn():
+# ==========================================================
+def db_connect():
     if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL is empty. Set DATABASE_URL in Render.")
+        raise RuntimeError("DATABASE_URL ontbreekt. Zet DATABASE_URL in Render Environment.")
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
-def table_columns(cur, table: str) -> List[str]:
-    cur.execute(
-        """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema='public' AND table_name=%s
-        ORDER BY ordinal_position
-        """,
-        (table,),
-    )
-    return [r[0] for r in cur.fetchall()]
+def get_table_columns(conn, table: str) -> List[str]:
+    # table: "pending_approvals" (zonder schema) -> we kijken in public
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema='public' AND table_name=%s
+            ORDER BY ordinal_position
+            """,
+            (table,),
+        )
+        rows = cur.fetchall()
+    return [r[0] for r in rows]
 
 
-# =============================================================================
-# INDICATORS (simple + stable)
-# =============================================================================
+def ensure_min_tables(conn) -> None:
+    """
+    We maken minimale tabellen aan ALS ze nog niet bestaan.
+    Als jij al uitgebreid schema hebt: geen probleem, CREATE IF NOT EXISTS doet niks stuk.
+    """
+    with conn.cursor() as cur:
+        # prebuy_state (dagtelling)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.prebuy_state (
+                day DATE PRIMARY KEY,
+                created_count INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
 
-def sma(values: List[float], period: int) -> List[Optional[float]]:
-    out: List[Optional[float]] = [None] * len(values)
-    if period <= 0 or len(values) < period:
-        return out
-    s = sum(values[:period])
-    out[period - 1] = s / period
-    for i in range(period, len(values)):
-        s += values[i] - values[i - period]
-        out[i] = s / period
-    return out
+        # trade_fingerprints (dedupe)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
+                fingerprint TEXT PRIMARY KEY,
+                last_created_at TIMESTAMPTZ
+            )
+            """
+        )
+
+        # pending_approvals (minimal; jouw schema kan meer kolommen hebben)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.pending_approvals (
+                id TEXT PRIMARY KEY,
+                symbol TEXT,
+                setup_type TEXT,
+                timeframe TEXT,
+                regime TEXT,
+                score INTEGER,
+                chance INTEGER,
+                confidence INTEGER,
+                entry DOUBLE PRECISION,
+                stop DOUBLE PRECISION,
+                target DOUBLE PRECISION,
+                status TEXT,
+                created_at TIMESTAMPTZ,
+                expires_at TIMESTAMPTZ,
+                approved_at TIMESTAMPTZ,
+                rejected_at TIMESTAMPTZ,
+                consumed_at TIMESTAMPTZ
+            )
+            """
+        )
+
+    conn.commit()
 
 
-def rsi(values: List[float], period: int = 14) -> List[Optional[float]]:
-    out: List[Optional[float]] = [None] * len(values)
+def get_created_today(conn) -> int:
+    d = today_utc_date()
+    with conn.cursor() as cur:
+        cur.execute("SELECT created_count FROM public.prebuy_state WHERE day=%s", (d,))
+        row = cur.fetchone()
+        return int(row[0]) if row else 0
+
+
+def inc_created_today(conn, inc: int = 1) -> int:
+    d = today_utc_date()
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.prebuy_state(day, created_count)
+            VALUES (%s, %s)
+            ON CONFLICT (day) DO UPDATE SET created_count = public.prebuy_state.created_count + EXCLUDED.created_count
+            RETURNING created_count
+            """,
+            (d, inc),
+        )
+        new_val = int(cur.fetchone()[0])
+    conn.commit()
+    return new_val
+
+
+def fingerprint_exists_recent(conn, fingerprint: str, cooldown_seconds: int) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT last_created_at FROM public.trade_fingerprints WHERE fingerprint=%s",
+            (fingerprint,),
+        )
+        row = cur.fetchone()
+    if not row or not row[0]:
+        return False
+    last_ts: datetime = row[0]
+    return (now_utc() - last_ts) < timedelta(seconds=cooldown_seconds)
+
+
+def upsert_fingerprint(conn, fingerprint: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
+            VALUES (%s, %s)
+            ON CONFLICT (fingerprint) DO UPDATE SET last_created_at = EXCLUDED.last_created_at
+            """,
+            (fingerprint, now_utc()),
+        )
+    conn.commit()
+
+
+# ==========================================================
+# CANDLES FETCH (jouw schema gebruikt open_time)
+# columns: exchange, symbol, timeframe, open_time, open, high, low, close, volume, close_time, ...
+# ==========================================================
+def fetch_candles(
+    conn,
+    symbol: str,
+    timeframe: str,
+    limit: int,
+) -> List[Dict[str, Any]]:
+    """
+    Return candles in chronologische volgorde (oud -> nieuw)
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT open_time, open, high, low, close, volume
+            FROM public.candles
+            WHERE symbol=%s AND timeframe=%s
+            ORDER BY open_time DESC
+            LIMIT %s
+            """,
+            (symbol, timeframe, limit),
+        )
+        rows = cur.fetchall()
+
+    # rows zijn nieuw->oud, draai om naar oud->nieuw
+    rows = list(reversed(rows))
+    return [dict(r) for r in rows]
+
+
+# ==========================================================
+# INDICATORS (simpel, stabiel, snel)
+# ==========================================================
+def sma(values: List[float], period: int) -> Optional[float]:
+    if len(values) < period:
+        return None
+    return sum(values[-period:]) / float(period)
+
+
+def rsi(values: List[float], period: int = 14) -> Optional[float]:
     if len(values) < period + 1:
-        return out
-
+        return None
     gains = 0.0
     losses = 0.0
-    for i in range(1, period + 1):
-        d = values[i] - values[i - 1]
-        if d >= 0:
-            gains += d
+    for i in range(-period, 0):
+        diff = values[i] - values[i - 1]
+        if diff >= 0:
+            gains += diff
         else:
-            losses -= d
-
-    avg_gain = gains / period
-    avg_loss = losses / period
-    out[period] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + (avg_gain / avg_loss)))
-
-    for i in range(period + 1, len(values)):
-        d = values[i] - values[i - 1]
-        gain = max(d, 0.0)
-        loss = max(-d, 0.0)
-        avg_gain = (avg_gain * (period - 1) + gain) / period
-        avg_loss = (avg_loss * (period - 1) + loss) / period
-        out[i] = 100.0 if avg_loss == 0 else 100.0 - (100.0 / (1.0 + (avg_gain / avg_loss)))
-
-    return out
+            losses += abs(diff)
+    if losses == 0:
+        return 100.0
+    rs = gains / losses
+    return 100.0 - (100.0 / (1.0 + rs))
 
 
-def slope(values: List[Optional[float]], lookback: int = 10) -> float:
-    """Simple slope on last lookback points (ignores None)."""
-    pts = [v for v in values if v is not None]
-    if len(pts) < lookback:
+def slope(values: List[float], window: int = 10) -> Optional[float]:
+    if len(values) < window:
+        return None
+    # simpele slope: (laatste - eerste)/window
+    return (values[-1] - values[-window]) / float(window)
+
+
+def pct(a: float, b: float) -> float:
+    if b == 0:
         return 0.0
-    y = pts[-lookback:]
-    # normalized slope (end - start)
-    return float(y[-1] - y[0])
+    return (a - b) / b * 100.0
 
 
-# =============================================================================
-# DATA FETCHING (DB candles)
-# =============================================================================
+# ==========================================================
+# REGIME DETECT (simpel: bull/bear/range op 4h)
+# ==========================================================
+def detect_regime(closes: List[float]) -> str:
+    s20 = sma(closes, 20)
+    s50 = sma(closes, 50)
+    if s20 is None or s50 is None:
+        return "UNKNOWN"
 
-def fetch_candles_db(symbol: str, timeframe: str, limit: int) -> List[Dict]:
-    """
-    Reads candles from public.candles.
-    Your schema uses: open_time (timestamptz), open/high/low/close/volume.
-    """
-    with db_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT open_time, open, high, low, close, volume
-                FROM candles
-                WHERE symbol = %s AND timeframe = %s
-                ORDER BY open_time DESC
-                LIMIT %s
-                """,
-                (symbol, timeframe, limit),
-            )
-            rows = cur.fetchall()
+    diff = pct(s20, s50)
+    # kleine drempels (kan later verfijnd)
+    if diff > 0.4:
+        return "BULL"
+    if diff < -0.4:
+        return "BEAR"
+    return "RANGE"
 
-    rows = list(reversed(rows))
-    out: List[Dict] = []
-    for r in rows:
-        out.append(
-            {
-                "open_time": r["open_time"],
-                "open": float(r["open"]),
-                "high": float(r["high"]),
-                "low": float(r["low"]),
-                "close": float(r["close"]),
-                "volume": float(r["volume"]),
-            }
+
+# ==========================================================
+# SCORING (GO/WATCH)
+# - bewust simpel, zodat stabiel draait en later uitbreidbaar
+# ==========================================================
+@dataclass
+class ScoreResult:
+    score: int
+    label: str        # GO / WATCH / SKIP
+    chance: int       # 0-100
+    confidence: int   # 0-100
+    reason: str
+
+
+def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> ScoreResult:
+    closes_1h = [float(c["close"]) for c in c1h]
+    closes_4h = [float(c["close"]) for c in c4h]
+
+    s20 = sma(closes_1h, 20)
+    s50 = sma(closes_1h, 50)
+    r = rsi(closes_1h, 14)
+    sl = slope(closes_1h, 10)
+    regime = detect_regime(closes_4h)
+
+    if s20 is None or s50 is None or r is None or sl is None:
+        return ScoreResult(
+            score=0,
+            label="SKIP",
+            chance=0,
+            confidence=0,
+            reason="Te weinig candles voor indicators",
         )
-    return out
 
+    # Basis score
+    score = 50
 
-# =============================================================================
-# UNIVERSE
-# =============================================================================
+    # Trend alignment
+    if s20 > s50:
+        score += 15
+    else:
+        score -= 15
 
-def get_auto_universe(core_limit: int, rotate_batch: int) -> List[str]:
-    """
-    Universe based on candles table.
-    - Core: top symbols by MAX(volume) on 1h timeframe
-    - Rotate: other symbols (alphabetical) batch
-    """
-    core: List[str] = []
-    rotate: List[str] = []
+    # RSI (liever niet overbought)
+    if 45 <= r <= 65:
+        score += 15
+    elif r < 35:
+        score += 8  # oversold kan kans geven
+    elif r > 72:
+        score -= 12
 
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            # Core (liquid by volume) — uses your existing 'volume' column
-            cur.execute(
-                """
-                SELECT symbol
-                FROM candles
-                WHERE timeframe = %s
-                GROUP BY symbol
-                ORDER BY MAX(volume) DESC
-                LIMIT %s
-                """,
-                (TF_CONTEXT, core_limit),
-            )
-            core = [r[0] for r in cur.fetchall()]
-
-            if rotate_batch <= 0:
-                rotate = []
-            else:
-                # Rotate all remaining symbols (stable order), take a moving offset
-                cur.execute(
-                    """
-                    SELECT DISTINCT symbol
-                    FROM candles
-                    WHERE timeframe = %s
-                    ORDER BY symbol ASC
-                    """,
-                    (TF_CONTEXT,),
-                )
-                all_syms = [r[0] for r in cur.fetchall()]
-                remaining = [s for s in all_syms if s not in set(core)]
-
-                # store offset in DB-less way: use day + hour bucket, deterministic rotation
-                # (no disk needed)
-                now = datetime.now(timezone.utc)
-                seed = int(now.strftime("%Y%m%d%H"))
-                if remaining:
-                    offset = seed % len(remaining)
-                else:
-                    offset = 0
-
-                rotate_total = len(remaining)
-                batch = []
-                for i in range(min(rotate_batch, rotate_total)):
-                    batch.append(remaining[(offset + i) % rotate_total])
-                rotate = batch
-
-    universe = core + rotate
-    log(f"🧠 universe: core={len(core)} + rotate_batch={len(rotate)} (core_limit={core_limit}, rotate_batch_size={rotate_batch}) => scan_total={len(universe)}")
-    return universe
-
-
-# =============================================================================
-# APPROVALS (DB)
-# =============================================================================
-
-def insert_pending_approval(payload: Dict) -> bool:
-    """
-    Insert into pending_approvals, but only for columns that exist in your DB.
-    This makes it robust across schema changes.
-    """
-    if not USE_DB_APPROVALS:
-        return False
-
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cols = table_columns(cur, "pending_approvals")
-            log(f"🧩 pending_approvals columns detected: {len(cols)}")
-
-            insert_data = {}
-            for k, v in payload.items():
-                if k in cols:
-                    insert_data[k] = v
-
-            # minimal required guess: id + symbol + status + created_at
-            if "id" in cols and "id" not in insert_data:
-                insert_data["id"] = payload.get("id")
-
-            if "status" in cols and "status" not in insert_data:
-                insert_data["status"] = "PENDING"
-
-            if "created_at" in cols and "created_at" not in insert_data:
-                insert_data["created_at"] = datetime.now(timezone.utc)
-
-            if not insert_data:
-                log("⚠️ No matching columns to insert into pending_approvals.")
-                return False
-
-            keys = list(insert_data.keys())
-            values = [insert_data[k] for k in keys]
-
-            q_cols = ", ".join(keys)
-            q_vals = ", ".join(["%s"] * len(keys))
-
-            # If your table has UNIQUE(id), ON CONFLICT(id) DO NOTHING works.
-            # If not, we still try; if it fails we fallback to plain insert.
-            try:
-                cur.execute(
-                    f"""
-                    INSERT INTO pending_approvals ({q_cols})
-                    VALUES ({q_vals})
-                    ON CONFLICT (id) DO NOTHING
-                    """,
-                    values,
-                )
-            except Exception:
-                conn.rollback()
-                cur.execute(
-                    f"""
-                    INSERT INTO pending_approvals ({q_cols})
-                    VALUES ({q_vals})
-                    """,
-                    values,
-                )
-
-            conn.commit()
-            return True
-
-
-# =============================================================================
-# SCORING (example baseline)
-# =============================================================================
-
-def score_symbol(symbol: str) -> Tuple[int, Dict]:
-    """
-    Very simple scoring placeholder:
-    - Trend: SMA20 above SMA50 on 4h
-    - RSI between 40-65 better
-    - SMA20 slope positive
-    Returns (score, debug_info)
-    """
-    candles = fetch_candles_db(symbol, TF_MAIN, LIMIT_MAIN)
-    if len(candles) < 60:
-        return 0, {"reason": "not_enough_candles"}
-
-    closes = [c["close"] for c in candles]
-    sma20 = sma(closes, 20)
-    sma50 = sma(closes, 50)
-    rsi14 = rsi(closes, 14)
-
-    last = len(closes) - 1
-    s = 0
-
-    if sma20[last] is not None and sma50[last] is not None and sma20[last] > sma50[last]:
-        s += 45
-    if rsi14[last] is not None:
-        if 40 <= rsi14[last] <= 65:
-            s += 35
-        elif 30 <= rsi14[last] < 40 or 65 < rsi14[last] <= 75:
-            s += 20
-        else:
-            s += 5
-
-    sl = slope(sma20, 10)
+    # Slope (momentum)
     if sl > 0:
-        s += 20
-    elif sl < 0:
-        s += 5
+        score += 10
+    else:
+        score -= 10
 
-    s = max(0, min(100, int(s)))
+    # Regime bias (simple)
+    if regime == "BULL":
+        score += 8
+    elif regime == "BEAR":
+        score -= 10
+    elif regime == "RANGE":
+        score -= 4
 
-    info = {
-        "sma20": sma20[last],
-        "sma50": sma50[last],
-        "rsi14": rsi14[last],
-        "slope_sma20": sl,
-        "last_close": closes[last],
+    score = max(0, min(100, int(round(score))))
+
+    # Chance + confidence (heuristic)
+    chance = score
+    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0)))))
+
+    if score >= MIN_SCORE_TO_PREBUY:
+        label = "GO"
+    elif score >= WATCH_MIN_SCORE:
+        label = "WATCH"
+    else:
+        label = "SKIP"
+
+    reason = f"s20>{'s50' if s20 > s50 else 's50'} | rsi={r:.1f} | slope={sl:.4f} | regime={regime}"
+    return ScoreResult(score=score, label=label, chance=chance, confidence=confidence, reason=reason)
+
+
+# ==========================================================
+# UNIVERSE SELECTIE (DB volume ranking + rotate)
+# ==========================================================
+def get_auto_universe(conn) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
+    """
+    Return (core, rotate, universe, meta)
+    - core = top CORE_LIMIT symbols op basis van MAX(volume) binnen timeframe 1h
+    - rotate = volgende ROTATE_BATCH_SIZE symbols (alphabetisch) met offset op basis van huidige tijd (simpel)
+    """
+    # 1) core op volume
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT symbol
+            FROM public.candles
+            WHERE timeframe=%s
+            GROUP BY symbol
+            ORDER BY MAX(volume) DESC
+            LIMIT %s
+            """,
+            (TIMEFRAME_CORE, CORE_LIMIT),
+        )
+        core = [r[0] for r in cur.fetchall()]
+
+    # 2) rotate lijst (alle symbols die bestaan in timeframe)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT symbol
+            FROM public.candles
+            WHERE timeframe=%s
+            ORDER BY symbol ASC
+            """,
+            (TIMEFRAME_CORE,),
+        )
+        all_syms = [r[0] for r in cur.fetchall()]
+
+    rotate_total = len(all_syms)
+    if rotate_total == 0:
+        return core, [], core, {"offset": 0, "rotate_total": 0}
+
+    # offset draait langzaam mee per run (op basis van tijd / batch)
+    # hierdoor “scrollen” we door de lijst zonder state-file nodig.
+    offset = int(time.time() // (30 * 60))  # verandert elke 30 min
+    offset = (offset * ROTATE_BATCH_SIZE) % rotate_total
+
+    rotate = []
+    if ROTATE_BATCH_SIZE > 0 and rotate_total > 0:
+        # slice met wrap
+        for i in range(ROTATE_BATCH_SIZE):
+            rotate.append(all_syms[(offset + i) % rotate_total])
+
+    universe = list(dict.fromkeys(core + rotate))  # unique, behoud volgorde
+
+    meta = {
+        "offset": offset,
+        "rotate_total": rotate_total,
+        "core_count": len(core),
+        "rotate_count": len(rotate),
+        "scan_total": len(universe),
     }
-    return s, info
+    return core, rotate, universe, meta
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
+def get_manual_universe() -> List[str]:
+    if COINS_ENV:
+        coins = [c.strip().upper() for c in COINS_ENV.split(",") if c.strip()]
+        return coins if coins else DEFAULT_COINS
+    return DEFAULT_COINS
 
-def main() -> None:
-    # scoreboard optional
-    if os.path.exists(SCOREBOARD_PATH):
-        try:
-            with open(SCOREBOARD_PATH, "r", encoding="utf-8") as f:
-                _ = json.load(f)
-            log(f"📘 Scoreboard loaded: {SCOREBOARD_PATH}")
-        except Exception:
-            log(f"⚠️ Scoreboard unreadable: {SCOREBOARD_PATH} (ok, continue)")
-    else:
-        log(f"📘 Scoreboard missing/empty: {SCOREBOARD_PATH} (ok, continue)")
 
-    # Choose coins
-    if AUTO_UNIVERSE:
-        if not DATABASE_URL:
-            log("❌ AUTO_UNIVERSE=1 but DATABASE_URL missing.")
-            coins = DEFAULT_COINS
-        else:
-            coins = get_auto_universe(CORE_LIMIT, ROTATE_BATCH_SIZE)
-    else:
-        coins = DEFAULT_COINS
+# ==========================================================
+# PENDING INSERT (kolommen detectie => nooit stuk door schema verschil)
+# ==========================================================
+def insert_pending(conn, payload: Dict[str, Any]) -> None:
+    cols = get_table_columns(conn, "pending_approvals")
+    if not cols:
+        raise RuntimeError("pending_approvals tabel bestaat niet of is niet zichtbaar.")
 
-    # Daily cap (simple, DB-less): reset each UTC day using a stamp file in writable dir
-    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    counter_path = os.path.join(DATA_DIR, "prebuy_state.json")
-    state = {"day": day_key, "created_today": 0}
+    filtered = {k: v for k, v in payload.items() if k in cols}
+
+    keys = list(filtered.keys())
+    values = [filtered[k] for k in keys]
+
+    placeholders = ", ".join(["%s"] * len(keys))
+    colnames = ", ".join(keys)
+
+    with conn.cursor() as cur:
+        # id is PK: als id bestaat, doen we niets
+        cur.execute(
+            f"""
+            INSERT INTO public.pending_approvals ({colnames})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO NOTHING
+            """,
+            tuple(values),
+        )
+
+    conn.commit()
+
+
+# ==========================================================
+# MAIN RUN
+# ==========================================================
+def main() -> int:
+    start_ts = now_utc()
 
     try:
-        if os.path.exists(counter_path):
-            with open(counter_path, "r", encoding="utf-8") as f:
-                state = json.load(f) or state
-    except Exception:
-        pass
+        with db_connect() as conn:
+            ensure_min_tables(conn)
 
-    if state.get("day") != day_key:
-        state = {"day": day_key, "created_today": 0}
+            # scoreboard file (mag ontbreken)
+            if not os.path.exists(SCOREBOARD_PATH):
+                log(f"🟦 Scoreboard missing/empty: {SCOREBOARD_PATH} (ok, continue)")
 
-    created_today = int(state.get("created_today") or 0)
-    log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(coins)}")
+            created_today = get_created_today(conn)
 
-    created_now = 0
-
-    for sym in coins:
-        if created_today + created_now >= MAX_PREBUY_PER_DAY:
-            break
-
-        try:
-            if FORCE_TEST_PREBUY:
-                sc = 85
-                info = {"forced": True}
+            # Universe bepalen
+            if AUTO_UNIVERSE:
+                core, rotate, universe, meta = get_auto_universe(conn)
+                log(
+                    f"🧠 universe: core={meta['core_count']} + rotate_batch={meta['rotate_count']} "
+                    f"(offset={meta['offset']}, rotate_total={meta['rotate_total']}) => scan_total={meta['scan_total']}"
+                )
             else:
-                sc, info = score_symbol(sym)
+                core, rotate = [], []
+                universe = get_manual_universe()
+                meta = {"core_count": len(universe), "rotate_count": 0, "scan_total": len(universe)}
 
-            label = "GO" if sc >= MIN_SCORE_TO_PREBUY else ("WATCH" if sc >= WATCH_MIN_SCORE else "SKIP")
-            if label == "SKIP":
-                continue
+            log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
 
-            # Build payload (keep it DB-column-safe by using keys that likely exist)
-            prebuy_id = f"PB-{sym}-{int(time.time())}"
+            # HARD stop als daglimiet bereikt is (tenzij FORCE_TEST_PREBUY)
+            if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
+                log("✅ Daglimiet bereikt. Stop run.")
+                return 0
 
-            payload = {
-                "id": prebuy_id,
-                "symbol": sym,
-                "chance": sc,              # your DB uses 'chance' in some places
-                "confidence": sc,          # and 'confidence' in others
-                "label": label,
-                "status": "PENDING",
-                "created_at": datetime.now(timezone.utc),
-                "setup_type": "TREND_PULLBACK",  # placeholder
-                "timeframe": TF_MAIN,
-                "note": json.dumps(info, default=str),
-            }
+            created_now = 0
 
-            ok = insert_pending_approval(payload)
-            if ok:
-                created_now += 1
-                log(f"✅ Pre-BUY created: {prebuy_id} | {sym} | score={sc} | {label}")
-            else:
-                log(f"⚠️ Pre-BUY not inserted (schema mismatch or USE_DB_APPROVALS=0): {sym}")
+            # We scannen universe
+            for sym in universe:
+                # Daglimiet check
+                created_today = get_created_today(conn)
+                if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
+                    break
 
-        except Exception as e:
-            log(f"⚠️ ERROR {sym}: {e}")
-            log(traceback.format_exc())
+                try:
+                    # candles ophalen
+                    c1h = fetch_candles(conn, sym, TIMEFRAME_CORE, CANDLE_LIMIT_1H)
+                    c4h = fetch_candles(conn, sym, TIMEFRAME_TREND, CANDLE_LIMIT_4H)
 
-    state["created_today"] = created_today + created_now
-    try:
-        with open(counter_path, "w", encoding="utf-8") as f:
-            json.dump(state, f)
-    except Exception:
-        pass
+                    if len(c1h) < 60 or len(c4h) < 60:
+                        continue
 
-    log(f"done. created={created_now}")
+                    sr = compute_score(c1h, c4h)
+                    if FORCE_TEST_PREBUY:
+                        # in testmode: forceer minimaal WATCH zodat we flow kunnen testen
+                        if sr.label == "SKIP":
+                            sr = ScoreResult(score=WATCH_MIN_SCORE, label="WATCH", chance=WATCH_MIN_SCORE, confidence=WATCH_MIN_SCORE, reason="FORCE_TEST_PREBUY")
+
+                    if sr.label == "SKIP":
+                        continue
+
+                    # Entry/stop/target (simpel; execution & strategie zitten elders)
+                    entry = float(c1h[-1]["close"])
+                    stop = entry * 0.98
+                    target = entry + (entry - stop) * 2.0  # 2R
+
+                    # Setup type (nu basic; later uitbreiden naar TREND_PULLBACK / BREAKOUT_RETEST)
+                    setup_type = "TREND_PULLBACK" if sr.label == "GO" else "WATCHLIST"
+                    regime = detect_regime([float(x["close"]) for x in c4h])
+
+                    # Fingerprint = dezelfde trade niet opnieuw
+                    # (zelfde coin + entry + target + setup_type)
+                    fingerprint = f"{sym}|{setup_type}|{round(entry, 6)}|{round(target, 6)}"
+
+                    if fingerprint_exists_recent(conn, fingerprint, TRADE_COOLDOWN_SECONDS):
+                        continue
+
+                    # Prebuy id
+                    pb_id = f"PB-{sym}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
+
+                    payload = {
+                        "id": pb_id,
+                        "symbol": sym,
+                        "setup_type": setup_type,
+                        "timeframe": TIMEFRAME_CORE,
+                        "regime": regime,
+                        "score": int(sr.score),
+                        "chance": int(sr.chance),
+                        "confidence": int(sr.confidence),
+                        "entry": float(entry),
+                        "stop": float(stop),
+                        "target": float(target),
+                        "status": "PENDING",
+                        "created_at": now_utc(),
+                        "expires_at": now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS),
+                    }
+
+                    insert_pending(conn, payload)
+                    upsert_fingerprint(conn, fingerprint)
+                    new_created_today = inc_created_today(conn, 1)
+
+                    created_now += 1
+                    log(f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | created_today={new_created_today}/{MAX_PREBUY_PER_DAY}")
+                    log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason}")
+
+                except Exception as e:
+                    # per coin fout mag run niet killen
+                    log(f"⚠️ ERROR {sym}: {e}")
+                    # optioneel: traceback voor debug
+                    # log(traceback.format_exc())
+                    continue
+
+            log(f"done. created={created_now}")
+            return 0
+
+    except Exception as e:
+        log("❌ FATAAL in multi_coin_score.py")
+        log(str(e))
+        log(traceback.format_exc())
+        return 1
+    finally:
+        dur = (now_utc() - start_ts).total_seconds()
+        log(f"⏱ runtime={dur:.1f}s")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        log(f"FATAL: {e}")
-        log(traceback.format_exc())
-        raise
+    raise SystemExit(main())
