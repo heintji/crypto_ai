@@ -1,631 +1,343 @@
-# analysis/multi_coin_score.py
+# whatsapp_webhook.py
 from __future__ import annotations
 
 import os
-import sys
-import time
-import uuid
+import re
 import traceback
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
+from flask import Flask, request
 
+# Twilio is optioneel (we willen NOOIT crashen als env ontbreekt)
+try:
+    from twilio.twiml.messaging_response import MessagingResponse
+except Exception:  # pragma: no cover
+    MessagingResponse = None  # type: ignore
+
+
+app = Flask(__name__)
 
 # ==========================================================
-# PROJECT ROOT (zodat imports altijd werken)
-# ==========================================================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
-
-
-# ==========================================================
-# ENV / SETTINGS (DB-only)
+# ENV
 # ==========================================================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL ontbreekt. Zet DATABASE_URL in Render Environment.")
+    # Niet raisen bij import => anders 502.
+    # We tonen straks een duidelijke melding in /whatsapp.
+    DATABASE_URL = ""
 
-AUTO_UNIVERSE = (os.getenv("AUTO_UNIVERSE") or "0").strip() == "1"
-
-CORE_LIMIT = int(os.getenv("CORE_LIMIT") or "28")
-ROTATE_BATCH_SIZE = int(os.getenv("ROTATE_BATCH_SIZE") or "50")
-
-# Analyse scope
-TIMEFRAME_CORE = (os.getenv("TIMEFRAME_CORE") or "1h").strip()
-TIMEFRAME_TREND = (os.getenv("TIMEFRAME_TREND") or "4h").strip()
-
-CANDLE_LIMIT_1H = int(os.getenv("CANDLE_LIMIT_1H") or "120")
-CANDLE_LIMIT_4H = int(os.getenv("CANDLE_LIMIT_4H") or "180")
-
-# Prebuy beperkingen
-MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
-PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
-
-# Scores
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")   # GO
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")           # WATCH
-FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
-
-# Fallback coins (alleen als AUTO_UNIVERSE=0)
-DEFAULT_COINS = ["BTCUSDT", "ETHUSDT", "BNBUSDT"]
-COINS_ENV = (os.getenv("COINS") or "").strip()
-
-# Scoreboard DB key (optioneel)
-SCOREBOARD_DB_KEY = (os.getenv("SCOREBOARD_DB_KEY") or "main").strip()
-
+ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
 # ==========================================================
-# Helpers
+# UTIL
 # ==========================================================
-def log(msg: str) -> None:
-    print(msg, flush=True)
-
-
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def utc_day_bounds(ts: Optional[datetime] = None) -> Tuple[datetime, datetime]:
-    t = ts or now_utc()
-    start = datetime(t.year, t.month, t.day, tzinfo=timezone.utc)
-    end = start + timedelta(days=1)
-    return start, end
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def twiml(text: str):
+    """
+    Twilio response helper (crash-proof).
+    """
+    if MessagingResponse is None:
+        # Fallback: plain text response (handig voor browser testen)
+        return (text, 200, {"Content-Type": "text/plain; charset=utf-8"})
+    resp = MessagingResponse()
+    resp.message(text)
+    return (str(resp), 200, {"Content-Type": "application/xml"})
 
 
 def db_connect():
-    # Render Postgres: sslmode=require is correct
+    # Render Postgres: sslmode=require
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
-def get_table_columns(conn, table: str) -> List[str]:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_schema='public' AND table_name=%s
-            ORDER BY ordinal_position
-            """,
-            (table,),
-        )
-        rows = cur.fetchall()
-    return [r[0] for r in rows]
-
-
-def ensure_min_tables(conn) -> None:
-    """
-    Minimale tabellen die multi_coin_score nodig heeft.
-    We vermijden prebuy_state bewust (want jouw DB heeft daar al een ander schema voor).
-    """
-    with conn.cursor() as cur:
-        # trade_fingerprints (dedupe)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
-                fingerprint TEXT PRIMARY KEY,
-                last_created_at TIMESTAMPTZ
-            )
-            """
-        )
-
-        # pending_approvals (minimal; jouw schema kan meer kolommen hebben)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.pending_approvals (
-                id TEXT PRIMARY KEY,
-                symbol TEXT,
-                setup_type TEXT,
-                timeframe TEXT,
-                regime TEXT,
-                score INTEGER,
-                chance INTEGER,
-                confidence INTEGER,
-                entry DOUBLE PRECISION,
-                stop DOUBLE PRECISION,
-                target DOUBLE PRECISION,
-                status TEXT,
-                created_at TIMESTAMPTZ,
-                expires_at TIMESTAMPTZ,
-                approved_at TIMESTAMPTZ,
-                rejected_at TIMESTAMPTZ,
-                consumed_at TIMESTAMPTZ
-            )
-            """
-        )
-
-        # scoreboards (optioneel)
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.scoreboards (
-                key TEXT PRIMARY KEY,
-                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            )
-            """
-        )
-    conn.commit()
-
-
-# ==========================================================
-# BTC Regime (uit DB) - veilig/optioneel
-# ==========================================================
-def fetch_btc_regime_snapshot(conn) -> Dict[str, Any]:
-    """
-    Leest de laatst bekende BTC 4h regime row uit btc_regime_4h.
-    Als tabel niet bestaat of leeg is, geeft het UNKNOWN terug.
-    """
+def safe_int(x: Any, default: int = 0) -> int:
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                """
-                SELECT open_time, regime, ema200, close
-                FROM public.btc_regime_4h
-                ORDER BY open_time DESC
-                LIMIT 1
-                """
-            )
-            row = cur.fetchone()
-
-        if not row:
-            return {
-                "btc_regime_4h": "UNKNOWN",
-                "btc_regime_time": None,
-                "btc_ema200": None,
-                "btc_close": None,
-            }
-
-        return {
-            "btc_regime_4h": row.get("regime") or "UNKNOWN",
-            "btc_regime_time": row.get("open_time"),
-            "btc_ema200": row.get("ema200"),
-            "btc_close": row.get("close"),
-        }
+        return int(x)
     except Exception:
-        # tabel bestaat niet of query faalt -> geen hard fail
-        return {
-            "btc_regime_4h": "UNKNOWN",
-            "btc_regime_time": None,
-            "btc_ema200": None,
-            "btc_close": None,
-        }
+        return default
 
 
 # ==========================================================
-# DB - daily created count (zonder prebuy_state)
+# HEALTH ROUTES (fix voor 502 / pings)
 # ==========================================================
-def get_created_today(conn) -> int:
-    start, end = utc_day_bounds()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT COUNT(*)
-            FROM public.pending_approvals
-            WHERE created_at >= %s AND created_at < %s
-            """,
-            (start, end),
-        )
-        return int(cur.fetchone()[0])
+@app.get("/")
+def root():
+    return "OK", 200
+
+
+@app.get("/healthz")
+def healthz():
+    return "OK", 200
 
 
 # ==========================================================
-# Dedupe
+# DB QUERIES
 # ==========================================================
-def fingerprint_exists_recent(conn, fingerprint: str, cooldown_seconds: int) -> bool:
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT last_created_at FROM public.trade_fingerprints WHERE fingerprint=%s",
-            (fingerprint,),
-        )
-        row = cur.fetchone()
-
-    if not row or not row[0]:
-        return False
-
-    last_ts: datetime = row[0]
-    return (now_utc() - last_ts) < timedelta(seconds=cooldown_seconds)
-
-
-def upsert_fingerprint(conn, fingerprint: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
-            VALUES (%s, %s)
-            ON CONFLICT (fingerprint) DO UPDATE
-            SET last_created_at = EXCLUDED.last_created_at
-            """,
-            (fingerprint, now_utc()),
-        )
-    conn.commit()
-
-
-# ==========================================================
-# Candles fetch (DB)
-# ==========================================================
-def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
+def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT open_time, open, high, low, close, volume
-            FROM public.candles
-            WHERE symbol=%s AND timeframe=%s
-            ORDER BY open_time DESC
+            SELECT
+              id, symbol, setup_type, timeframe, regime,
+              score, chance, confidence,
+              entry, stop, target,
+              status, created_at, expires_at
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING') = 'PENDING'
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY COALESCE(chance,0) DESC, created_at ASC
             LIMIT %s
             """,
-            (symbol, timeframe, limit),
+            (limit,),
         )
         rows = cur.fetchall()
-
-    rows = list(reversed(rows))  # oud -> nieuw
     return [dict(r) for r in rows]
 
 
-# ==========================================================
-# Indicators (simpel)
-# ==========================================================
-def sma(values: List[float], period: int) -> Optional[float]:
-    if len(values) < period:
-        return None
-    return sum(values[-period:]) / float(period)
+def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+              id, symbol, setup_type, timeframe, regime,
+              score, chance, confidence,
+              entry, stop, target,
+              status, created_at, expires_at
+            FROM public.pending_approvals
+            WHERE id = %s
+            """,
+            (prebuy_id,),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
 
 
-def rsi(values: List[float], period: int = 14) -> Optional[float]:
-    if len(values) < period + 1:
-        return None
-    gains = 0.0
-    losses = 0.0
-    for i in range(-period, 0):
-        diff = values[i] - values[i - 1]
-        if diff >= 0:
-            gains += diff
-        else:
-            losses += abs(diff)
-    if losses == 0:
-        return 100.0
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
-
-
-def slope(values: List[float], window: int = 10) -> Optional[float]:
-    if len(values) < window:
-        return None
-    return (values[-1] - values[-window]) / float(window)
-
-
-def pct(a: float, b: float) -> float:
-    if b == 0:
-        return 0.0
-    return (a - b) / b * 100.0
-
-
-# ==========================================================
-# Regime detect (4h) - coin regime (eigen coin)
-# ==========================================================
-def detect_regime(closes: List[float]) -> str:
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    if s20 is None or s50 is None:
-        return "UNKNOWN"
-
-    diff = pct(s20, s50)
-    if diff > 0.4:
-        return "BULL"
-    if diff < -0.4:
-        return "BEAR"
-    return "RANGE"
-
-
-# ==========================================================
-# Scoring
-# ==========================================================
-@dataclass
-class ScoreResult:
-    score: int
-    label: str        # GO / WATCH / SKIP
-    chance: int       # 0-100
-    confidence: int   # 0-100
-    reason: str
-
-
-def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> ScoreResult:
-    closes_1h = [float(c["close"]) for c in c1h]
-    closes_4h = [float(c["close"]) for c in c4h]
-
-    s20 = sma(closes_1h, 20)
-    s50 = sma(closes_1h, 50)
-    r = rsi(closes_1h, 14)
-    sl = slope(closes_1h, 10)
-    regime = detect_regime(closes_4h)
-
-    if s20 is None or s50 is None or r is None or sl is None:
-        return ScoreResult(0, "SKIP", 0, 0, "Te weinig candles voor indicators")
-
-    score = 50
-
-    # Trend
-    score += 15 if s20 > s50 else -15
-
-    # RSI
-    if 45 <= r <= 65:
-        score += 15
-    elif r < 35:
-        score += 8
-    elif r > 72:
-        score -= 12
-
-    # Momentum
-    score += 10 if sl > 0 else -10
-
-    # Regime bias (coin zelf)
-    if regime == "BULL":
-        score += 8
-    elif regime == "BEAR":
-        score -= 10
-    elif regime == "RANGE":
-        score -= 4
-
-    score = max(0, min(100, int(round(score))))
-    chance = score
-    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0)))))
-
-    if score >= MIN_SCORE_TO_PREBUY:
-        label = "GO"
-    elif score >= WATCH_MIN_SCORE:
-        label = "WATCH"
-    else:
-        label = "SKIP"
-
-    reason = f"s20>{'s50' if s20 > s50 else 's50'} | rsi={r:.1f} | slope={sl:.4f} | coin_regime={regime}"
-    return ScoreResult(score, label, chance, confidence, reason)
-
-
-# ==========================================================
-# Universe selectie (veilig, simpel, DB-only)
-# ==========================================================
-def get_auto_universe(conn) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
-    """
-    - core: top CORE_LIMIT symbols op basis van MAX(volume) in TIMEFRAME_CORE
-    - rotate: 'scroll' door alle symbols (alphabetisch), batch ROTATE_BATCH_SIZE
-    """
+def mark_rejected(conn, prebuy_id: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT symbol
-            FROM public.candles
-            WHERE timeframe=%s
-            GROUP BY symbol
-            ORDER BY MAX(volume) DESC
-            LIMIT %s
+            UPDATE public.pending_approvals
+            SET status='REJECTED', rejected_at=NOW()
+            WHERE id=%s
             """,
-            (TIMEFRAME_CORE, CORE_LIMIT),
+            (prebuy_id,),
         )
-        core = [r[0] for r in cur.fetchall() if r and r[0]]
+    conn.commit()
 
+
+def mark_approved(conn, prebuy_id: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT DISTINCT symbol
-            FROM public.candles
-            WHERE timeframe=%s
-            ORDER BY symbol ASC
+            UPDATE public.pending_approvals
+            SET status='APPROVED', approved_at=NOW()
+            WHERE id=%s
             """,
-            (TIMEFRAME_CORE,),
+            (prebuy_id,),
         )
-        all_syms = [r[0] for r in cur.fetchall() if r and r[0]]
-
-    rotate_total = len(all_syms)
-    if rotate_total == 0:
-        return core, [], core, {
-            "offset": 0,
-            "rotate_total": 0,
-            "core_count": len(core),
-            "rotate_count": 0,
-            "scan_total": len(core),
-        }
-
-    # elke 30 min ander blok
-    step = int(time.time() // (30 * 60))
-    offset = (step * max(1, ROTATE_BATCH_SIZE)) % rotate_total
-
-    rotate: List[str] = []
-    if ROTATE_BATCH_SIZE > 0:
-        for i in range(min(ROTATE_BATCH_SIZE, rotate_total)):
-            rotate.append(all_syms[(offset + i) % rotate_total])
-
-    universe = list(dict.fromkeys(core + rotate))
-    meta = {
-        "offset": offset,
-        "rotate_total": rotate_total,
-        "core_count": len(core),
-        "rotate_count": len(rotate),
-        "scan_total": len(universe),
-    }
-    return core, rotate, universe, meta
+    conn.commit()
 
 
-def get_manual_universe() -> List[str]:
-    if COINS_ENV:
-        coins = [c.strip().upper() for c in COINS_ENV.split(",") if c.strip()]
-        return coins if coins else DEFAULT_COINS
-    return DEFAULT_COINS
-
-
-# ==========================================================
-# Pending insert (schema-robust)
-# ==========================================================
-def insert_pending(conn, payload: Dict[str, Any], pending_cols: List[str]) -> None:
-    if not pending_cols:
-        raise RuntimeError("pending_approvals tabel bestaat niet of is niet zichtbaar.")
-
-    filtered = {k: v for k, v in payload.items() if k in pending_cols}
-    if not filtered:
-        raise RuntimeError("Geen enkele payload-key matcht met pending_approvals kolommen.")
-
-    keys = list(filtered.keys())
-    values = [filtered[k] for k in keys]
-
-    placeholders = ", ".join(["%s"] * len(keys))
-    colnames = ", ".join(keys)
-
+def mark_consumed(conn, prebuy_id: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
-            f"""
-            INSERT INTO public.pending_approvals ({colnames})
-            VALUES ({placeholders})
-            ON CONFLICT (id) DO NOTHING
+            """
+            UPDATE public.pending_approvals
+            SET status='CONSUMED', consumed_at=NOW()
+            WHERE id=%s
             """,
-            tuple(values),
+            (prebuy_id,),
         )
     conn.commit()
 
 
 # ==========================================================
-# Optional: scoreboard presence check (DB-only)
+# EXECUTION (TRADER MODULE) - crash-proof, lazy import
 # ==========================================================
-def scoreboard_exists(conn) -> bool:
+def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
+    """
+    Probeert BUY uit te voeren via paper_trader of live_trader.
+    Crasht nooit: bij ontbreken import => netjes terug.
+    """
+    symbol = (prebuy.get("symbol") or "").strip()
+    entry = float(prebuy.get("entry") or 0.0)
+    stop = float(prebuy.get("stop") or 0.0)
+    target = float(prebuy.get("target") or 0.0)
+    prebuy_id = prebuy.get("id")
+
+    # --- Pas dit aan als jij een andere trader API hebt ---
+    # We proberen eerst paper_trader, daarna live_trader.
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT 1 FROM public.scoreboards WHERE key=%s LIMIT 1", (SCOREBOARD_DB_KEY,))
-            return cur.fetchone() is not None
-    except Exception:
-        return False
+        from trading.paper_trader import buy_eur  # type: ignore
+
+        # verwacht: buy_eur(symbol, amount_eur, meta=...)
+        meta = {
+            "prebuy_id": prebuy_id,
+            "entry": entry,
+            "stop": stop,
+            "target": target,
+        }
+        buy_eur(symbol, float(amount_eur), meta=meta)  # type: ignore
+        return True, f"BUY uitgevoerd (paper) {symbol} €{amount_eur}"
+
+    except Exception as e1:
+        # probeer live_trader als die bestaat
+        try:
+            from trading.live_trader import buy_eur  # type: ignore
+
+            meta = {
+                "prebuy_id": prebuy_id,
+                "entry": entry,
+                "stop": stop,
+                "target": target,
+            }
+            buy_eur(symbol, float(amount_eur), meta=meta)  # type: ignore
+            return True, f"BUY uitgevoerd (live) {symbol} €{amount_eur}"
+
+        except Exception as e2:
+            # Geen hard fail: geef duidelijke fout terug
+            return (
+                False,
+                "BUY NIET uitgevoerd (trader ontbreekt of error).\n"
+                f"paper_err={type(e1).__name__}: {e1}\n"
+                f"live_err={type(e2).__name__}: {e2}",
+            )
 
 
 # ==========================================================
-# MAIN
+# COMMAND PARSER
 # ==========================================================
-def main() -> int:
-    start_ts = now_utc()
+def parse_command(text: str) -> Tuple[str, List[str]]:
+    t = (text or "").strip()
+    if not t:
+        return "HELP", []
+    parts = t.split()
+    cmd = parts[0].upper()
+    args = parts[1:]
+    return cmd, args
 
+
+def fmt_prebuy_row(p: Dict[str, Any]) -> str:
+    return (
+        f"{p.get('id')} | {p.get('symbol')} | chance={p.get('chance')} "
+        f"| score={p.get('score')} | {p.get('setup_type')} | entry={p.get('entry')}"
+    )
+
+
+HELP_TEXT = (
+    "Commands:\n"
+    "HELP\n"
+    "LIST (laat pending zien)\n"
+    "TOP (top 5 hoogste chance)\n"
+    "YES <bedrag> <ID>\n"
+    "NO <ID>\n\n"
+    "Bedragen: 5/10/15/20/30/100"
+)
+
+
+# ==========================================================
+# MAIN WHATSAPP ENDPOINT
+# ==========================================================
+@app.post("/whatsapp")
+def whatsapp():
     try:
+        body = (request.values.get("Body") or "").strip()
+        cmd, args = parse_command(body)
+
+        if not DATABASE_URL:
+            return twiml("DATABASE_URL ontbreekt in Render Environment.")
+
+        # DB connect per request (lazy)
         with db_connect() as conn:
-            ensure_min_tables(conn)
+            if cmd in ("HELP", "?"):
+                return twiml(HELP_TEXT)
 
-            if not scoreboard_exists(conn):
-                log("🟦 Scoreboard DB: geen record gevonden (ok, continue)")
+            if cmd == "LIST":
+                pending = fetch_pending(conn, limit=10)
+                if not pending:
+                    return twiml("Geen pending Pre-BUYs.")
+                lines = ["Pending Pre-BUYs (max 10):"]
+                lines += [fmt_prebuy_row(p) for p in pending]
+                lines.append("\nGebruik: YES <bedrag> <ID>  of  NO <ID>")
+                return twiml("\n".join(lines))
 
-            # 1x columns ophalen (scheelt DB calls)
-            pending_cols = get_table_columns(conn, "pending_approvals")
+            if cmd == "TOP":
+                pending = fetch_pending(conn, limit=5)
+                if not pending:
+                    return twiml("Geen pending Pre-BUYs.")
+                lines = ["TOP 5 (chance):"]
+                lines += [fmt_prebuy_row(p) for p in pending]
+                lines.append("\nGebruik: YES <bedrag> <ID>")
+                return twiml("\n".join(lines))
 
-            # BTC regime snapshot 1x per run (goedkoop + stabiel)
-            btc_snap = fetch_btc_regime_snapshot(conn)
-            log(f"🟪 BTC regime snapshot: {btc_snap.get('btc_regime_4h')}")
+            if cmd == "NO":
+                if not args:
+                    return twiml("Gebruik: NO <ID>")
+                prebuy_id = args[0].strip()
+                p = get_pending_by_id(conn, prebuy_id)
+                if not p:
+                    return twiml("ID niet gevonden.")
+                mark_rejected(conn, prebuy_id)
+                return twiml(f"Afgewezen: {prebuy_id}")
 
-            # 1x created_today ophalen (scheelt DB calls)
-            created_today_db = get_created_today(conn)
+            if cmd == "YES":
+                if len(args) < 2:
+                    return twiml("Gebruik: YES <bedrag> <ID>")
+                amount = safe_int(args[0], 0)
+                prebuy_id = args[1].strip()
 
-            # Universe bepalen
-            if AUTO_UNIVERSE:
-                core, rotate, universe, meta = get_auto_universe(conn)
-                log(
-                    f"🧠 universe: core={meta['core_count']} + rotate_batch={meta['rotate_count']} "
-                    f"(offset={meta['offset']}, rotate_total={meta['rotate_total']}) => scan_total={meta['scan_total']}"
-                )
-            else:
-                universe = get_manual_universe()
-                log(f"🧠 universe (manual): coins={len(universe)}")
+                if amount not in ALLOWED_AMOUNTS:
+                    return twiml("Bedrag ongeldig. Toegestaan: 5/10/15/20/30/100")
 
-            log(f"🚀 multi_coin_score start | created_today={created_today_db}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
+                p = get_pending_by_id(conn, prebuy_id)
+                if not p:
+                    return twiml("ID niet gevonden.")
 
-            if not FORCE_TEST_PREBUY and created_today_db >= MAX_PREBUY_PER_DAY:
-                log("✅ Daglimiet bereikt. Stop run.")
-                return 0
+                status = (p.get("status") or "PENDING").upper()
+                if status != "PENDING":
+                    return twiml(f"Kan niet YES doen: status is {status}")
 
-            created_now = 0  # local counter (geen DB count per coin meer)
+                # Expiry check
+                exp = p.get("expires_at")
+                if exp and isinstance(exp, datetime) and exp <= now_utc():
+                    mark_rejected(conn, prebuy_id)
+                    return twiml("Deze Pre-BUY is verlopen en is nu afgewezen.")
 
-            for sym in universe:
-                # Daglimiet check zonder DB call (alleen local + startwaarde)
-                if not FORCE_TEST_PREBUY and (created_today_db + created_now) >= MAX_PREBUY_PER_DAY:
-                    break
+                # 1) mark approved
+                mark_approved(conn, prebuy_id)
 
-                try:
-                    c1h = fetch_candles(conn, sym, TIMEFRAME_CORE, CANDLE_LIMIT_1H)
-                    c4h = fetch_candles(conn, sym, TIMEFRAME_TREND, CANDLE_LIMIT_4H)
+                # 2) execute buy (crash-proof)
+                ok, msg = execute_buy(p, amount)
 
-                    if len(c1h) < 60 or len(c4h) < 60:
-                        continue
+                # 3) mark consumed als BUY ok is
+                if ok:
+                    mark_consumed(conn, prebuy_id)
+                    return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
 
-                    sr = compute_score(c1h, c4h)
+                # BUY faalde => zet terug naar PENDING of laat op APPROVED?
+                # Ik laat hem op APPROVED zodat je ziet dat jij akkoord gaf.
+                return twiml(f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}")
 
-                    if FORCE_TEST_PREBUY and sr.label == "SKIP":
-                        sr = ScoreResult(
-                            score=WATCH_MIN_SCORE,
-                            label="WATCH",
-                            chance=WATCH_MIN_SCORE,
-                            confidence=WATCH_MIN_SCORE,
-                            reason="FORCE_TEST_PREBUY",
-                        )
-
-                    if sr.label == "SKIP":
-                        continue
-
-                    entry = float(c1h[-1]["close"])
-                    stop = entry * 0.98
-                    target = entry + (entry - stop) * 2.0  # 2R
-
-                    setup_type = "TREND_PULLBACK" if sr.label == "GO" else "WATCHLIST"
-                    coin_regime = detect_regime([float(x["close"]) for x in c4h])
-
-                    # fingerprint: geen duplicate trade (coin + setup + entry + target)
-                    fingerprint = f"{sym}|{setup_type}|{round(entry, 6)}|{round(target, 6)}"
-                    if fingerprint_exists_recent(conn, fingerprint, TRADE_COOLDOWN_SECONDS):
-                        continue
-
-                    pb_id = f"PB-{sym}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
-
-                    payload = {
-                        "id": pb_id,
-                        "symbol": sym,
-                        "setup_type": setup_type,
-                        "timeframe": TIMEFRAME_CORE,
-                        "regime": coin_regime,
-                        "score": int(sr.score),
-                        "chance": int(sr.chance),
-                        "confidence": int(sr.confidence),
-                        "entry": float(entry),
-                        "stop": float(stop),
-                        "target": float(target),
-                        "status": "PENDING",
-                        "created_at": now_utc(),
-                        "expires_at": now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS),
-
-                        # BTC snapshot context (alleen opgeslagen als kolommen bestaan)
-                        "btc_regime_4h": btc_snap.get("btc_regime_4h"),
-                        "btc_regime_time": btc_snap.get("btc_regime_time"),
-                        "btc_ema200": btc_snap.get("btc_ema200"),
-                        "btc_close": btc_snap.get("btc_close"),
-                    }
-
-                    insert_pending(conn, payload, pending_cols)
-                    upsert_fingerprint(conn, fingerprint)
-
-                    created_now += 1
-                    total_today = created_today_db + created_now
-
-                    log(f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | created_today={total_today}/{MAX_PREBUY_PER_DAY}")
-                    log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason} | btc={btc_snap.get('btc_regime_4h')}")
-
-                except Exception as e:
-                    log(f"⚠️ ERROR {sym}: {e}")
-                    continue
-
-            log(f"done. created={created_now} (today_total={created_today_db + created_now})")
-            return 0
+            # fallback
+            return twiml("Onbekend command.\n\n" + HELP_TEXT)
 
     except Exception as e:
-        log("❌ FATAAL in multi_coin_score.py")
+        log("❌ ERROR in /whatsapp")
         log(str(e))
         log(traceback.format_exc())
-        return 1
-    finally:
-        dur = (now_utc() - start_ts).total_seconds()
-        log(f"⏱ runtime={dur:.1f}s")
+        return twiml("Interne fout. Check Render logs.")
 
 
+# Handig voor lokaal testen
 if __name__ == "__main__":
-    raise SystemExit(main())
+    port = int(os.getenv("PORT") or "10000")
+    app.run(host="0.0.0.0", port=port)
