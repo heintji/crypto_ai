@@ -236,7 +236,8 @@ def upsert_fingerprint(conn, fingerprint: str) -> None:
             """
             INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
             VALUES (%s, %s)
-            ON CONFLICT (fingerprint) DO UPDATE SET last_created_at = EXCLUDED.last_created_at
+            ON CONFLICT (fingerprint) DO UPDATE
+            SET last_created_at = EXCLUDED.last_created_at
             """,
             (fingerprint, now_utc()),
         )
@@ -370,7 +371,7 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
 
     score = max(0, min(100, int(round(score))))
     chance = score
-    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0))))))
+    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0)))))
 
     if score >= MIN_SCORE_TO_PREBUY:
         label = "GO"
@@ -427,17 +428,16 @@ def get_auto_universe(conn) -> Tuple[List[str], List[str], List[str], Dict[str, 
             "scan_total": len(core),
         }
 
-    offset = int(time.time() // (30 * 60))  # verandert elke 30 min
-    offset = (offset * max(1, ROTATE_BATCH_SIZE)) % rotate_total
+    # elke 30 min ander blok
+    step = int(time.time() // (30 * 60))
+    offset = (step * max(1, ROTATE_BATCH_SIZE)) % rotate_total
 
     rotate: List[str] = []
     if ROTATE_BATCH_SIZE > 0:
         for i in range(min(ROTATE_BATCH_SIZE, rotate_total)):
             rotate.append(all_syms[(offset + i) % rotate_total])
 
-    # Unique + behoud volgorde
     universe = list(dict.fromkeys(core + rotate))
-
     meta = {
         "offset": offset,
         "rotate_total": rotate_total,
@@ -458,12 +458,14 @@ def get_manual_universe() -> List[str]:
 # ==========================================================
 # Pending insert (schema-robust)
 # ==========================================================
-def insert_pending(conn, payload: Dict[str, Any]) -> None:
-    cols = get_table_columns(conn, "pending_approvals")
-    if not cols:
+def insert_pending(conn, payload: Dict[str, Any], pending_cols: List[str]) -> None:
+    if not pending_cols:
         raise RuntimeError("pending_approvals tabel bestaat niet of is niet zichtbaar.")
 
-    filtered = {k: v for k, v in payload.items() if k in cols}
+    filtered = {k: v for k, v in payload.items() if k in pending_cols}
+    if not filtered:
+        raise RuntimeError("Geen enkele payload-key matcht met pending_approvals kolommen.")
+
     keys = list(filtered.keys())
     values = [filtered[k] for k in keys]
 
@@ -507,11 +509,15 @@ def main() -> int:
             if not scoreboard_exists(conn):
                 log("🟦 Scoreboard DB: geen record gevonden (ok, continue)")
 
+            # 1x columns ophalen (scheelt DB calls)
+            pending_cols = get_table_columns(conn, "pending_approvals")
+
             # BTC regime snapshot 1x per run (goedkoop + stabiel)
             btc_snap = fetch_btc_regime_snapshot(conn)
             log(f"🟪 BTC regime snapshot: {btc_snap.get('btc_regime_4h')}")
 
-            created_today = get_created_today(conn)
+            # 1x created_today ophalen (scheelt DB calls)
+            created_today_db = get_created_today(conn)
 
             # Universe bepalen
             if AUTO_UNIVERSE:
@@ -524,18 +530,17 @@ def main() -> int:
                 universe = get_manual_universe()
                 log(f"🧠 universe (manual): coins={len(universe)}")
 
-            log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
+            log(f"🚀 multi_coin_score start | created_today={created_today_db}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
 
-            if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
+            if not FORCE_TEST_PREBUY and created_today_db >= MAX_PREBUY_PER_DAY:
                 log("✅ Daglimiet bereikt. Stop run.")
                 return 0
 
-            created_now = 0
+            created_now = 0  # local counter (geen DB count per coin meer)
 
             for sym in universe:
-                # Daglimiet check
-                created_today = get_created_today(conn)
-                if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
+                # Daglimiet check zonder DB call (alleen local + startwaarde)
+                if not FORCE_TEST_PREBUY and (created_today_db + created_now) >= MAX_PREBUY_PER_DAY:
                     break
 
                 try:
@@ -596,20 +601,20 @@ def main() -> int:
                         "btc_close": btc_snap.get("btc_close"),
                     }
 
-                    insert_pending(conn, payload)
+                    insert_pending(conn, payload, pending_cols)
                     upsert_fingerprint(conn, fingerprint)
 
                     created_now += 1
-                    created_today = get_created_today(conn)
+                    total_today = created_today_db + created_now
 
-                    log(f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+                    log(f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | created_today={total_today}/{MAX_PREBUY_PER_DAY}")
                     log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason} | btc={btc_snap.get('btc_regime_4h')}")
 
                 except Exception as e:
                     log(f"⚠️ ERROR {sym}: {e}")
                     continue
 
-            log(f"done. created={created_now}")
+            log(f"done. created={created_now} (today_total={created_today_db + created_now})")
             return 0
 
     except Exception as e:
