@@ -31,7 +31,7 @@ BATCH_SIZE = int(os.getenv("BATCH_SIZE") or "50")
 MIN_QUOTE_VOLUME_24H_USDT = float(os.getenv("MIN_QUOTE_VOLUME_24H_USDT") or "0")
 
 BINANCE_BASE = "https://api.binance.com"
-UA = {"User-Agent": "crypto-ai-history-fetcher/1.0"}
+UA = {"User-Agent": "crypto-ai-history-fetcher/1.1"}
 
 # =========================
 # Helpers
@@ -51,14 +51,6 @@ def tf_to_binance_interval(tf: str) -> str:
         return "4h"
     raise ValueError(f"Unsupported timeframe: {tf}")
 
-def chunks(total: int, size: int) -> List[Tuple[int, int]]:
-    out = []
-    i = 0
-    while i < total:
-        out.append((i, min(i + size, total)))
-        i += size
-    return out
-
 # =========================
 # Postgres (state + write)
 # =========================
@@ -66,56 +58,22 @@ def pg_connect():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is empty (set it in Render env)")
     conn = psycopg2.connect(DATABASE_URL)
-    # Belangrijk: voorkomt 'current transaction is aborted' kettingreactie
-    conn.autocommit = True
+    conn.autocommit = True  # voorkomt 'transaction aborted' kettingreactie
     return conn
 
 def ensure_state_table(conn):
     """
-    FIX: 'offset' is een gereserveerd SQL keyword in Postgres.
-    Daarom gebruiken we 'batch_offset' als kolomnaam.
+    LET OP: 'offset' is een SQL keyword in Postgres.
+    Daarom gebruiken we 'offset_idx'.
     """
     with conn.cursor() as cur:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.fetcher_state (
               key TEXT PRIMARY KEY,
-              batch_offset INTEGER NOT NULL DEFAULT 0,
+              offset_idx INTEGER NOT NULL DEFAULT 0,
               updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
-            """
-        )
-        # Als je ooit al een oude fetcher_state had met 'offset', migreren we hem netjes:
-        cur.execute(
-            """
-            DO $$
-            BEGIN
-              IF EXISTS (
-                SELECT 1
-                FROM information_schema.columns
-                WHERE table_schema='public'
-                  AND table_name='fetcher_state'
-                  AND column_name='offset'
-              ) THEN
-                -- voeg batch_offset toe als hij nog niet bestaat
-                IF NOT EXISTS (
-                  SELECT 1
-                  FROM information_schema.columns
-                  WHERE table_schema='public'
-                    AND table_name='fetcher_state'
-                    AND column_name='batch_offset'
-                ) THEN
-                  ALTER TABLE public.fetcher_state ADD COLUMN batch_offset INTEGER NOT NULL DEFAULT 0;
-                END IF;
-
-                -- kopieer data
-                UPDATE public.fetcher_state
-                SET batch_offset = COALESCE(batch_offset, "offset");
-
-                -- drop oude kolom
-                ALTER TABLE public.fetcher_state DROP COLUMN "offset";
-              END IF;
-            END $$;
             """
         )
 
@@ -125,17 +83,15 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
     """
     ensure_state_table(conn)
 
-    # advisory lock zodat 2 crons niet tegelijk offset aanpassen
     lock_id = abs(hash(key)) % (2**31)
     with conn.cursor() as cur:
         cur.execute("SELECT pg_try_advisory_lock(%s);", (lock_id,))
         locked = cur.fetchone()[0]
         if not locked:
-            # als er al een run bezig is -> stop netjes
             raise RuntimeError("Another history_fetcher run is in progress (advisory lock)")
 
         try:
-            cur.execute("SELECT batch_offset FROM public.fetcher_state WHERE key=%s;", (key,))
+            cur.execute("SELECT offset_idx FROM public.fetcher_state WHERE key=%s;", (key,))
             row = cur.fetchone()
             current = int(row[0]) if row else 0
 
@@ -144,13 +100,12 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
             else:
                 next_offset = (current + batch_size) % total
 
-            # upsert
             cur.execute(
                 """
-                INSERT INTO public.fetcher_state(key, batch_offset, updated_at)
+                INSERT INTO public.fetcher_state(key, offset_idx, updated_at)
                 VALUES (%s, %s, NOW())
                 ON CONFLICT (key) DO UPDATE SET
-                  batch_offset = EXCLUDED.batch_offset,
+                  offset_idx = EXCLUDED.offset_idx,
                   updated_at = NOW();
                 """,
                 (key, next_offset),
@@ -160,7 +115,6 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
             cur.execute("SELECT pg_advisory_unlock(%s);", (lock_id,))
 
 def ensure_candles_table(conn):
-    # jouw table bestaat al, maar voor safety:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -208,10 +162,10 @@ def insert_candles(conn, rows: List[Tuple]):
 # Binance universe
 # =========================
 def get_binance_symbols(quote_asset: str) -> List[str]:
-    # exchangeInfo: alle symbols
     r = requests.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", headers=UA, timeout=30)
     r.raise_for_status()
     data = r.json()
+
     symbols = []
     for s in data.get("symbols", []):
         if s.get("status") != "TRADING":
@@ -225,7 +179,6 @@ def get_binance_symbols(quote_asset: str) -> List[str]:
     return symbols
 
 def get_24h_quote_volumes() -> Dict[str, float]:
-    # 24h ticker: quoteVolume
     r = requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr", headers=UA, timeout=30)
     r.raise_for_status()
     data = r.json()
@@ -244,9 +197,6 @@ def get_24h_quote_volumes() -> Dict[str, float]:
 # Binance klines fetch
 # =========================
 def fetch_klines(symbol: str, interval: str, start_ms: int) -> List[List]:
-    """
-    Binance returns max 1000 per call; we loop.
-    """
     out: List[List] = []
     limit = 1000
     start = start_ms
@@ -258,15 +208,14 @@ def fetch_klines(symbol: str, interval: str, start_ms: int) -> List[List]:
         if not kl:
             break
         out.extend(kl)
-        # next start = last open time + 1 ms
         last_open = int(kl[-1][0])
         start = last_open + 1
         if len(kl) < limit:
             break
-        time.sleep(0.2)  # tiny throttle
+        time.sleep(0.2)
     return out
 
-def kline_rows(symbol: str, timeframe: str, interval: str, klines: List[List]) -> List[Tuple]:
+def kline_rows(symbol: str, timeframe: str, klines: List[List]) -> List[Tuple]:
     rows: List[Tuple] = []
     for k in klines:
         open_ms = int(k[0])
@@ -299,9 +248,9 @@ def kline_rows(symbol: str, timeframe: str, interval: str, klines: List[List]) -
 # Main
 # =========================
 def main():
-    print("== history_fetcher (DB-only + auto offset rotation) ==")
-    print(f"AUTO_UNIVERSE={AUTO_UNIVERSE} QUOTE_ASSET={QUOTE_ASSET} TIMEFRAMES={TIMEFRAMES} YEARS={YEARS}")
-    print(f"BATCH_SIZE={BATCH_SIZE} MIN_QUOTE_VOLUME_24H_USDT={MIN_QUOTE_VOLUME_24H_USDT}")
+    print("== history_fetcher (DB-only + auto offset rotation) ==", flush=True)
+    print(f"AUTO_UNIVERSE={AUTO_UNIVERSE} QUOTE_ASSET={QUOTE_ASSET} TIMEFRAMES={TIMEFRAMES} YEARS={YEARS}", flush=True)
+    print(f"BATCH_SIZE={BATCH_SIZE} MIN_QUOTE_VOLUME_24H_USDT={MIN_QUOTE_VOLUME_24H_USDT}", flush=True)
 
     conn = pg_connect()
 
@@ -312,20 +261,19 @@ def main():
         symbols.sort()
 
     total = len(symbols)
-    print(f"Universe total={total}")
+    print(f"Universe total={total}", flush=True)
 
-    # key bepaalt offset per universe/filter-set
     key = f"binance:{QUOTE_ASSET}:minqv={int(MIN_QUOTE_VOLUME_24H_USDT)}:tfs={','.join(TIMEFRAMES)}:years={YEARS}"
     offset = get_and_rotate_offset(conn, key=key, total=total, batch_size=BATCH_SIZE)
 
     if total == 0:
-        print("No symbols after filtering. Stop.")
+        print("No symbols after filtering. Stop.", flush=True)
         return
 
-    start = offset
-    end = min(offset + BATCH_SIZE, total)
-    batch = symbols[start:end]
-    print(f"Offset={offset} -> fetching batch size={len(batch)} (range {start}:{end})")
+    start_i = offset
+    end_i = min(offset + BATCH_SIZE, total)
+    batch = symbols[start_i:end_i]
+    print(f"Offset={offset} -> fetching batch size={len(batch)} (range {start_i}:{end_i})", flush=True)
 
     since_ms = _since_ts_ms(YEARS)
 
@@ -334,17 +282,15 @@ def main():
             try:
                 interval = tf_to_binance_interval(tf)
                 kl = fetch_klines(sym, interval, since_ms)
-                rows = kline_rows(sym, tf, interval, kl)
+                rows = kline_rows(sym, tf, kl)
                 wrote = insert_candles(conn, rows)
-                print(f"{sym} {tf}: fetched={len(kl)} wrote~{wrote}")
+                print(f"{sym} {tf}: fetched={len(kl)} wrote~{wrote}", flush=True)
             except Exception as e:
-                # autocommit staat aan, dus geen "transaction aborted" ketting
-                print(f"⚠️ {sym} {tf} error: {e}")
+                print(f"⚠️ {sym} {tf} error: {e}", flush=True)
                 traceback.print_exc()
-                # doorgaan met volgende sym/tf
                 continue
 
-    print("✅ DONE")
+    print("✅ DONE", flush=True)
 
 if __name__ == "__main__":
     main()
