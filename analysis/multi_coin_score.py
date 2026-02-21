@@ -58,9 +58,6 @@ COINS_ENV = (os.getenv("COINS") or "").strip()
 # Scoreboard DB key (optioneel)
 SCOREBOARD_DB_KEY = (os.getenv("SCOREBOARD_DB_KEY") or "main").strip()
 
-# BTC regime table (gemaakt door research/build_btc_regime.py)
-BTC_REGIME_TABLE = (os.getenv("BTC_REGIME_TABLE") or "btc_regime_4h").strip()
-
 
 # ==========================================================
 # Helpers
@@ -81,7 +78,7 @@ def utc_day_bounds(ts: Optional[datetime] = None) -> Tuple[datetime, datetime]:
 
 
 def db_connect():
-    # sslmode=require is ok op Render Postgres
+    # Render Postgres: sslmode=require is correct
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
@@ -141,7 +138,7 @@ def ensure_min_tables(conn) -> None:
             """
         )
 
-        # scoreboards (optioneel; jij hebt ‘m al aangemaakt)
+        # scoreboards (optioneel)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.scoreboards (
@@ -151,20 +148,51 @@ def ensure_min_tables(conn) -> None:
             )
             """
         )
-
-        # BTC regime (wordt gevuld door build_btc_regime.py)
-        cur.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS public.{BTC_REGIME_TABLE} (
-                open_time TIMESTAMPTZ PRIMARY KEY,
-                regime TEXT NOT NULL,
-                ema200 DOUBLE PRECISION,
-                close DOUBLE PRECISION
-            )
-            """
-        )
-
     conn.commit()
+
+
+# ==========================================================
+# BTC Regime (uit DB) - veilig/optioneel
+# ==========================================================
+def fetch_btc_regime_snapshot(conn) -> Dict[str, Any]:
+    """
+    Leest de laatst bekende BTC 4h regime row uit btc_regime_4h.
+    Als tabel niet bestaat of leeg is, geeft het UNKNOWN terug.
+    """
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT open_time, regime, ema200, close
+                FROM public.btc_regime_4h
+                ORDER BY open_time DESC
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+
+        if not row:
+            return {
+                "btc_regime_4h": "UNKNOWN",
+                "btc_regime_time": None,
+                "btc_ema200": None,
+                "btc_close": None,
+            }
+
+        return {
+            "btc_regime_4h": row.get("regime") or "UNKNOWN",
+            "btc_regime_time": row.get("open_time"),
+            "btc_ema200": row.get("ema200"),
+            "btc_close": row.get("close"),
+        }
+    except Exception:
+        # tabel bestaat niet of query faalt -> geen hard fail
+        return {
+            "btc_regime_4h": "UNKNOWN",
+            "btc_regime_time": None,
+            "btc_ema200": None,
+            "btc_close": None,
+        }
 
 
 # ==========================================================
@@ -182,38 +210,6 @@ def get_created_today(conn) -> int:
             (start, end),
         )
         return int(cur.fetchone()[0])
-
-
-# ==========================================================
-# BTC Regime snapshot (laatste status, 4h)
-# ==========================================================
-def fetch_latest_btc_regime(conn) -> Dict[str, Any]:
-    """
-    Leest de laatste row uit btc_regime_4h (of via BTC_REGIME_TABLE env).
-    Dit is "context" voor Pre-BUY (geen trading logic change).
-    """
-    try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(
-                f"""
-                SELECT open_time, regime, ema200, close
-                FROM public.{BTC_REGIME_TABLE}
-                ORDER BY open_time DESC
-                LIMIT 1
-                """
-            )
-            row = cur.fetchone()
-            if not row:
-                return {"btc_regime_4h": None, "btc_regime_time": None, "btc_ema200": None, "btc_close": None}
-            return {
-                "btc_regime_4h": row.get("regime"),
-                "btc_regime_time": row.get("open_time"),
-                "btc_ema200": row.get("ema200"),
-                "btc_close": row.get("close"),
-            }
-    except Exception:
-        # Niet fataal; bot moet door kunnen blijven draaien
-        return {"btc_regime_4h": None, "btc_regime_time": None, "btc_ema200": None, "btc_close": None}
 
 
 # ==========================================================
@@ -307,7 +303,7 @@ def pct(a: float, b: float) -> float:
 
 
 # ==========================================================
-# Regime detect (4h)
+# Regime detect (4h) - coin regime (eigen coin)
 # ==========================================================
 def detect_regime(closes: List[float]) -> str:
     s20 = sma(closes, 20)
@@ -364,7 +360,7 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
     # Momentum
     score += 10 if sl > 0 else -10
 
-    # Regime bias
+    # Regime bias (coin zelf)
     if regime == "BULL":
         score += 8
     elif regime == "BEAR":
@@ -374,7 +370,7 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
 
     score = max(0, min(100, int(round(score))))
     chance = score
-    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0)))))
+    confidence = min(100, max(0, int(round((score * 0.9) + (10 if regime == "BULL" else 0))))))
 
     if score >= MIN_SCORE_TO_PREBUY:
         label = "GO"
@@ -383,7 +379,7 @@ def compute_score(c1h: List[Dict[str, Any]], c4h: List[Dict[str, Any]]) -> Score
     else:
         label = "SKIP"
 
-    reason = f"s20>{'s50' if s20 > s50 else 's50'} | rsi={r:.1f} | slope={sl:.4f} | regime={regime}"
+    reason = f"s20>{'s50' if s20 > s50 else 's50'} | rsi={r:.1f} | slope={sl:.4f} | coin_regime={regime}"
     return ScoreResult(score, label, chance, confidence, reason)
 
 
@@ -423,7 +419,13 @@ def get_auto_universe(conn) -> Tuple[List[str], List[str], List[str], Dict[str, 
 
     rotate_total = len(all_syms)
     if rotate_total == 0:
-        return core, [], core, {"offset": 0, "rotate_total": 0, "core_count": len(core), "rotate_count": 0, "scan_total": len(core)}
+        return core, [], core, {
+            "offset": 0,
+            "rotate_total": 0,
+            "core_count": len(core),
+            "rotate_count": 0,
+            "scan_total": len(core),
+        }
 
     offset = int(time.time() // (30 * 60))  # verandert elke 30 min
     offset = (offset * max(1, ROTATE_BATCH_SIZE)) % rotate_total
@@ -465,9 +467,6 @@ def insert_pending(conn, payload: Dict[str, Any]) -> None:
     keys = list(filtered.keys())
     values = [filtered[k] for k in keys]
 
-    if not keys:
-        raise RuntimeError("Payload heeft geen kolommen die matchen met pending_approvals schema.")
-
     placeholders = ", ".join(["%s"] * len(keys))
     colnames = ", ".join(keys)
 
@@ -508,15 +507,11 @@ def main() -> int:
             if not scoreboard_exists(conn):
                 log("🟦 Scoreboard DB: geen record gevonden (ok, continue)")
 
-            # BTC regime context (laatste snapshot)
-            btc_ctx = fetch_latest_btc_regime(conn)
-            if btc_ctx.get("btc_regime_4h"):
-                log(
-                    f"🟣 BTC regime snapshot: {btc_ctx.get('btc_regime_4h')} "
-                    f"@ {btc_ctx.get('btc_regime_time')} | ema200={btc_ctx.get('btc_ema200')} close={btc_ctx.get('btc_close')}"
-                )
-            else:
-                log("🟣 BTC regime snapshot: (nog leeg / nog niet gebouwd) (ok, continue)")
+            # BTC regime snapshot 1x per run (goedkoop + stabiel)
+            btc_snap = fetch_btc_regime_snapshot(conn)
+            log(f"🟪 BTC regime snapshot: {btc_snap.get('btc_regime_4h')}")
+
+            created_today = get_created_today(conn)
 
             # Universe bepalen
             if AUTO_UNIVERSE:
@@ -526,30 +521,22 @@ def main() -> int:
                     f"(offset={meta['offset']}, rotate_total={meta['rotate_total']}) => scan_total={meta['scan_total']}"
                 )
             else:
-                core, rotate = [], []
                 universe = get_manual_universe()
-                meta = {"core_count": len(universe), "rotate_count": 0, "scan_total": len(universe)}
+                log(f"🧠 universe (manual): coins={len(universe)}")
 
-            created_today_db = get_created_today(conn)
-            log(f"🚀 multi_coin_score start | created_today={created_today_db}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
+            log(f"🚀 multi_coin_score start | created_today={created_today}/{MAX_PREBUY_PER_DAY} | coins={len(universe)}")
 
-            if not FORCE_TEST_PREBUY and created_today_db >= MAX_PREBUY_PER_DAY:
+            if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
                 log("✅ Daglimiet bereikt. Stop run.")
                 return 0
 
             created_now = 0
-            created_today_local = created_today_db  # lokaal bijhouden om DB-spam te voorkomen
 
-            for idx, sym in enumerate(universe, start=1):
-                # Daglimiet check (lokaal)
-                if not FORCE_TEST_PREBUY and created_today_local >= MAX_PREBUY_PER_DAY:
+            for sym in universe:
+                # Daglimiet check
+                created_today = get_created_today(conn)
+                if not FORCE_TEST_PREBUY and created_today >= MAX_PREBUY_PER_DAY:
                     break
-
-                # Af en toe her-sync met DB (veilig bij parallel runs)
-                if idx % 25 == 0:
-                    created_today_local = get_created_today(conn)
-                    if not FORCE_TEST_PREBUY and created_today_local >= MAX_PREBUY_PER_DAY:
-                        break
 
                 try:
                     c1h = fetch_candles(conn, sym, TIMEFRAME_CORE, CANDLE_LIMIT_1H)
@@ -577,10 +564,10 @@ def main() -> int:
                     target = entry + (entry - stop) * 2.0  # 2R
 
                     setup_type = "TREND_PULLBACK" if sr.label == "GO" else "WATCHLIST"
-                    regime = detect_regime([float(x["close"]) for x in c4h])
+                    coin_regime = detect_regime([float(x["close"]) for x in c4h])
 
-                    # Dedupe fingerprint: zelfde coin + setup + entry + target + timeframe = dezelfde trade
-                    fingerprint = f"{sym}|{setup_type}|{TIMEFRAME_CORE}|{round(entry, 6)}|{round(target, 6)}"
+                    # fingerprint: geen duplicate trade (coin + setup + entry + target)
+                    fingerprint = f"{sym}|{setup_type}|{round(entry, 6)}|{round(target, 6)}"
                     if fingerprint_exists_recent(conn, fingerprint, TRADE_COOLDOWN_SECONDS):
                         continue
 
@@ -591,7 +578,7 @@ def main() -> int:
                         "symbol": sym,
                         "setup_type": setup_type,
                         "timeframe": TIMEFRAME_CORE,
-                        "regime": regime,
+                        "regime": coin_regime,
                         "score": int(sr.score),
                         "chance": int(sr.chance),
                         "confidence": int(sr.confidence),
@@ -602,24 +589,21 @@ def main() -> int:
                         "created_at": now_utc(),
                         "expires_at": now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS),
 
-                        # BTC context (alleen als kolommen bestaan -> insert_pending filtert)
-                        "btc_regime_4h": btc_ctx.get("btc_regime_4h"),
-                        "btc_regime_time": btc_ctx.get("btc_regime_time"),
-                        "btc_ema200": btc_ctx.get("btc_ema200"),
-                        "btc_close": btc_ctx.get("btc_close"),
+                        # BTC snapshot context (alleen opgeslagen als kolommen bestaan)
+                        "btc_regime_4h": btc_snap.get("btc_regime_4h"),
+                        "btc_regime_time": btc_snap.get("btc_regime_time"),
+                        "btc_ema200": btc_snap.get("btc_ema200"),
+                        "btc_close": btc_snap.get("btc_close"),
                     }
 
                     insert_pending(conn, payload)
                     upsert_fingerprint(conn, fingerprint)
 
                     created_now += 1
-                    created_today_local += 1
+                    created_today = get_created_today(conn)
 
-                    log(
-                        f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | "
-                        f"created_today≈{created_today_local}/{MAX_PREBUY_PER_DAY}"
-                    )
-                    log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason}")
+                    log(f"✅ PREBUY {sr.label} | {sym} | score={sr.score} | chance={sr.chance} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+                    log(f"   ↳ entry={entry:.6f} stop={stop:.6f} target={target:.6f} | {sr.reason} | btc={btc_snap.get('btc_regime_4h')}")
 
                 except Exception as e:
                     log(f"⚠️ ERROR {sym}: {e}")
