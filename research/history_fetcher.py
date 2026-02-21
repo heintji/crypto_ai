@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import os
 import time
-import math
 import traceback
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 
 import requests
 import psycopg2
@@ -72,14 +71,51 @@ def pg_connect():
     return conn
 
 def ensure_state_table(conn):
+    """
+    FIX: 'offset' is een gereserveerd SQL keyword in Postgres.
+    Daarom gebruiken we 'batch_offset' als kolomnaam.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.fetcher_state (
               key TEXT PRIMARY KEY,
-              offset INTEGER NOT NULL DEFAULT 0,
+              batch_offset INTEGER NOT NULL DEFAULT 0,
               updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
+            """
+        )
+        # Als je ooit al een oude fetcher_state had met 'offset', migreren we hem netjes:
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema='public'
+                  AND table_name='fetcher_state'
+                  AND column_name='offset'
+              ) THEN
+                -- voeg batch_offset toe als hij nog niet bestaat
+                IF NOT EXISTS (
+                  SELECT 1
+                  FROM information_schema.columns
+                  WHERE table_schema='public'
+                    AND table_name='fetcher_state'
+                    AND column_name='batch_offset'
+                ) THEN
+                  ALTER TABLE public.fetcher_state ADD COLUMN batch_offset INTEGER NOT NULL DEFAULT 0;
+                END IF;
+
+                -- kopieer data
+                UPDATE public.fetcher_state
+                SET batch_offset = COALESCE(batch_offset, "offset");
+
+                -- drop oude kolom
+                ALTER TABLE public.fetcher_state DROP COLUMN "offset";
+              END IF;
+            END $$;
             """
         )
 
@@ -99,7 +135,7 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
             raise RuntimeError("Another history_fetcher run is in progress (advisory lock)")
 
         try:
-            cur.execute("SELECT offset FROM public.fetcher_state WHERE key=%s;", (key,))
+            cur.execute("SELECT batch_offset FROM public.fetcher_state WHERE key=%s;", (key,))
             row = cur.fetchone()
             current = int(row[0]) if row else 0
 
@@ -111,10 +147,10 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
             # upsert
             cur.execute(
                 """
-                INSERT INTO public.fetcher_state(key, offset, updated_at)
+                INSERT INTO public.fetcher_state(key, batch_offset, updated_at)
                 VALUES (%s, %s, NOW())
                 ON CONFLICT (key) DO UPDATE SET
-                  offset = EXCLUDED.offset,
+                  batch_offset = EXCLUDED.batch_offset,
                   updated_at = NOW();
                 """,
                 (key, next_offset),
@@ -193,7 +229,7 @@ def get_24h_quote_volumes() -> Dict[str, float]:
     r = requests.get(f"{BINANCE_BASE}/api/v3/ticker/24hr", headers=UA, timeout=30)
     r.raise_for_status()
     data = r.json()
-    out = {}
+    out: Dict[str, float] = {}
     for item in data:
         sym = item.get("symbol")
         qv = item.get("quoteVolume")
@@ -211,7 +247,7 @@ def fetch_klines(symbol: str, interval: str, start_ms: int) -> List[List]:
     """
     Binance returns max 1000 per call; we loop.
     """
-    out = []
+    out: List[List] = []
     limit = 1000
     start = start_ms
     while True:
@@ -231,7 +267,7 @@ def fetch_klines(symbol: str, interval: str, start_ms: int) -> List[List]:
     return out
 
 def kline_rows(symbol: str, timeframe: str, interval: str, klines: List[List]) -> List[Tuple]:
-    rows = []
+    rows: List[Tuple] = []
     for k in klines:
         open_ms = int(k[0])
         open_time = datetime.fromtimestamp(open_ms / 1000, tz=timezone.utc)
