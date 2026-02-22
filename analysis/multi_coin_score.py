@@ -40,8 +40,8 @@ TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 *
 # Performance / candles
 MIN_CANDLES = int(os.getenv("MIN_CANDLES") or "120")  # genoeg voor SMA/RSI etc
 
-# Regime (MA200) candles needed
-REGIME_CANDLES = int(os.getenv("REGIME_CANDLES") or "300")  # pak genoeg voor MA200 + slope
+# Regime candles needed (MA200 + slope window)
+REGIME_CANDLES = int(os.getenv("REGIME_CANDLES") or "300")  # genoeg voor 200 + 5 lookback
 
 # Optional: test mode (force prebuy)
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
@@ -59,7 +59,6 @@ def log(msg: str) -> None:
 
 
 def db_connect():
-    # Render Postgres: sslmode=require
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
@@ -105,12 +104,10 @@ def fetch_binance_usdt_symbols(limit: int) -> List[str]:
         sym = s.get("symbol", "")
         if not sym.endswith("USDT"):
             continue
-        # filter rare leveraged tokens if you want (optional)
         if sym.endswith(("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")):
             continue
         syms.append(sym)
 
-    # simple deterministic pick
     syms = sorted(set(syms))
     return syms[:limit]
 
@@ -144,7 +141,6 @@ def rsi(values: List[float], period: int = 14) -> Optional[float]:
 def slope(values: List[float], lookback: int = 10) -> Optional[float]:
     if len(values) < lookback + 1:
         return None
-    # simple slope: last - first / lookback
     return (values[-1] - values[-(lookback + 1)]) / float(lookback)
 
 
@@ -153,7 +149,7 @@ def slope(values: List[float], lookback: int = 10) -> Optional[float]:
 # ==========================================================
 def detect_regime_4h(closes_4h: List[float]) -> str:
     """
-    Kinderlijk simpel:
+    Simpel:
     - BULL = prijs boven MA200 én MA200 stijgt
     - BEAR = prijs onder MA200 én MA200 daalt
     - RANGE = alles ertussen
@@ -164,7 +160,6 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
     ma200_now = sum(closes_4h[-200:]) / 200
     ma200_prev = sum(closes_4h[-205:-5]) / 200
     price = closes_4h[-1]
-
     slope_up = ma200_now > ma200_prev
 
     if price > ma200_now and slope_up:
@@ -177,8 +172,8 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
 def normalize_score(raw_score: float, regime: str) -> int:
     """
     Score normalisatie v1:
-    - BEAR: strenger (min 8 punten)
-    - RANGE: beetje strenger (min 4 punten)
+    - BEAR: strenger (-8)
+    - RANGE: iets strenger (-4)
     - BULL: geen correctie
     """
     reg = (regime or "RANGE").upper()
@@ -192,14 +187,15 @@ def normalize_score(raw_score: float, regime: str) -> int:
 
 
 # ==========================================================
-# DB SCHEMA DETECTION (fix fp vs fingerprint, key vs day)
+# DB SCHEMA DETECTION
+# - Belangrijk: trade_fingerprints PRIMARY KEY kolom detecteren
 # ==========================================================
 @dataclass
 class SchemaInfo:
-    fingerprints_col: str          # "fingerprint" or "fp"
+    fingerprints_pk_col: str       # echte PK kolomnaam in trade_fingerprints
     pending_has_timeframe: bool
     pending_has_raw_score: bool
-    prebuy_state_key_col: str      # "day" or "key"
+    prebuy_state_key_col: str      # "day" of "key"
 
 
 def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool:
@@ -217,23 +213,46 @@ def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool
         return bool(cur.fetchone()[0])
 
 
-def detect_schema(conn) -> SchemaInfo:
-    # trade_fingerprints: prefer fingerprint, else fp
-    if table_has_column(conn, "trade_fingerprints", "fingerprint"):
-        fp_col = "fingerprint"
-    elif table_has_column(conn, "trade_fingerprints", "fp"):
-        fp_col = "fp"
-    else:
-        # last resort: create fingerprint col
-        with conn.cursor() as cur:
-            cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
-        conn.commit()
-        fp_col = "fingerprint"
+def detect_trade_fingerprints_pk_col(conn) -> str:
+    """
+    Pak de echte PK kolom uit Postgres.
+    Dit voorkomt NULL/primary-key errors door mismatch fp vs fingerprint.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT a.attname
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = ANY(i.indkey)
+            WHERE n.nspname = 'public'
+              AND c.relname = 'trade_fingerprints'
+              AND i.indisprimary
+            LIMIT 1;
+            """
+        )
+        row = cur.fetchone()
 
+    if row and row[0]:
+        return str(row[0])
+
+    # fallback: meest waarschijnlijke naam
+    if table_has_column(conn, "trade_fingerprints", "fingerprint"):
+        return "fingerprint"
+    if table_has_column(conn, "trade_fingerprints", "fp"):
+        return "fp"
+    # laatste redmiddel: maak fingerprint kolom aan
+    with conn.cursor() as cur:
+        cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
+    conn.commit()
+    return "fingerprint"
+
+
+def detect_schema(conn) -> SchemaInfo:
     pending_has_timeframe = table_has_column(conn, "pending_approvals", "timeframe")
     pending_has_raw_score = table_has_column(conn, "pending_approvals", "raw_score")
 
-    # prebuy_state: your latest DB uses day + created_count
     if table_has_column(conn, "prebuy_state", "day"):
         key_col = "day"
     elif table_has_column(conn, "prebuy_state", "key"):
@@ -252,8 +271,10 @@ def detect_schema(conn) -> SchemaInfo:
         conn.commit()
         key_col = "day"
 
+    pk_col = detect_trade_fingerprints_pk_col(conn)
+
     return SchemaInfo(
-        fingerprints_col=fp_col,
+        fingerprints_pk_col=pk_col,
         pending_has_timeframe=pending_has_timeframe,
         pending_has_raw_score=pending_has_raw_score,
         prebuy_state_key_col=key_col,
@@ -265,8 +286,8 @@ def detect_schema(conn) -> SchemaInfo:
 # ==========================================================
 def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
     """
-    Belangrijk: we willen de LAATSTE candles.
-    Daarom: ORDER BY DESC LIMIT ... en daarna reverse() naar oplopend.
+    Pak de LAATSTE candles:
+    ORDER BY DESC LIMIT ..., daarna reverse() naar ASC.
     """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -282,17 +303,13 @@ def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[st
         rows = cur.fetchall()
 
     data = [dict(r) for r in rows]
-    data.reverse()  # terug naar ASC voor indicators
+    data.reverse()
     return data
 
 
-def fetch_regime_candles(conn, symbol: str) -> List[float]:
-    """
-    Regime altijd op 4H, onafhankelijk van TF_MAIN.
-    """
+def fetch_regime_closes_4h(conn, symbol: str) -> List[float]:
     candles_4h = fetch_candles(conn, symbol, "4h", REGIME_CANDLES)
-    closes_4h = [safe_float(c["close"]) for c in candles_4h]
-    return closes_4h
+    return [safe_float(c["close"]) for c in candles_4h]
 
 
 # ==========================================================
@@ -301,15 +318,11 @@ def fetch_regime_candles(conn, symbol: str) -> List[float]:
 def compute_score_and_levels(closes_main: List[float], closes_ctx: List[float]) -> Tuple[int, float, float, float]:
     """
     Returns: raw_score(0-100), entry, stop, target
-    Very simple version:
-    - entry = last close (main)
-    - stop = 2% below entry
-    - target = entry + 2R (R = entry-stop)
     """
-    entry = closes_main[-1]
-    stop = entry * 0.98
+    entry = float(closes_main[-1])
+    stop = float(entry * 0.98)
     r = entry - stop
-    target = entry + 2.0 * r
+    target = float(entry + 2.0 * r)
 
     sma20 = sma(closes_main, 20)
     sma50 = sma(closes_main, 50)
@@ -318,33 +331,28 @@ def compute_score_and_levels(closes_main: List[float], closes_ctx: List[float]) 
 
     score = 50
 
-    # trend bias
     if sma20 is not None and sma50 is not None:
         if sma20 > sma50:
             score += 15
         else:
             score -= 10
 
-    # momentum
     if rsi14 is not None:
         if 45 <= rsi14 <= 65:
             score += 10
         elif rsi14 > 70:
-            score -= 10  # overbought penalty
+            score -= 10
         elif rsi14 < 35:
-            score -= 5   # weak / oversold
+            score -= 5
 
-    # slope
     if s20_slope is not None:
         if s20_slope > 0:
             score += 10
         else:
             score -= 10
 
-    # clamp
     score = max(0, min(100, score))
-
-    return int(score), float(entry), float(stop), float(target)
+    return int(score), entry, stop, target
 
 
 def label_from_score(score: int) -> str:
@@ -357,7 +365,7 @@ def label_from_score(score: int) -> str:
 
 def chance_from_score(score: int, regime: str) -> int:
     """
-    Chance = score met kleine nuance per regime (bovenop normalisatie).
+    Kleine nuance bovenop genormaliseerde score.
     """
     chance = int(score)
     reg = (regime or "RANGE").upper()
@@ -377,7 +385,13 @@ def make_fingerprint(symbol: str, setup_type: str, entry: float, target: float) 
 
 
 def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds: int) -> bool:
-    col = schema.fingerprints_col
+    """
+    True als fingerprint bestaat en nog binnen cooldown zit.
+    """
+    if not fp_value:
+        return False
+
+    col = schema.fingerprints_pk_col
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"""
@@ -401,7 +415,14 @@ def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds
 
 
 def upsert_fingerprint(conn, schema: SchemaInfo, fp_value: str) -> None:
-    col = schema.fingerprints_col
+    """
+    Schrijf ALTIJD naar de echte PK kolom (fingerprint of fp).
+    Nooit NULL.
+    """
+    if not fp_value:
+        return
+
+    col = schema.fingerprints_pk_col
     with conn.cursor() as cur:
         cur.execute(
             f"""
@@ -465,21 +486,20 @@ def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
         "entry", "stop", "target",
         "status", "created_at", "expires_at",
     ]
-    if schema.pending_has_timeframe:
-        base_cols.insert(3, "timeframe")  # after setup_type
 
-    # Optional raw_score
+    if schema.pending_has_timeframe:
+        base_cols.insert(3, "timeframe")
+
     if schema.pending_has_raw_score and "raw_score" in payload:
-        # zet raw_score naast score, maakt niet uit waar exact
-        base_cols.insert(base_cols.index("score"), "raw_score")
+        if "raw_score" not in base_cols:
+            base_cols.insert(base_cols.index("score"), "raw_score")
 
     cols: List[str] = []
     vals: List[Any] = []
     for c in base_cols:
-        if c not in payload:
-            continue
-        cols.append(c)
-        vals.append(payload[c])
+        if c in payload:
+            cols.append(c)
+            vals.append(payload[c])
 
     placeholders = ", ".join(["%s"] * len(cols))
     col_sql = ", ".join(cols)
@@ -511,6 +531,7 @@ def main() -> None:
         created_today = get_created_today(conn, schema)
         day = get_day_key()
         log(f"🟣 multi_coin_score | day={day} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+        log(f"🔧 trade_fingerprints PK column = {schema.fingerprints_pk_col}")
 
         universe = fetch_binance_usdt_symbols(UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
@@ -524,7 +545,6 @@ def main() -> None:
                 continue
 
             try:
-                # 1) candles
                 candles_main = fetch_candles(conn, symbol, TF_MAIN, MIN_CANDLES)
                 candles_ctx = fetch_candles(conn, symbol, TF_CTX, MIN_CANDLES)
 
@@ -535,17 +555,14 @@ def main() -> None:
                 closes_main = [safe_float(c["close"]) for c in candles_main]
                 closes_ctx = [safe_float(c["close"]) for c in candles_ctx]
 
-                # 2) regime (altijd op 4H)
-                closes_4h = fetch_regime_candles(conn, symbol)
+                # Regime op 4h
+                closes_4h = fetch_regime_closes_4h(conn, symbol)
                 regime = detect_regime_4h(closes_4h)
 
-                # 3) raw score
+                # Raw score + normalize
                 raw_score, entry, stop, target = compute_score_and_levels(closes_main, closes_ctx)
-
-                # 4) normalize score per regime
                 score = normalize_score(raw_score, regime)
 
-                # Optional: force test prebuy
                 if FORCE_TEST_PREBUY:
                     score = max(score, MIN_SCORE_TO_PREBUY)
 
@@ -555,17 +572,15 @@ def main() -> None:
                     continue
 
                 chance = chance_from_score(score, regime)
-                confidence = chance  # simple mapping; you can refine later
+                confidence = chance
 
-                setup_type = "TREND_PULLBACK"  # your current default
+                setup_type = "TREND_PULLBACK"
                 fp_value = make_fingerprint(symbol, setup_type, entry, target)
 
-                # 5) dedup check
                 if fingerprint_recent(conn, schema, fp_value, TRADE_COOLDOWN_SECONDS):
                     skipped += 1
                     continue
 
-                # 6) build payload
                 prebuy_id = f"PB-{symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}-{fp_value[:6]}"
                 expires_at = now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS)
 
@@ -575,7 +590,7 @@ def main() -> None:
                     "setup_type": setup_type,
                     "timeframe": TF_MAIN,
                     "regime": regime,
-                    "score": int(score),              # genormaliseerde score
+                    "score": int(score),  # normalized
                     "chance": int(chance),
                     "confidence": int(confidence),
                     "entry": float(entry),
@@ -585,12 +600,9 @@ def main() -> None:
                     "created_at": now_utc(),
                     "expires_at": expires_at,
                 }
-
-                # Optional raw_score (alleen als kolom bestaat)
                 if schema.pending_has_raw_score:
                     payload["raw_score"] = int(raw_score)
 
-                # 7) write DB (IMPORTANT: rollback safety)
                 try:
                     insert_pending(conn, schema, payload)
                     upsert_fingerprint(conn, schema, fp_value)
