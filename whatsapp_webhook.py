@@ -36,6 +36,7 @@ ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 # - "auto"   -> probeert eerst paper, dan live
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
+
 # ==========================================================
 # UTIL
 # ==========================================================
@@ -82,6 +83,11 @@ def as_aware_utc(dt: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
+def _request_ip() -> str:
+    xf = (request.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+    return xf or (request.remote_addr or "unknown")
+
+
 # ==========================================================
 # HEALTH ROUTES (fix voor 502 / pings)
 # ==========================================================
@@ -93,6 +99,13 @@ def root():
 @app.get("/healthz")
 def healthz():
     return "OK", 200
+
+
+# Render/Twilio tooling ziet soms /clientIP pings in logs.
+# Zonder route kan je rare 502/404 ruis krijgen.
+@app.get("/clientIP")
+def client_ip():
+    return _request_ip(), 200
 
 
 # ==========================================================
@@ -272,7 +285,10 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
             # Als trader een dict teruggeeft met ok=True -> succes
             if isinstance(res, dict):
                 if res.get("ok") is True:
-                    return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
+                    extra = ""
+                    if "price" in res or "qty" in res:
+                        extra = f" (qty={res.get('qty')}, price={res.get('price')})"
+                    return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}{extra}"
                 return False, f"{mode} BUY faalde: {res}"
 
             # Als trader niets teruggeeft, beschouwen we dat als succes (maar melden we dat)
@@ -355,7 +371,7 @@ def whatsapp():
                 pending = fetch_pending(conn, limit=10)
                 if not pending:
                     return twiml("Geen pending Pre-BUYs.")
-                lines = ["Pending Pre-BUYs (max 10):"]
+                lines = [f"Pending Pre-BUYs (max 10) | trader={TRADER_MODE}:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]  of  NO <ID>")
                 return twiml("\n".join(lines))
@@ -364,7 +380,7 @@ def whatsapp():
                 pending = fetch_pending(conn, limit=5)
                 if not pending:
                     return twiml("Geen pending Pre-BUYs.")
-                lines = ["TOP 5 (chance):"]
+                lines = [f"TOP 5 (chance) | trader={TRADER_MODE}:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]")
                 return twiml("\n".join(lines))
