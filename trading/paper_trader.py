@@ -1,296 +1,197 @@
 # trading/paper_trader.py
-# =========================================
-# LIVE TRADER (Bitvavo) – single source of truth
-# + Postgres approvals (pending_approvals)
-# =========================================
-
 from __future__ import annotations
 
 import os
-import time
 import json
-import hmac
-import hashlib
-import requests
+import time
 from datetime import datetime
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 
-import psycopg2
-import psycopg2.extras
+import requests
 
-# =========================================
-# ENV
-# =========================================
-BITVAVO_API_KEY = os.getenv("BITVAVO_API_KEY")
-BITVAVO_API_SECRET = os.getenv("BITVAVO_API_SECRET")
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-USE_DB_APPROVALS = (os.getenv("USE_DB_APPROVALS") or "1").strip().lower() in {"1", "true", "yes", "on"}
-
-if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
-    raise RuntimeError("❌ BITVAVO_API_KEY / SECRET ontbreken")
-
-BASE_URL = "https://api.bitvavo.com/v2"
-HTTP_TIMEOUT = 15
-
-# =========================================
+# ==========================================================
 # DATA DIR (disk-safe fallback)
-# =========================================
+# ==========================================================
 def _get_data_dir() -> str:
     d = (os.getenv("DATA_DIR") or "").strip()
     if d:
         return d
     return "/data" if os.path.isdir("/data") else "/tmp/data"
 
+
 DATA_DIR = _get_data_dir()
-STATE_PATH = os.path.join(DATA_DIR, "paper_state.json")
-LOG_PATH = os.path.join(DATA_DIR, "paper_trades.csv")
+STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
+TRADES_CSV = (os.getenv("PAPER_TRADES_CSV") or os.path.join(DATA_DIR, "paper_trades.csv")).strip()
+
+HTTP_TIMEOUT = 15
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
 
 
-# =========================================
-# DB
-# =========================================
-def db_conn():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL ontbreekt (maar USE_DB_APPROVALS=1).")
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
-
-
-def ensure_tables():
-    if not USE_DB_APPROVALS:
-        return
-    sql = """
-    CREATE TABLE IF NOT EXISTS pending_approvals (
-        id              TEXT PRIMARY KEY,
-        symbol          TEXT NOT NULL,
-        coin            TEXT,
-        setup_type      TEXT,
-        label           TEXT,
-        score           INTEGER,
-        grade           TEXT,
-        entry           DOUBLE PRECISION,
-        stop_loss       DOUBLE PRECISION,
-        target          DOUBLE PRECISION,
-        regime          TEXT,
-        bot_confidence  INTEGER,
-        payload         JSONB,
-        status          TEXT NOT NULL DEFAULT 'PENDING',
-        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        expires_at      TIMESTAMPTZ NOT NULL,
-        approved_amount DOUBLE PRECISION,
-        approved_by     TEXT,
-        approved_at     TIMESTAMPTZ,
-        consumed_at     TIMESTAMPTZ,
-        note            TEXT
-    );
-    """
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-        conn.commit()
-
-
-def _consume_approval_db(prebuy_id: str) -> bool:
-    """
-    Alleen CONSUME als:
-    - status=APPROVED
-    - expires_at > NOW()
-    Dan zetten we status=CONSUMED.
-    """
-    ensure_tables()
-    q = """
-    UPDATE pending_approvals
-    SET status='CONSUMED',
-        consumed_at=NOW()
-    WHERE id=%s
-      AND status='APPROVED'
-      AND expires_at > NOW()
-    """
-    with db_conn() as conn:
-        with conn.cursor() as cur:
-            cur.execute(q, (prebuy_id,))
-            ok = cur.rowcount > 0
-        conn.commit()
-    return ok
-
-
-# =========================================
-# HELPERS
-# =========================================
-def _sign(timestamp: str, method: str, path: str, body: str = "") -> str:
-    msg = timestamp + method + path + body
-    return hmac.new(
-        BITVAVO_API_SECRET.encode(),
-        msg.encode(),
-        hashlib.sha256
-    ).hexdigest()
-
-
-def _headers(method: str, path: str, body: str = "") -> Dict[str, str]:
-    ts = str(int(time.time() * 1000))
-    return {
-        "Bitvavo-Access-Key": BITVAVO_API_KEY,
-        "Bitvavo-Access-Signature": _sign(ts, method, path, body),
-        "Bitvavo-Access-Timestamp": ts,
-        "Content-Type": "application/json"
-    }
-
-
-def ensure_dir(path: str):
+# ==========================================================
+# IO HELPERS
+# ==========================================================
+def _ensure_dir(path: str) -> None:
     d = os.path.dirname(path)
     if d and not os.path.exists(d):
         os.makedirs(d, exist_ok=True)
 
 
-# =========================================
-# MARKET DATA
-# =========================================
-def get_price(symbol: str) -> float:
-    r = requests.get(
-        f"{BASE_URL}/ticker/price",
-        params={"market": symbol.replace("USDT", "-EUR")},
-        timeout=HTTP_TIMEOUT
-    )
-    r.raise_for_status()
-    return float(r.json()["price"])
-
-
-# =========================================
-# STATE
-# =========================================
 def _load_state() -> Dict[str, Any]:
-    ensure_dir(STATE_PATH)
+    _ensure_dir(STATE_PATH)
     if not os.path.exists(STATE_PATH):
-        return {"positions": {}}
-    with open(STATE_PATH, "r") as f:
-        return json.load(f)
+        return {"positions": {}, "open_trades": [], "balance_eur": 0.0}
+    try:
+        with open(STATE_PATH, "r", encoding="utf-8") as f:
+            s = json.load(f)
+    except Exception:
+        s = {"positions": {}, "open_trades": [], "balance_eur": 0.0}
+
+    s.setdefault("positions", {})
+    s.setdefault("open_trades", [])
+    s.setdefault("balance_eur", 0.0)
+    return s
 
 
-def _save_state(state: Dict[str, Any]):
-    ensure_dir(STATE_PATH)
-    with open(STATE_PATH, "w") as f:
-        json.dump(state, f, indent=2)
+def _save_state(state: Dict[str, Any]) -> None:
+    _ensure_dir(STATE_PATH)
+    tmp = STATE_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, STATE_PATH)
 
 
-# =========================================
-# LOG
-# =========================================
-def _log(symbol, side, price, qty, pnl=0.0, meta=""):
-    ensure_dir(LOG_PATH)
-    new = not os.path.exists(LOG_PATH)
-    with open(LOG_PATH, "a") as f:
+def _log_csv(symbol: str, side: str, price: float, qty: float, pnl: float = 0.0, meta: str = "") -> None:
+    _ensure_dir(TRADES_CSV)
+    new = not os.path.exists(TRADES_CSV)
+    with open(TRADES_CSV, "a", encoding="utf-8") as f:
         if new:
             f.write("datetime,symbol,side,price,qty,pnl,meta\n")
         f.write(
             f"{datetime.utcnow().isoformat()},"
-            f"{symbol},{side},{price},{qty},{pnl},{meta}\n"
+            f"{symbol},{side},{price:.10f},{qty:.10f},{pnl:.6f},{meta}\n"
         )
 
 
-# =========================================
-# LIVE BUY
-# =========================================
-def buy_eur(
-    symbol: str,
-    amount_eur: float,
-    stop_loss: float,
-    target: float,
-    prebuy_id: str
-) -> Dict[str, Any]:
-
-    # 1) Consume approval vanuit DB
-    if USE_DB_APPROVALS:
-        if not _consume_approval_db(prebuy_id):
-            return {"ok": False, "reason": "APPROVAL_INVALID_OR_EXPIRED"}
-    else:
-        return {"ok": False, "reason": "USE_DB_APPROVALS_DISABLED"}
-
-    # 2) Plaats market buy op Bitvavo
-    body = json.dumps({
-        "market": symbol.replace("USDT", "-EUR"),
-        "side": "buy",
-        "orderType": "market",
-        "amountQuote": f"{float(amount_eur):.2f}"
-    })
-
-    path = "/order"
-    r = requests.post(
-        BASE_URL + path,
-        headers=_headers("POST", path, body),
-        data=body,
-        timeout=HTTP_TIMEOUT
-    )
+# ==========================================================
+# MARKET DATA
+# ==========================================================
+def get_price(symbol: str) -> float:
+    r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
-    res = r.json()
+    return float(r.json()["price"])
 
-    filled_qty = float(res.get("filledAmount", 0) or 0)
-    price = float(res.get("price", 0) or 0)
 
-    # 3) State opslaan (monitor gebruikt dit)
+# ==========================================================
+# PAPER BUY / SELL
+# ==========================================================
+def buy_eur(symbol: str, amount_eur: float, meta: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    """
+    Paper BUY:
+    - accepteert meta=... (zodat webhook nooit crasht)
+    - schrijft naar paper_state.json:
+        positions[symbol] + open_trades[]
+    """
+    meta = meta or {}
+
+    entry = float(meta.get("entry") or 0.0)
+    stop = float(meta.get("stop") or meta.get("stop_loss") or 0.0)
+    target = float(meta.get("target") or 0.0)
+    prebuy_id = str(meta.get("prebuy_id") or meta.get("id") or kwargs.get("prebuy_id") or "")
+
+    # fallback: haal prijs live op
+    if entry <= 0:
+        try:
+            entry = get_price(symbol)
+        except Exception:
+            entry = 0.0
+
+    if entry <= 0:
+        return {"ok": False, "reason": "NO_PRICE"}
+
+    # simpele qty berekening (paper)
+    qty = float(amount_eur) / entry if entry > 0 else 0.0
+    if qty <= 0:
+        return {"ok": False, "reason": "QTY_ZERO"}
+
     state = _load_state()
     state.setdefault("positions", {})
+    state.setdefault("open_trades", [])
+
+    # positions voor monitor
     state["positions"][symbol] = {
-        "qty": filled_qty,
-        "entry": price,
-        "stop_loss": float(stop_loss),
-        "target": float(target),
+        "qty": qty,
+        "entry": entry,
+        "stop_loss": stop,
+        "target": target,
         "opened_at": int(time.time()),
-        "prebuy_id": prebuy_id
+        "prebuy_id": prebuy_id,
     }
-    _save_state(state)
 
-    _log(symbol, "BUY", price, filled_qty, meta=f"prebuy={prebuy_id}")
-
-    return {
-        "ok": True,
+    # open_trades voor monitor (jouw trade_monitor leest dit)
+    trade_obj: Dict[str, Any] = {
         "symbol": symbol,
-        "qty": filled_qty,
-        "price": price
+        "entry": entry,
+        "stop_loss": stop,
+        "target": target,
+        "opened_at": int(time.time()),
+        "prebuy_id": prebuy_id,
+        # extra context als aanwezig
+        "setup_type": meta.get("setup_type"),
+        "timeframe": meta.get("timeframe"),
+        "regime": meta.get("regime"),
+        "score": meta.get("score"),
+        "raw_score": meta.get("raw_score"),
+        "chance": meta.get("chance"),
+        "confidence": meta.get("confidence"),
+        "label": meta.get("label"),
     }
+    state["open_trades"].append(trade_obj)
+
+    _save_state(state)
+    _log_csv(symbol, "BUY", entry, qty, pnl=0.0, meta=f"prebuy={prebuy_id}")
+
+    return {"ok": True, "symbol": symbol, "qty": qty, "price": entry}
 
 
-# =========================================
-# LIVE SELL
-# =========================================
-def sell(symbol: str, fraction: float = 1.0) -> Dict[str, Any]:
+def sell(symbol: str, fraction: float = 1.0, **kwargs) -> Dict[str, Any]:
+    """
+    Paper SELL:
+    - gebruikt paper_state.json
+    - returnt dict met ok, price, qty, pnl (zoals jouw trade_monitor verwacht)
+    """
     state = _load_state()
-    pos = state.get("positions", {}).get(symbol)
-
+    pos = (state.get("positions") or {}).get(symbol)
     if not pos:
         return {"ok": False, "reason": "NO_POSITION"}
 
-    qty = pos["qty"] * fraction
+    entry = float(pos.get("entry") or 0.0)
+    qty_total = float(pos.get("qty") or 0.0)
+    if qty_total <= 0:
+        return {"ok": False, "reason": "QTY_ZERO"}
 
-    body = json.dumps({
-        "market": symbol.replace("USDT", "-EUR"),
-        "side": "sell",
-        "orderType": "market",
-        "amount": f"{qty:.8f}"
-    })
+    fraction = float(fraction)
+    if fraction <= 0:
+        return {"ok": False, "reason": "BAD_FRACTION"}
 
-    path = "/order"
-    r = requests.post(
-        BASE_URL + path,
-        headers=_headers("POST", path, body),
-        data=body,
-        timeout=HTTP_TIMEOUT
-    )
-    r.raise_for_status()
-    res = r.json()
+    qty = qty_total * min(1.0, fraction)
 
-    exit_price = float(res.get("price", 0) or 0)
-    pnl = (exit_price - pos["entry"]) * qty
+    try:
+        price = get_price(symbol)
+    except Exception:
+        price = entry if entry > 0 else 0.0
 
+    pnl = (price - entry) * qty
+
+    # update position
     if fraction >= 1.0:
         del state["positions"][symbol]
+        # open_trades opruimen
+        state["open_trades"] = [t for t in (state.get("open_trades") or []) if t.get("symbol") != symbol]
     else:
-        pos["qty"] -= qty
+        pos["qty"] = qty_total - qty
+        state["positions"][symbol] = pos
 
     _save_state(state)
-    _log(symbol, "SELL", exit_price, qty, pnl=pnl)
+    _log_csv(symbol, "SELL", price, qty, pnl=pnl, meta="paper_sell")
 
-    return {
-        "ok": True,
-        "price": exit_price,
-        "qty": qty,
-        "pnl": pnl
-    }
+    return {"ok": True, "price": float(price), "qty": float(qty), "pnl": float(pnl)}
