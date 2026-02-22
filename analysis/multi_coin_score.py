@@ -7,7 +7,7 @@ import hashlib
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 
 import psycopg2
 import psycopg2.extras
@@ -39,12 +39,13 @@ TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 *
 
 # Performance / candles
 MIN_CANDLES = int(os.getenv("MIN_CANDLES") or "120")  # genoeg voor SMA/RSI etc
-
-# Regime candles needed (MA200 + slope window)
-REGIME_CANDLES = int(os.getenv("REGIME_CANDLES") or "300")  # genoeg voor 200 + 5 lookback
+REGIME_CANDLES = int(os.getenv("REGIME_CANDLES") or "300")
 
 # Optional: test mode (force prebuy)
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+
+# Scoreboard refresh (hoe vaak per run)
+SCOREBOARD_REFRESH = (os.getenv("SCOREBOARD_REFRESH") or "1").strip() == "1"
 
 
 # ==========================================================
@@ -148,12 +149,6 @@ def slope(values: List[float], lookback: int = 10) -> Optional[float]:
 # REGIME DETECTION (BULL/BEAR/RANGE) on 4H closes
 # ==========================================================
 def detect_regime_4h(closes_4h: List[float]) -> str:
-    """
-    Simpel:
-    - BULL = prijs boven MA200 én MA200 stijgt
-    - BEAR = prijs onder MA200 én MA200 daalt
-    - RANGE = alles ertussen
-    """
     if len(closes_4h) < 205:
         return "RANGE"
 
@@ -170,32 +165,26 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
 
 
 def normalize_score(raw_score: float, regime: str) -> int:
-    """
-    Score normalisatie v1:
-    - BEAR: strenger (-8)
-    - RANGE: iets strenger (-4)
-    - BULL: geen correctie
-    """
     reg = (regime or "RANGE").upper()
     if reg == "BEAR":
         raw_score -= 8
     elif reg == "RANGE":
         raw_score -= 4
-
     raw_score = max(0, min(100, raw_score))
     return int(round(raw_score))
 
 
 # ==========================================================
 # DB SCHEMA DETECTION
-# - Belangrijk: trade_fingerprints PRIMARY KEY kolom detecteren
 # ==========================================================
 @dataclass
 class SchemaInfo:
-    fingerprints_pk_col: str       # echte PK kolomnaam in trade_fingerprints
+    fingerprints_pk_col: str
     pending_has_timeframe: bool
     pending_has_raw_score: bool
-    prebuy_state_key_col: str      # "day" of "key"
+    prebuy_state_key_col: str
+    has_experience_trades: bool
+    has_experience_scoreboard: bool
 
 
 def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool:
@@ -213,11 +202,22 @@ def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool
         return bool(cur.fetchone()[0])
 
 
+def table_exists(conn, table: str, schema: str = "public") -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(
+              SELECT 1
+              FROM information_schema.tables
+              WHERE table_schema=%s AND table_name=%s
+            )
+            """,
+            (schema, table),
+        )
+        return bool(cur.fetchone()[0])
+
+
 def detect_trade_fingerprints_pk_col(conn) -> str:
-    """
-    Pak de echte PK kolom uit Postgres.
-    Dit voorkomt NULL/primary-key errors door mismatch fp vs fingerprint.
-    """
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -237,12 +237,11 @@ def detect_trade_fingerprints_pk_col(conn) -> str:
     if row and row[0]:
         return str(row[0])
 
-    # fallback: meest waarschijnlijke naam
     if table_has_column(conn, "trade_fingerprints", "fingerprint"):
         return "fingerprint"
     if table_has_column(conn, "trade_fingerprints", "fp"):
         return "fp"
-    # laatste redmiddel: maak fingerprint kolom aan
+
     with conn.cursor() as cur:
         cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
     conn.commit()
@@ -273,22 +272,23 @@ def detect_schema(conn) -> SchemaInfo:
 
     pk_col = detect_trade_fingerprints_pk_col(conn)
 
+    has_exp_trades = table_exists(conn, "experience_trades")
+    has_exp_score = table_exists(conn, "experience_scoreboard")
+
     return SchemaInfo(
         fingerprints_pk_col=pk_col,
         pending_has_timeframe=pending_has_timeframe,
         pending_has_raw_score=pending_has_raw_score,
         prebuy_state_key_col=key_col,
+        has_experience_trades=has_exp_trades,
+        has_experience_scoreboard=has_exp_score,
     )
 
 
 # ==========================================================
-# DB READ: candles from Postgres (table public.candles)
+# DB READ: candles from Postgres
 # ==========================================================
 def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
-    """
-    Pak de LAATSTE candles:
-    ORDER BY DESC LIMIT ..., daarna reverse() naar ASC.
-    """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -313,12 +313,9 @@ def fetch_regime_closes_4h(conn, symbol: str) -> List[float]:
 
 
 # ==========================================================
-# SCORING (simple, stable)
+# SCORING
 # ==========================================================
 def compute_score_and_levels(closes_main: List[float], closes_ctx: List[float]) -> Tuple[int, float, float, float]:
-    """
-    Returns: raw_score(0-100), entry, stop, target
-    """
     entry = float(closes_main[-1])
     stop = float(entry * 0.98)
     r = entry - stop
@@ -364,9 +361,6 @@ def label_from_score(score: int) -> str:
 
 
 def chance_from_score(score: int, regime: str) -> int:
-    """
-    Kleine nuance bovenop genormaliseerde score.
-    """
     chance = int(score)
     reg = (regime or "RANGE").upper()
     if reg == "BULL":
@@ -385,9 +379,6 @@ def make_fingerprint(symbol: str, setup_type: str, entry: float, target: float) 
 
 
 def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds: int) -> bool:
-    """
-    True als fingerprint bestaat en nog binnen cooldown zit.
-    """
     if not fp_value:
         return False
 
@@ -415,10 +406,6 @@ def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds
 
 
 def upsert_fingerprint(conn, schema: SchemaInfo, fp_value: str) -> None:
-    """
-    Schrijf ALTIJD naar de echte PK kolom (fingerprint of fp).
-    Nooit NULL.
-    """
     if not fp_value:
         return
 
@@ -473,13 +460,9 @@ def inc_created_today(conn, schema: SchemaInfo, inc: int = 1) -> None:
 
 
 # ==========================================================
-# INSERT pending_approvals (dynamic for missing columns)
+# INSERT pending_approvals (dynamic)
 # ==========================================================
 def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
-    """
-    Writes into pending_approvals.
-    Must not crash if some columns don't exist.
-    """
     base_cols = [
         "id", "symbol", "setup_type",
         "regime", "score", "chance", "confidence",
@@ -517,6 +500,113 @@ def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
 
 
 # ==========================================================
+# EXPERIENCE (trades + scoreboard)
+# ==========================================================
+def insert_experience_trade(conn, payload: Dict[str, Any]) -> None:
+    """
+    Log elke prebuy als ervaring (GO/WATCH). Outcome blijft UNKNOWN tot trade_monitor sluit.
+    """
+    cols = [
+        "id", "exchange", "symbol", "timeframe", "setup_type", "regime",
+        "label", "score", "raw_score", "chance", "confidence",
+        "entry", "stop", "target",
+        "outcome", "is_shadow", "created_at",
+    ]
+
+    use_cols: List[str] = []
+    use_vals: List[Any] = []
+    for c in cols:
+        if c in payload and payload[c] is not None:
+            use_cols.append(c)
+            use_vals.append(payload[c])
+
+    placeholders = ", ".join(["%s"] * len(use_cols))
+    col_sql = ", ".join(use_cols)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO public.experience_trades ({col_sql})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO NOTHING
+            """,
+            tuple(use_vals),
+        )
+
+
+def refresh_scoreboard_for(conn, exchange: str, timeframe: str, setup_type: str, regime: str) -> None:
+    """
+    Recompute scoreboard row for (exchange,timeframe,setup,regime).
+    Alleen closed trades (WIN/LOSS) tellen voor winrate/avg_r/expectancy.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+              COUNT(*)::int AS n_total,
+              COUNT(*) FILTER (WHERE outcome='WIN')::int AS n_win,
+              COUNT(*) FILTER (WHERE outcome='LOSS')::int AS n_loss,
+              AVG(result_r) FILTER (WHERE result_r IS NOT NULL)::float AS avg_r,
+              AVG(result_r) FILTER (WHERE outcome='WIN'  AND result_r IS NOT NULL)::float AS avg_win_r,
+              AVG(result_r) FILTER (WHERE outcome='LOSS' AND result_r IS NOT NULL)::float AS avg_loss_r
+            FROM public.experience_trades
+            WHERE exchange=%s AND timeframe=%s AND setup_type=%s AND regime=%s
+              AND outcome IN ('WIN','LOSS')
+            """,
+            (exchange, timeframe, setup_type, regime),
+        )
+        row = cur.fetchone() or {}
+
+    n_total = safe_int(row.get("n_total"), 0)
+    n_win = safe_int(row.get("n_win"), 0)
+    n_loss = safe_int(row.get("n_loss"), 0)
+
+    denom = n_win + n_loss
+    winrate = (n_win / denom) if denom > 0 else 0.0
+
+    avg_r = float(row.get("avg_r") or 0.0)
+    avg_win_r = float(row.get("avg_win_r") or 0.0)
+    avg_loss_r = float(row.get("avg_loss_r") or 0.0)  # negative
+
+    expectancy = (winrate * avg_win_r) + ((1.0 - winrate) * avg_loss_r) if denom > 0 else 0.0
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO public.experience_scoreboard
+              (exchange, timeframe, setup_type, regime, n_total, n_win, n_loss, winrate, avg_r, expectancy, updated_at)
+            VALUES
+              (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (exchange, timeframe, setup_type, regime)
+            DO UPDATE SET
+              n_total=EXCLUDED.n_total,
+              n_win=EXCLUDED.n_win,
+              n_loss=EXCLUDED.n_loss,
+              winrate=EXCLUDED.winrate,
+              avg_r=EXCLUDED.avg_r,
+              expectancy=EXCLUDED.expectancy,
+              updated_at=NOW()
+            """,
+            (exchange, timeframe, setup_type, regime, n_total, n_win, n_loss, winrate, avg_r, expectancy),
+        )
+
+
+def fetch_scoreboard(conn, exchange: str, timeframe: str, setup_type: str, regime: str) -> Optional[Dict[str, Any]]:
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT n_total, n_win, n_loss, winrate, avg_r, expectancy, updated_at
+            FROM public.experience_scoreboard
+            WHERE exchange=%s AND timeframe=%s AND setup_type=%s AND regime=%s
+            LIMIT 1
+            """,
+            (exchange, timeframe, setup_type, regime),
+        )
+        row = cur.fetchone()
+    return dict(row) if row else None
+
+
+# ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
@@ -532,12 +622,16 @@ def main() -> None:
         day = get_day_key()
         log(f"🟣 multi_coin_score | day={day} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
         log(f"🔧 trade_fingerprints PK column = {schema.fingerprints_pk_col}")
+        log(f"🧠 experience tables: trades={schema.has_experience_trades} scoreboard={schema.has_experience_scoreboard}")
 
         universe = fetch_binance_usdt_symbols(UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
 
         created = 0
         skipped = 0
+
+        # scoreboard refresh only for combos we touched (setup+regime)
+        touched: Set[Tuple[str, str, str]] = set()  # (timeframe, setup_type, regime)
 
         for symbol in universe:
             if created_today >= MAX_PREBUY_PER_DAY:
@@ -603,10 +697,36 @@ def main() -> None:
                 if schema.pending_has_raw_score:
                     payload["raw_score"] = int(raw_score)
 
+                # Experience payload (log GO/WATCH als ervaring)
+                exp_payload: Dict[str, Any] = {
+                    "id": prebuy_id,  # 1 id gebruiken is simpel en strak
+                    "exchange": EXCHANGE,
+                    "symbol": symbol,
+                    "timeframe": TF_MAIN,
+                    "setup_type": setup_type,
+                    "regime": regime,
+                    "label": label,
+                    "score": int(score),
+                    "raw_score": int(raw_score),
+                    "chance": int(chance),
+                    "confidence": int(confidence),
+                    "entry": float(entry),
+                    "stop": float(stop),
+                    "target": float(target),
+                    "outcome": "UNKNOWN",
+                    "is_shadow": True,
+                    "created_at": now_utc(),
+                }
+
                 try:
                     insert_pending(conn, schema, payload)
                     upsert_fingerprint(conn, schema, fp_value)
                     inc_created_today(conn, schema, 1)
+
+                    if schema.has_experience_trades:
+                        insert_experience_trade(conn, exp_payload)
+                        touched.add((TF_MAIN, setup_type, regime))
+
                     conn.commit()
                 except Exception as db_e:
                     conn.rollback()
@@ -617,8 +737,27 @@ def main() -> None:
                 created += 1
                 created_today += 1
 
+                # Scoreboard info (indien al beschikbaar)
+                sb_txt = ""
+                if schema.has_experience_scoreboard:
+                    try:
+                        sb = fetch_scoreboard(conn, EXCHANGE, TF_MAIN, setup_type, regime)
+                        if sb:
+                            n_total = safe_int(sb.get("n_total"), 0)
+                            winrate = float(sb.get("winrate") or 0.0)
+                            expectancy = float(sb.get("expectancy") or 0.0)
+                            sb_txt = f" | SB n={n_total} wr={winrate:.2f} exp={expectancy:.2f}"
+                    except Exception:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
+
                 dot = "🟢" if label == "GO" else "🟡"
-                log(f"{dot} {symbol}: {label} raw={raw_score} norm={score} chance={chance} regime={regime} id={prebuy_id}")
+                log(
+                    f"{dot} {symbol}: {label} raw={raw_score} norm={score} chance={chance} "
+                    f"regime={regime} id={prebuy_id}{sb_txt}"
+                )
 
             except Exception as e:
                 try:
@@ -627,6 +766,17 @@ def main() -> None:
                     pass
                 skipped += 1
                 log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
+
+        # Refresh scoreboard rows we touched (alleen als er closed trades zijn)
+        if SCOREBOARD_REFRESH and schema.has_experience_scoreboard and schema.has_experience_trades and touched:
+            try:
+                for (tf, setup, reg) in sorted(touched):
+                    refresh_scoreboard_for(conn, EXCHANGE, tf, setup, reg)
+                conn.commit()
+                log(f"🧠 scoreboard refreshed for {len(touched)} combo(s)")
+            except Exception as e:
+                conn.rollback()
+                log(f"⚠️ scoreboard refresh failed: {type(e).__name__}: {e}")
 
         elapsed = round(time.time() - start, 1)
         log(f"✅ DONE created={created} skipped={skipped} seconds={elapsed}")
