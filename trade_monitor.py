@@ -2,8 +2,12 @@ import os
 import sys
 import json
 import time
-from typing import Dict, Any, List, Optional
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional, Tuple
+
 import requests
+import psycopg2
+import psycopg2.extras
 
 # =========================
 # ✅ Project-root fix
@@ -13,6 +17,250 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from trading.paper_trader import sell  # noqa: E402
+
+# =========================
+# ✅ DATABASE (Experience)
+# =========================
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+
+def db_ready() -> bool:
+    return bool(DATABASE_URL)
+
+def db_connect():
+    # Render Postgres: sslmode=require
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+def now_utc_dt() -> datetime:
+    return datetime.now(timezone.utc)
+
+def _table_exists(conn, fq_table: str) -> bool:
+    # fq_table like 'public.experience_trades'
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass(%s);", (fq_table,))
+            return cur.fetchone()[0] is not None
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+def _has_column(conn, table: str, col: str, schema: str = "public") -> bool:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT EXISTS(
+                  SELECT 1
+                  FROM information_schema.columns
+                  WHERE table_schema=%s AND table_name=%s AND column_name=%s
+                )
+                """,
+                (schema, table, col),
+            )
+            return bool(cur.fetchone()[0])
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+
+def _safe_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
+
+def _safe_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+def _infer_outcome(result_r: float) -> str:
+    # simpele en stabiele mapping
+    if abs(result_r) < 0.05:
+        return "BREAKEVEN"
+    return "WIN" if result_r > 0 else "LOSS"
+
+def _infer_label(trade: Dict[str, Any]) -> str:
+    # liever uit trade zelf; anders afleiden uit score
+    if isinstance(trade.get("label"), str) and trade["label"].strip():
+        return trade["label"].strip().upper()
+    score = _safe_int(trade.get("score"), 0)
+    if score >= 80:
+        return "GO"
+    if score >= 70:
+        return "WATCH"
+    return "SKIP"
+
+def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float, result_r: float, outcome: str) -> None:
+    """
+    Insert 1 rij in public.experience_trades (best-effort, schema-safe).
+    We crashen NOOIT je exit-logica als experience niet klopt.
+    """
+    if not _table_exists(conn, "public.experience_trades"):
+        return
+
+    # columns in DB kunnen verschillen -> alleen vullen wat bestaat
+    cols: List[str] = []
+    vals: List[Any] = []
+
+    # mogelijke velden (jij hebt ze eerder gedefinieerd)
+    candidates: List[Tuple[str, Any]] = [
+        ("symbol", trade.get("symbol")),
+        ("setup_type", trade.get("setup_type") or "TREND_PULLBACK"),
+        ("timeframe", trade.get("timeframe") or trade.get("tf") or "4h"),
+        ("regime", (trade.get("regime") or "UNKNOWN")),
+        ("label", _infer_label(trade)),
+        ("score", _safe_int(trade.get("score"), 0)),
+        ("raw_score", trade.get("raw_score")),  # optional
+        ("chance", _safe_int(trade.get("chance"), 0)),
+        ("confidence", _safe_int(trade.get("confidence"), trade.get("chance") or 0)),
+        ("entry", _safe_float(trade.get("entry"), 0.0)),
+        ("stop", _safe_float(trade.get("stop") or trade.get("stop_loss"), 0.0)),
+        ("stop_loss", _safe_float(trade.get("stop_loss"), 0.0)),  # als kolom bestaat
+        ("target", _safe_float(trade.get("target"), 0.0)),
+        ("exit", close_price),                   # als kolom bestaat
+        ("exit_price", close_price),             # als kolom bestaat
+        ("result_r", result_r),
+        ("outcome", outcome),
+        ("is_shadow", False),                    # echte trade
+        ("created_at", now_utc_dt()),
+    ]
+
+    for c, v in candidates:
+        if _has_column(conn, "experience_trades", c):
+            cols.append(c)
+            vals.append(v)
+
+    if not cols:
+        return
+
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_sql = ", ".join(cols)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO public.experience_trades ({col_sql})
+            VALUES ({placeholders})
+            """,
+            tuple(vals),
+        )
+
+def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
+    """
+    Recompute scoreboard for (setup_type, regime, timeframe) and upsert into public.experience_scoreboard
+    """
+    if not _table_exists(conn, "public.experience_scoreboard"):
+        return
+    if not _table_exists(conn, "public.experience_trades"):
+        return
+
+    setup_type = (trade.get("setup_type") or "TREND_PULLBACK")
+    regime = (trade.get("regime") or "UNKNOWN")
+    timeframe = (trade.get("timeframe") or trade.get("tf") or "4h")
+
+    # compute stats from trades table (best effort)
+    # we use outcome + result_r if columns exist; otherwise skip.
+    if not _has_column(conn, "experience_trades", "result_r") or not _has_column(conn, "experience_trades", "outcome"):
+        return
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            """
+            SELECT
+              COUNT(*)::int AS n,
+              AVG(result_r)::float AS avg_r,
+              AVG(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END)::float AS win_rate,
+              AVG(CASE WHEN outcome='WIN' THEN result_r END)::float AS avg_win_r,
+              AVG(CASE WHEN outcome='LOSS' THEN result_r END)::float AS avg_loss_r
+            FROM public.experience_trades
+            WHERE setup_type=%s AND regime=%s AND timeframe=%s
+            """,
+            (setup_type, regime, timeframe),
+        )
+        stats = cur.fetchone() or {}
+
+    n = _safe_int(stats.get("n"), 0)
+    avg_r = _safe_float(stats.get("avg_r"), 0.0)
+    win_rate = _safe_float(stats.get("win_rate"), 0.0)
+    avg_win_r = _safe_float(stats.get("avg_win_r"), 0.0)
+    avg_loss_r = _safe_float(stats.get("avg_loss_r"), 0.0)
+
+    # build dynamic upsert for scoreboard table columns that exist
+    payload = {
+        "setup_type": setup_type,
+        "regime": regime,
+        "timeframe": timeframe,
+        "n": n,
+        "avg_r": avg_r,
+        "win_rate": win_rate,
+        "avg_win_r": avg_win_r,
+        "avg_loss_r": avg_loss_r,
+        "updated_at": now_utc_dt(),
+        "asof_ts": now_utc_dt(),
+        "created_at": now_utc_dt(),
+    }
+
+    cols: List[str] = []
+    vals: List[Any] = []
+    for k, v in payload.items():
+        if _has_column(conn, "experience_scoreboard", k):
+            cols.append(k)
+            vals.append(v)
+
+    if not cols:
+        return
+
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
+
+    # conflict key: usually (setup_type, regime, timeframe)
+    conflict_cols = []
+    for k in ["setup_type", "regime", "timeframe"]:
+        if _has_column(conn, "experience_scoreboard", k):
+            conflict_cols.append(k)
+
+    if len(conflict_cols) < 2:
+        # weird schema -> don't upsert
+        return
+
+    set_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in cols if c not in conflict_cols])
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO public.experience_scoreboard ({col_sql})
+            VALUES ({placeholders})
+            ON CONFLICT ({", ".join(conflict_cols)})
+            DO UPDATE SET {set_sql}
+            """,
+            tuple(vals),
+        )
+
+def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: float) -> None:
+    """
+    Wrapper: insert trade + update scoreboard
+    """
+    if not db_ready():
+        return
+    try:
+        outcome = _infer_outcome(result_r)
+        with db_connect() as conn:
+            try:
+                _experience_insert_trade(conn, trade, close_price=close_price, result_r=result_r, outcome=outcome)
+                _experience_upsert_scoreboard(conn, trade)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    except Exception as e:
+        # NOOIT exit-logica laten crashen
+        _print(f"⚠️ Experience update skipped: {type(e).__name__}: {e}")
 
 # =========================
 # ✅ DATA PATH RESOLVER
@@ -230,6 +478,12 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
         sell_result=sell_res,
     )
 
+    # ✅ Experience update (alleen als SELL ok)
+    if isinstance(sell_res, dict) and sell_res.get("ok"):
+        exit_price = float(sell_res.get("price", price))
+        r_exit = calc_r_multiple(exit_price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
+        experience_on_close(trade, close_price=exit_price, result_r=r_exit)
+
     state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") != symbol]
     save_state(state)
 
@@ -279,6 +533,13 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["closed_at"] = now_ts()
 
         _send_sell_close_message(symbol, "STOP-LOSS vóór 1R", entry, stop_loss, target, r, sell_res)
+
+        # ✅ Experience update
+        if isinstance(sell_res, dict) and sell_res.get("ok"):
+            exit_price = float(sell_res.get("price", price))
+            r_exit = calc_r_multiple(exit_price, entry, stop_loss)
+            experience_on_close(trade, close_price=exit_price, result_r=r_exit)
+
         return True
 
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
@@ -318,6 +579,13 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         trade["closed_at"] = now_ts()
 
                         _send_sell_close_message(symbol, "STRUCTUUR: eerste lower-low", entry, stop_loss, target, r, sell_res)
+
+                        # ✅ Experience update
+                        if isinstance(sell_res, dict) and sell_res.get("ok"):
+                            exit_price = float(sell_res.get("price", price))
+                            r_exit = calc_r_multiple(exit_price, entry, stop_loss)
+                            experience_on_close(trade, close_price=exit_price, result_r=r_exit)
+
                         return True
         except Exception as e:
             _print(f"⚠️ STRUCTUUR fetch error {symbol}: {e}")
@@ -350,6 +618,13 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             trade["closed_at"] = now_ts()
 
             _send_sell_close_message(symbol, "Na >1R: 3x onder 1R (rest gesloten)", entry, stop_loss, target, r, sell_res)
+
+            # ✅ Experience update
+            if isinstance(sell_res, dict) and sell_res.get("ok"):
+                exit_price = float(sell_res.get("price", price))
+                r_exit = calc_r_multiple(exit_price, entry, stop_loss)
+                experience_on_close(trade, close_price=exit_price, result_r=r_exit)
+
             return True
     else:
         trade["below_1r_count"] = 0
@@ -412,6 +687,7 @@ def main():
     _print(f"LOGS_DIR: {LOGS_DIR}")
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
+    _print(f"DB experience: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
 
     ensure_dir(LOGS_DIR)
 
