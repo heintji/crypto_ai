@@ -1,9 +1,9 @@
-# analysis/multi_coin_score.py
 from __future__ import annotations
 
 import os
 import math
 import time
+import hashlib
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -11,46 +11,54 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
+import requests
 
 # ==========================================================
-# ENV (alles met defaults, zodat hij nooit crasht op missende env)
+# CONFIG (ENV)
 # ==========================================================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip()
 
-TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()   # hoofd timeframe
-TF_CTX = (os.getenv("TF_CTX") or "1h").strip()     # context timeframe
+EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip().lower()
 
-UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")     # max coins scannen
-LOOKBACK_MAIN = int(os.getenv("LOOKBACK_MAIN") or "320")       # 4h candles
-LOOKBACK_CTX = int(os.getenv("LOOKBACK_CTX") or "200")         # 1h candles
+# Universe (hoeveel coins je pakt uit Binance USDT lijst)
+UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")
 
+# Timeframes
+TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
+TF_CTX = (os.getenv("TF_CTX") or "1h").strip()
+
+# Pre-buy regels
 MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")  # GO
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")          # WATCH
 
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")   # GO
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")           # WATCH
-
-# cooldown: zelfde trade niet opnieuw pushen binnen deze tijd
-TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
-
-# hoe lang is een prebuy geldig (expiry in DB)
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 
-# simpele “setups”
-SETUP_TYPES = (os.getenv("SETUP_TYPES") or "TREND_PULLBACK,BREAKOUT_RETEST").split(",")
+# Dedup / cooldown
+TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
+
+# Performance / candles
+MIN_CANDLES = int(os.getenv("MIN_CANDLES") or "120")  # genoeg voor SMA/RSI etc
+
+# Optional: test mode (force prebuy)
+FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
+
 
 # ==========================================================
-# Helpers
+# HELPERS
 # ==========================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
+
 def log(msg: str) -> None:
     print(msg, flush=True)
 
+
 def db_connect():
-    # Render Postgres
+    # Render Postgres: sslmode=require
     return psycopg2.connect(DATABASE_URL, sslmode="require")
+
 
 def safe_float(x: Any, default: float = 0.0) -> float:
     try:
@@ -58,16 +66,60 @@ def safe_float(x: Any, default: float = 0.0) -> float:
     except Exception:
         return default
 
-def clamp(n: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, n))
+
+def safe_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def sha1(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
+def round_sig(x: float, sig: int = 6) -> float:
+    if x == 0:
+        return 0.0
+    return round(x, sig - int(math.floor(math.log10(abs(x)))) - 1)
+
 
 # ==========================================================
-# Indicators (simpel maar bruikbaar)
+# BINANCE UNIVERSE
+# ==========================================================
+BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
+
+
+def fetch_binance_usdt_symbols(limit: int) -> List[str]:
+    r = requests.get(BINANCE_EXCHANGE_INFO, timeout=20)
+    r.raise_for_status()
+    data = r.json()
+
+    syms: List[str] = []
+    for s in data.get("symbols", []):
+        if s.get("status") != "TRADING":
+            continue
+        sym = s.get("symbol", "")
+        if not sym.endswith("USDT"):
+            continue
+        # filter rare leveraged tokens if you want (optional)
+        if sym.endswith(("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")):
+            continue
+        syms.append(sym)
+
+    # simple deterministic pick
+    syms = sorted(set(syms))
+    return syms[:limit]
+
+
+# ==========================================================
+# INDICATORS (SMA, RSI)
 # ==========================================================
 def sma(values: List[float], period: int) -> Optional[float]:
     if len(values) < period:
         return None
-    return sum(values[-period:]) / float(period)
+    return sum(values[-period:]) / period
+
 
 def rsi(values: List[float], period: int = 14) -> Optional[float]:
     if len(values) < period + 1:
@@ -85,413 +137,461 @@ def rsi(values: List[float], period: int = 14) -> Optional[float]:
     rs = gains / losses
     return 100.0 - (100.0 / (1.0 + rs))
 
-def slope(values: List[float], period: int = 20) -> Optional[float]:
-    # heel simpele slope: (laatste - eerste) / period
-    if len(values) < period:
+
+def slope(values: List[float], lookback: int = 10) -> Optional[float]:
+    if len(values) < lookback + 1:
         return None
-    return (values[-1] - values[-period]) / float(period)
+    # simple slope: last - first / lookback
+    return (values[-1] - values[-(lookback + 1)]) / float(lookback)
+
 
 # ==========================================================
-# DB: universe + candles + regime
+# DB SCHEMA DETECTION (fix fp vs fingerprint, key vs day)
 # ==========================================================
-def fetch_universe(conn, limit: int) -> List[str]:
-    """
-    Pakt symbolen uit candles table (dus geen API calls).
-    Minimale DB: één query.
-    """
+@dataclass
+class SchemaInfo:
+    fingerprints_col: str          # "fingerprint" or "fp"
+    pending_has_timeframe: bool
+    prebuy_state_key_col: str      # "day" or "key"
+
+
+def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT symbol
-            FROM public.candles
-            WHERE exchange = %s AND timeframe = %s
-            GROUP BY symbol
-            ORDER BY MAX(open_time) DESC
-            LIMIT %s
+            SELECT EXISTS(
+              SELECT 1
+              FROM information_schema.columns
+              WHERE table_schema=%s AND table_name=%s AND column_name=%s
+            )
             """,
-            (EXCHANGE, TF_MAIN, limit),
+            (schema, table, col),
         )
-        rows = cur.fetchall()
-    return [r[0] for r in rows]
+        return bool(cur.fetchone()[0])
 
-def fetch_closes(conn, symbol: str, timeframe: str, limit: int) -> Tuple[List[float], Optional[datetime]]:
-    """
-    Haalt alleen close + open_time (minimale data).
-    """
-    with conn.cursor() as cur:
+
+def detect_schema(conn) -> SchemaInfo:
+    # trade_fingerprints: prefer fingerprint, else fp
+    if table_has_column(conn, "trade_fingerprints", "fingerprint"):
+        fp_col = "fingerprint"
+    elif table_has_column(conn, "trade_fingerprints", "fp"):
+        fp_col = "fp"
+    else:
+        # last resort: create fingerprint col
+        with conn.cursor() as cur:
+            cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
+        conn.commit()
+        fp_col = "fingerprint"
+
+    pending_has_timeframe = table_has_column(conn, "pending_approvals", "timeframe")
+
+    # prebuy_state: your latest DB uses day + created_count
+    if table_has_column(conn, "prebuy_state", "day"):
+        key_col = "day"
+    elif table_has_column(conn, "prebuy_state", "key"):
+        key_col = "key"
+    else:
+        # create minimal prebuy_state if missing
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS public.prebuy_state (
+                  day TEXT PRIMARY KEY,
+                  created_count INTEGER NOT NULL DEFAULT 0,
+                  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        conn.commit()
+        key_col = "day"
+
+    return SchemaInfo(
+        fingerprints_col=fp_col,
+        pending_has_timeframe=pending_has_timeframe,
+        prebuy_state_key_col=key_col,
+    )
+
+
+# ==========================================================
+# DB READ: candles from Postgres (table public.candles)
+# ==========================================================
+def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
+    # Your candles schema: exchange, symbol, timeframe, open_time, open, high, low, close, volume, close_time ...
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
-            SELECT open_time, close
+            SELECT open_time, open, high, low, close, volume
             FROM public.candles
             WHERE exchange=%s AND symbol=%s AND timeframe=%s
-            ORDER BY open_time DESC
+            ORDER BY open_time ASC
             LIMIT %s
             """,
             (EXCHANGE, symbol, timeframe, limit),
         )
         rows = cur.fetchall()
+    return [dict(r) for r in rows]
 
-    if not rows:
-        return [], None
-
-    # rows zijn DESC, we willen ASC voor indicatoren
-    rows = list(reversed(rows))
-    closes = [safe_float(r[1]) for r in rows]
-    asof_ts = rows[-1][0]
-    return closes, asof_ts
-
-def get_regime(conn, symbol: str, timeframe: str, asof_ts: Optional[datetime]) -> str:
-    """
-    Probeert regime op te halen uit market_regime table.
-    Als er niks is: 'UNKNOWN'
-    """
-    if asof_ts is None:
-        return "UNKNOWN"
-
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            """
-            SELECT regime
-            FROM public.market_regime
-            WHERE exchange=%s AND symbol=%s AND timeframe=%s AND asof_ts=%s
-            LIMIT 1
-            """,
-            (EXCHANGE, symbol, timeframe, asof_ts),
-        )
-        row = cur.fetchone()
-
-    if not row:
-        return "UNKNOWN"
-    return (row.get("regime") or "UNKNOWN").upper()
 
 # ==========================================================
-# Slimme scoring (zonder exit aan te passen)
+# REGIME (optional) from table public.market_regime
 # ==========================================================
-def compute_score(closes_main: List[float], closes_ctx: List[float], regime: str) -> Tuple[int, int]:
-    """
-    Geeft (score, chance) terug (0-100).
-    Score = technische kwaliteit.
-    Chance = score + kleine regime correctie.
+def fetch_regime(conn, symbol: str, timeframe: str) -> Tuple[str, int]:
+    # returns (regime, score)
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                """
+                SELECT regime, score
+                FROM public.market_regime
+                WHERE exchange=%s AND symbol=%s AND timeframe=%s
+                ORDER BY asof_ts DESC
+                LIMIT 1
+                """,
+                (EXCHANGE, symbol, timeframe),
+            )
+            row = cur.fetchone()
+        if not row:
+            return "UNKNOWN", 0
+        return (row.get("regime") or "UNKNOWN", safe_int(row.get("score"), 0))
+    except Exception:
+        # never crash scoring on regime
+        conn.rollback()
+        return "UNKNOWN", 0
 
-    Doel: betere winst% zonder exit te veranderen:
-    - in BEAR strenger (minder rommel trades)
-    - in BULL iets toleranter
+
+# ==========================================================
+# SCORING (simple, stable)
+# ==========================================================
+def compute_score_and_levels(closes_main: List[float], closes_ctx: List[float]) -> Tuple[int, float, float, float]:
     """
-    if len(closes_main) < 60 or len(closes_ctx) < 60:
-        return 0, 0
+    Returns: score(0-100), entry, stop, target
+    Very simple version:
+    - entry = last close (main)
+    - stop = 2% below entry
+    - target = entry + 2R (R = entry-stop)
+    """
+    entry = closes_main[-1]
+    stop = entry * 0.98
+    r = entry - stop
+    target = entry + 2.0 * r
 
     sma20 = sma(closes_main, 20)
     sma50 = sma(closes_main, 50)
-    rsi14 = rsi(closes_main, 14)
-    slp20 = slope(closes_main, 20)
+    rsi14 = rsi(closes_ctx, 14)
+    s20_slope = slope(closes_main, 10)
 
-    if sma20 is None or sma50 is None or rsi14 is None or slp20 is None:
-        return 0, 0
-
-    last = closes_main[-1]
-
-    # basis score
     score = 50
 
-    # trend filter
-    if sma20 > sma50:
-        score += 15
-    else:
-        score -= 10
+    # trend bias
+    if sma20 is not None and sma50 is not None:
+        if sma20 > sma50:
+            score += 15
+        else:
+            score -= 10
 
-    # prijs boven sma20 (momentum)
-    if last > sma20:
-        score += 10
-    else:
-        score -= 8
+    # momentum
+    if rsi14 is not None:
+        if 45 <= rsi14 <= 65:
+            score += 10
+        elif rsi14 > 70:
+            score -= 10  # overbought penalty
+        elif rsi14 < 35:
+            score -= 5   # weak / oversold
 
-    # slope positief
-    if slp20 > 0:
-        score += 10
-    else:
-        score -= 8
+    # slope
+    if s20_slope is not None:
+        if s20_slope > 0:
+            score += 10
+        else:
+            score -= 10
 
-    # RSI sweetspot
-    if 45 <= rsi14 <= 70:
-        score += 15
-    elif rsi14 < 35:
-        score -= 10
-    elif rsi14 > 78:
-        score -= 12
+    # clamp
+    score = max(0, min(100, score))
 
-    score = int(clamp(score, 0, 100))
+    return score, entry, stop, target
 
-    # chance = score + regime correctie (slimmer)
-    regime = (regime or "UNKNOWN").upper()
-    chance = score
 
-    # in BEAR: strenger (minder slechte trades -> hoger win%)
-    if regime == "BEAR":
-        chance = int(clamp(score - 10, 0, 100))
-    elif regime == "BULL":
-        chance = int(clamp(score + 5, 0, 100))
-    elif regime == "RANGE":
-        chance = int(clamp(score - 3, 0, 100))
-    else:
-        chance = score
-
-    return score, chance
-
-def decide_label(score: int) -> str:
+def label_from_score(score: int) -> str:
     if score >= MIN_SCORE_TO_PREBUY:
         return "GO"
     if score >= WATCH_MIN_SCORE:
         return "WATCH"
     return "SKIP"
 
-# ==========================================================
-# Entry/Stop/Target (simpel)
-# ==========================================================
-def build_trade_levels(entry: float) -> Tuple[float, float]:
+
+def chance_from_score(score: int, regime: str) -> int:
     """
-    Default stop: 2% onder entry
-    Default target: 2R (entry + 2*(entry-stop))
+    “Slimmer zonder exit aanpassen”:
+    - zelfde score, maar kleine boost/penalty per regime.
     """
-    stop = entry * 0.98
-    risk = entry - stop
-    target = entry + 2.0 * risk
-    return stop, target
+    chance = score
+    reg = (regime or "UNKNOWN").upper()
+    if reg == "BULL":
+        chance = min(100, chance + 5)
+    elif reg == "BEAR":
+        chance = max(0, chance - 8)
+    elif reg == "RANGE":
+        chance = max(0, chance - 2)
+    return int(chance)
+
 
 # ==========================================================
-# DEDUP / FINGERPRINTS (voorkom dubbele Pre-BUY)
+# DEDUP (trade_fingerprints)
 # ==========================================================
-def ensure_tables(conn) -> None:
-    """
-    Maakt trade_fingerprints table aan als die nog niet bestaat.
-    Dit is super klein en voorkomt spam + scheelt DB/WhatsApp.
-    """
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
-              fp TEXT PRIMARY KEY,
-              symbol TEXT,
-              setup_type TEXT,
-              entry DOUBLE PRECISION,
-              target DOUBLE PRECISION,
-              last_created_at TIMESTAMPTZ
-            );
-            """
-        )
-    conn.commit()
+def make_fingerprint(symbol: str, setup_type: str, entry: float, target: float) -> str:
+    # stable formatting so duplicates match
+    key = f"{symbol}|{setup_type}|{round_sig(entry, 8)}|{round_sig(target, 8)}"
+    return sha1(key)
 
-def make_fp(symbol: str, setup_type: str, entry: float, target: float) -> str:
-    # ronding zodat mini prijsverschil niet elke keer nieuwe trade wordt
-    e = round(entry, 6)
-    t = round(target, 6)
-    return f"{symbol}|{setup_type}|{e}|{t}"
 
-def fp_recent(conn, fp: str) -> bool:
+def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds: int) -> bool:
+    """
+    Returns True if fingerprint exists and is still in cooldown.
+    """
+    col = schema.fingerprints_col  # fingerprint OR fp
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            "SELECT last_created_at FROM public.trade_fingerprints WHERE fp=%s",
-            (fp,),
+            f"""
+            SELECT last_created_at
+            FROM public.trade_fingerprints
+            WHERE {col} = %s
+            LIMIT 1
+            """,
+            (fp_value,),
         )
         row = cur.fetchone()
-    if not row or not row.get("last_created_at"):
+
+    if not row:
         return False
-    last_created_at: datetime = row["last_created_at"]
-    return (now_utc() - last_created_at).total_seconds() < TRADE_COOLDOWN_SECONDS
 
-def fp_touch(conn, fp: str, symbol: str, setup_type: str, entry: float, target: float) -> None:
+    last_ts = row.get("last_created_at")
+    if not isinstance(last_ts, datetime):
+        return False
+
+    return (now_utc() - last_ts) < timedelta(seconds=cooldown_seconds)
+
+
+def upsert_fingerprint(conn, schema: SchemaInfo, fp_value: str) -> None:
+    col = schema.fingerprints_col
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO public.trade_fingerprints(fp, symbol, setup_type, entry, target, last_created_at)
-            VALUES (%s,%s,%s,%s,%s,NOW())
-            ON CONFLICT (fp)
-            DO UPDATE SET last_created_at=NOW()
-            """,
-            (fp, symbol, setup_type, entry, target),
-        )
-    conn.commit()
-
-# ==========================================================
-# PENDING APPROVALS insert (robust)
-# ==========================================================
-def insert_pending(conn, payload: Dict[str, Any]) -> None:
-    """
-    Insert in pending_approvals.
-    We committen per insert.
-    Bij fout: rollback -> voorkomt 'transaction aborted' spam.
-    """
-    cols = [
-        "id", "symbol", "setup_type", "timeframe", "regime",
-        "score", "chance", "confidence",
-        "entry", "stop", "target",
-        "status", "created_at", "expires_at"
-    ]
-    values = [payload.get(c) for c in cols]
-
-    with conn.cursor() as cur:
+        # Keep symbol/setup/entry/target fields if you have them; we only need the fingerprint + last_created_at
+        # If your table has extra cols, this still works if they allow NULL.
         cur.execute(
             f"""
-            INSERT INTO public.pending_approvals ({",".join(cols)})
-            VALUES ({",".join(["%s"]*len(cols))})
-            ON CONFLICT (id) DO NOTHING
+            INSERT INTO public.trade_fingerprints ({col}, last_created_at)
+            VALUES (%s, NOW())
+            ON CONFLICT ({col})
+            DO UPDATE SET last_created_at = EXCLUDED.last_created_at
             """,
-            values,
+            (fp_value,),
         )
-    conn.commit()
+
 
 # ==========================================================
-# PREBUY STATE (dag teller)
+# PREBUY DAILY LIMIT (prebuy_state)
 # ==========================================================
 def get_day_key() -> str:
     return now_utc().date().isoformat()
 
-def get_created_today(conn) -> int:
-    day = get_day_key()
-    with conn.cursor() as cur:
-        cur.execute("SELECT created_count FROM public.prebuy_state WHERE day=%s", (day,))
-        row = cur.fetchone()
-    return int(row[0]) if row else 0
 
-def bump_created_today(conn, inc: int = 1) -> None:
+def get_created_today(conn, schema: SchemaInfo) -> int:
     day = get_day_key()
+    key_col = schema.prebuy_state_key_col
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT created_count FROM public.prebuy_state WHERE {key_col}=%s LIMIT 1",
+            (day,),
+        )
+        row = cur.fetchone()
+    if not row:
+        return 0
+    return safe_int(row.get("created_count"), 0)
+
+
+def inc_created_today(conn, schema: SchemaInfo, inc: int = 1) -> None:
+    day = get_day_key()
+    key_col = schema.prebuy_state_key_col
     with conn.cursor() as cur:
         cur.execute(
-            """
-            INSERT INTO public.prebuy_state(day, created_count, updated_at)
-            VALUES (%s,%s,NOW())
-            ON CONFLICT (day)
+            f"""
+            INSERT INTO public.prebuy_state ({key_col}, created_count, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT ({key_col})
             DO UPDATE SET created_count = public.prebuy_state.created_count + EXCLUDED.created_count,
-                         updated_at = NOW()
+                          updated_at = NOW()
             """,
             (day, inc),
         )
-    conn.commit()
+
+
+# ==========================================================
+# INSERT pending_approvals (dynamic for missing columns)
+# ==========================================================
+def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
+    """
+    Writes into pending_approvals.
+    Must not crash if some columns don't exist.
+    """
+    base_cols = [
+        "id", "symbol", "setup_type",
+        "regime", "score", "chance", "confidence",
+        "entry", "stop", "target",
+        "status", "created_at", "expires_at",
+    ]
+    if schema.pending_has_timeframe:
+        base_cols.insert(3, "timeframe")  # after setup_type
+
+    # Build lists
+    cols: List[str] = []
+    vals: List[Any] = []
+    for c in base_cols:
+        if c not in payload:
+            continue
+        cols.append(c)
+        vals.append(payload[c])
+
+    placeholders = ", ".join(["%s"] * len(cols))
+    col_sql = ", ".join(cols)
+
+    # Upsert on id
+    set_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in cols if c != "id"])
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            INSERT INTO public.pending_approvals ({col_sql})
+            VALUES ({placeholders})
+            ON CONFLICT (id) DO UPDATE SET {set_sql}
+            """,
+            tuple(vals),
+        )
+
 
 # ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
     if not DATABASE_URL:
-        log("FATAAL: DATABASE_URL ontbreekt.")
-        return
+        raise RuntimeError("DATABASE_URL ontbreekt")
 
     start = time.time()
 
     with db_connect() as conn:
-        ensure_tables(conn)
+        # detect schema once
+        schema = detect_schema(conn)
 
-        created_today = get_created_today(conn)
-        log(f"🧠 multi_coin_score | day={get_day_key()} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+        created_today = get_created_today(conn, schema)
+        day = get_day_key()
+        log(f"🟣 multi_coin_score | day={day} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
 
-        universe = fetch_universe(conn, UNIVERSE_LIMIT)
+        # universe
+        universe = fetch_binance_usdt_symbols(UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
 
         created = 0
         skipped = 0
 
         for symbol in universe:
-            if created_today + created >= MAX_PREBUY_PER_DAY:
-                break
+            # Daily cap
+            if created_today >= MAX_PREBUY_PER_DAY:
+                skipped += 1
+                continue
 
             try:
-                closes_main, asof_main = fetch_closes(conn, symbol, TF_MAIN, LOOKBACK_MAIN)
-                closes_ctx, _ = fetch_closes(conn, symbol, TF_CTX, LOOKBACK_CTX)
+                # 1) candles
+                candles_main = fetch_candles(conn, symbol, TF_MAIN, MIN_CANDLES)
+                candles_ctx = fetch_candles(conn, symbol, TF_CTX, MIN_CANDLES)
 
-                if len(closes_main) < 60:
+                if len(candles_main) < MIN_CANDLES or len(candles_ctx) < MIN_CANDLES:
                     skipped += 1
                     continue
 
-                regime = get_regime(conn, symbol, TF_MAIN, asof_main)
+                closes_main = [safe_float(c["close"]) for c in candles_main]
+                closes_ctx = [safe_float(c["close"]) for c in candles_ctx]
 
-                score, chance = compute_score(closes_main, closes_ctx, regime)
-                label = decide_label(score)
+                # 2) regime
+                regime, _reg_score = fetch_regime(conn, symbol, TF_MAIN)
 
+                # 3) score
+                score, entry, stop, target = compute_score_and_levels(closes_main, closes_ctx)
+
+                # Optional: force test prebuy
+                if FORCE_TEST_PREBUY:
+                    score = max(score, MIN_SCORE_TO_PREBUY)
+
+                label = label_from_score(score)
                 if label == "SKIP":
                     skipped += 1
                     continue
 
-                entry = float(closes_main[-1])
-                stop, target = build_trade_levels(entry)
+                chance = chance_from_score(score, regime)
+                confidence = chance  # simple mapping; you can refine later
 
-                # confidence = simpele mapping (0-100)
-                confidence = int(clamp(chance, 0, 100))
+                setup_type = "TREND_PULLBACK"  # your current default
+                fp_value = make_fingerprint(symbol, setup_type, entry, target)
 
-                # Dedup: niet dezelfde trade opnieuw
-                for setup_type in SETUP_TYPES:
-                    setup_type = (setup_type or "").strip()
-                    if not setup_type:
-                        continue
+                # 4) dedup check
+                if fingerprint_recent(conn, schema, fp_value, TRADE_COOLDOWN_SECONDS):
+                    skipped += 1
+                    continue
 
-                    fp = make_fp(symbol, setup_type, entry, target)
-                    if fp_recent(conn, fp):
-                        # te recent -> skip
-                        skipped += 1
-                        continue
+                # 5) build payload
+                prebuy_id = f"PB-{symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}-{fp_value[:6]}"
+                expires_at = now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS)
 
-                    prebuy_id = f"PB-{symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}-{os.urandom(3).hex()}"
+                payload: Dict[str, Any] = {
+                    "id": prebuy_id,
+                    "symbol": symbol,
+                    "setup_type": setup_type,
+                    "timeframe": TF_MAIN,
+                    "regime": regime,
+                    "score": int(score),
+                    "chance": int(chance),
+                    "confidence": int(confidence),
+                    "entry": float(entry),
+                    "stop": float(stop),
+                    "target": float(target),
+                    "status": "PENDING",
+                    "created_at": now_utc(),
+                    "expires_at": expires_at,
+                }
 
-                    payload = {
-                        "id": prebuy_id,
-                        "symbol": symbol,
-                        "setup_type": setup_type,
-                        "timeframe": TF_MAIN,
-                        "regime": regime,
-                        "score": score,
-                        "chance": chance,
-                        "confidence": confidence,
-                        "entry": entry,
-                        "stop": stop,
-                        "target": target,
-                        "status": "PENDING",
-                        "created_at": now_utc(),
-                        "expires_at": now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS),
-                    }
+                # 6) write DB (IMPORTANT: rollback safety)
+                try:
+                    insert_pending(conn, schema, payload)
+                    upsert_fingerprint(conn, schema, fp_value)
+                    inc_created_today(conn, schema, 1)
+                    conn.commit()
+                except Exception as db_e:
+                    conn.rollback()
+                    skipped += 1
+                    log(f"⚠️ skip {symbol} db_error={type(db_e).__name__}: {db_e}")
+                    continue
 
-                    # Insert pending
-                    try:
-                        insert_pending(conn, payload)
-                    except Exception as e:
-                        conn.rollback()
-                        log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
-                        skipped += 1
-                        continue
+                created += 1
+                created_today += 1
 
-                    # fingerprint updaten + teller
-                    try:
-                        fp_touch(conn, fp, symbol, setup_type, entry, target)
-                    except Exception as e:
-                        conn.rollback()
-                        log(f"⚠️ fingerprint fail {symbol} {type(e).__name__}: {e}")
-
-                    try:
-                        bump_created_today(conn, 1)
-                    except Exception as e:
-                        conn.rollback()
-                        log(f"⚠️ prebuy_state bump fail {type(e).__name__}: {e}")
-
-                    created += 1
-
-                    emoji = "🟢" if label == "GO" else "🟡"
-                    log(f"{emoji} {symbol}: {label} score={score} chance={chance} regime={regime} id={prebuy_id}")
-
-                    # per symbol maar 1 prebuy (anders spam)
-                    break
+                dot = "🟢" if label == "GO" else "🟡"
+                log(f"{dot} {symbol}: {label} score={score} chance={chance} regime={regime} id={prebuy_id}")
 
             except Exception as e:
-                # super belangrijk: rollback zodat we niet in aborted transaction blijven
+                # super important: rollback if anything happened in DB transaction
                 try:
                     conn.rollback()
                 except Exception:
                     pass
-                log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
                 skipped += 1
+                log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
 
         elapsed = round(time.time() - start, 1)
         log(f"✅ DONE created={created} skipped={skipped} seconds={elapsed}")
 
+
 if __name__ == "__main__":
     try:
         main()
-    except Exception:
+    except Exception as e:
         log("❌ FATAAL in multi_coin_score.py")
+        log(str(e))
         log(traceback.format_exc())
+        raise
