@@ -31,7 +31,7 @@ BATCH_SIZE = int(os.getenv("BATCH_SIZE") or "50")
 MIN_QUOTE_VOLUME_24H_USDT = float(os.getenv("MIN_QUOTE_VOLUME_24H_USDT") or "0")
 
 BINANCE_BASE = "https://api.binance.com"
-UA = {"User-Agent": "crypto-ai-history-fetcher/1.1"}
+UA = {"User-Agent": "crypto-ai-history-fetcher/1.2"}  # bump
 
 # =========================
 # Helpers
@@ -58,15 +58,18 @@ def pg_connect():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is empty (set it in Render env)")
     conn = psycopg2.connect(DATABASE_URL)
-    conn.autocommit = True  # voorkomt 'transaction aborted' kettingreactie
+    # Belangrijk: voorkomt 'current transaction is aborted' kettingreactie
+    conn.autocommit = True
     return conn
 
 def ensure_state_table(conn):
     """
-    LET OP: 'offset' is een SQL keyword in Postgres.
-    Daarom gebruiken we 'offset_idx'.
+    Zorgt dat fetcher_state bestaat én migreert van oude kolom 'offset' -> nieuwe 'offset_idx'.
+    Dit is de fix voor jouw huidige error:
+      psycopg2.errors.UndefinedColumn: column "offset_idx" does not exist
     """
     with conn.cursor() as cur:
+        # 1) Maak tabel aan (nieuw schema)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.fetcher_state (
@@ -77,13 +80,52 @@ def ensure_state_table(conn):
             """
         )
 
+        # 2) Als tabel al bestond met oude kolom 'offset', voeg nieuwe kolom toe
+        cur.execute(
+            """
+            ALTER TABLE public.fetcher_state
+            ADD COLUMN IF NOT EXISTS offset_idx INTEGER NOT NULL DEFAULT 0;
+            """
+        )
+
+        # 3) Als oude kolom 'offset' nog bestaat: kopieer waarde naar offset_idx (1x)
+        #    (veilig: alleen als offset_idx nog 0 is)
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+              IF EXISTS (
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_schema='public'
+                  AND table_name='fetcher_state'
+                  AND column_name='offset'
+              ) THEN
+                UPDATE public.fetcher_state
+                SET offset_idx = COALESCE(offset, 0)
+                WHERE offset_idx = 0;
+              END IF;
+            END $$;
+            """
+        )
+
+        # 4) Zorg dat updated_at kolom bestaat (voor oudere varianten)
+        cur.execute(
+            """
+            ALTER TABLE public.fetcher_state
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+            """
+        )
+
 def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
     """
     Haalt huidige offset op en schuift door voor volgende run.
     """
     ensure_state_table(conn)
 
+    # advisory lock zodat 2 crons niet tegelijk offset aanpassen
     lock_id = abs(hash(key)) % (2**31)
+
     with conn.cursor() as cur:
         cur.execute("SELECT pg_try_advisory_lock(%s);", (lock_id,))
         locked = cur.fetchone()[0]
@@ -100,6 +142,7 @@ def get_and_rotate_offset(conn, key: str, total: int, batch_size: int) -> int:
             else:
                 next_offset = (current + batch_size) % total
 
+            # upsert
             cur.execute(
                 """
                 INSERT INTO public.fetcher_state(key, offset_idx, updated_at)
@@ -165,7 +208,6 @@ def get_binance_symbols(quote_asset: str) -> List[str]:
     r = requests.get(f"{BINANCE_BASE}/api/v3/exchangeInfo", headers=UA, timeout=30)
     r.raise_for_status()
     data = r.json()
-
     symbols = []
     for s in data.get("symbols", []):
         if s.get("status") != "TRADING":
@@ -248,9 +290,9 @@ def kline_rows(symbol: str, timeframe: str, klines: List[List]) -> List[Tuple]:
 # Main
 # =========================
 def main():
-    print("== history_fetcher (DB-only + auto offset rotation) ==", flush=True)
-    print(f"AUTO_UNIVERSE={AUTO_UNIVERSE} QUOTE_ASSET={QUOTE_ASSET} TIMEFRAMES={TIMEFRAMES} YEARS={YEARS}", flush=True)
-    print(f"BATCH_SIZE={BATCH_SIZE} MIN_QUOTE_VOLUME_24H_USDT={MIN_QUOTE_VOLUME_24H_USDT}", flush=True)
+    print("== history_fetcher (DB-only + auto offset rotation) ==")
+    print(f"AUTO_UNIVERSE={AUTO_UNIVERSE} QUOTE_ASSET={QUOTE_ASSET} TIMEFRAMES={TIMEFRAMES} YEARS={YEARS}")
+    print(f"BATCH_SIZE={BATCH_SIZE} MIN_QUOTE_VOLUME_24H_USDT={MIN_QUOTE_VOLUME_24H_USDT}")
 
     conn = pg_connect()
 
@@ -261,19 +303,19 @@ def main():
         symbols.sort()
 
     total = len(symbols)
-    print(f"Universe total={total}", flush=True)
+    print(f"Universe total={total}")
 
     key = f"binance:{QUOTE_ASSET}:minqv={int(MIN_QUOTE_VOLUME_24H_USDT)}:tfs={','.join(TIMEFRAMES)}:years={YEARS}"
     offset = get_and_rotate_offset(conn, key=key, total=total, batch_size=BATCH_SIZE)
 
     if total == 0:
-        print("No symbols after filtering. Stop.", flush=True)
+        print("No symbols after filtering. Stop.")
         return
 
-    start_i = offset
-    end_i = min(offset + BATCH_SIZE, total)
-    batch = symbols[start_i:end_i]
-    print(f"Offset={offset} -> fetching batch size={len(batch)} (range {start_i}:{end_i})", flush=True)
+    start = offset
+    end = min(offset + BATCH_SIZE, total)
+    batch = symbols[start:end]
+    print(f"Offset={offset} -> fetching batch size={len(batch)} (range {start}:{end})")
 
     since_ms = _since_ts_ms(YEARS)
 
@@ -284,13 +326,13 @@ def main():
                 kl = fetch_klines(sym, interval, since_ms)
                 rows = kline_rows(sym, tf, kl)
                 wrote = insert_candles(conn, rows)
-                print(f"{sym} {tf}: fetched={len(kl)} wrote~{wrote}", flush=True)
+                print(f"{sym} {tf}: fetched={len(kl)} wrote~{wrote}")
             except Exception as e:
-                print(f"⚠️ {sym} {tf} error: {e}", flush=True)
+                print(f"⚠️ {sym} {tf} error: {e}")
                 traceback.print_exc()
                 continue
 
-    print("✅ DONE", flush=True)
+    print("✅ DONE")
 
 if __name__ == "__main__":
     main()
