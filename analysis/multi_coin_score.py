@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import os
+import sys
 import math
+import time
 import json
-import hashlib
+import uuid
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -13,81 +15,92 @@ from typing import Any, Dict, List, Optional, Tuple
 import psycopg2
 import psycopg2.extras
 
+
 # ==========================================================
-# ENV
+# CONFIG / ENV
 # ==========================================================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
+EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip()
 
-EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip().lower()
+TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()  # main signal tf
+TF_CTX = (os.getenv("TF_CTX") or "1h").strip()    # context tf
 
-# Timeframes used by your data layer
-TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
-TF_CTX = (os.getenv("TF_CTX") or "1h").strip()
+UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")  # max symbols to analyze
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")  # GO threshold
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")          # WATCH threshold
 
-# Universe control
-AUTO_UNIVERSE = (os.getenv("AUTO_UNIVERSE") or "1").strip() == "1"
-UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")  # hard cap
-UNIVERSE_MIN_RECENT_DAYS = int(os.getenv("UNIVERSE_MIN_RECENT_DAYS") or "7")
-
-# Pre-BUY gating
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")      # GO
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")              # WATCH
 MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
 
-# Lookback
-LOOKBACK_MAIN = int(os.getenv("LOOKBACK_MAIN") or "320")  # enough for 4h indicators
-LOOKBACK_CTX = int(os.getenv("LOOKBACK_CTX") or "200")
+FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 
-# Filters that increase win% WITHOUT touching exit logic
-MIN_AVG_QUOTE_VOL = float(os.getenv("MIN_AVG_QUOTE_VOL") or "200000")  # liquidity floor (quote_volume avg)
-MAX_OVEREXT_PCT = float(os.getenv("MAX_OVEREXT_PCT") or "6.0")         # avoid already-overextended moves
-MAX_VOLATILITY = float(os.getenv("MAX_VOLATILITY") or "0.08")          # avoid ultra wild (std returns)
-MIN_VOLATILITY = float(os.getenv("MIN_VOLATILITY") or "0.005")         # avoid dead pairs
+# Lookback candles (keep modest for efficiency)
+LOOKBACK_MAIN = int(os.getenv("LOOKBACK_MAIN") or "320")  # for 4h regime labeler used 320
+LOOKBACK_CTX = int(os.getenv("LOOKBACK_CTX") or "240")
+
+# Overextension thresholds
+OVEREXT_PENALTY_START = float(os.getenv("OVEREXT_PENALTY_START") or "1.02")  # >2% above MA
+OVEREXT_PENALTY_MAX = float(os.getenv("OVEREXT_PENALTY_MAX") or "1.08")      # >8% above MA
+
+# Basic stop/target defaults (bot exit logic stays elsewhere; this is just Pre-BUY proposal)
+DEFAULT_STOP_PCT = float(os.getenv("DEFAULT_STOP_PCT") or "0.02")  # 2% stop below entry
+DEFAULT_R_MULT = float(os.getenv("DEFAULT_R_MULT") or "2.0")       # 2R target
+
+# If you want to “always store WATCH for learning”, keep True
+STORE_WATCH_ROWS = (os.getenv("STORE_WATCH_ROWS") or "1").strip() == "1"
 
 # ==========================================================
-# UTIL
+# LOGGING
 # ==========================================================
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
 def log(msg: str) -> None:
     print(msg, flush=True)
 
+
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def today_utc_str() -> str:
+    return now_utc().strftime("%Y-%m-%d")
+
+
+# ==========================================================
+# DB CONNECT
+# ==========================================================
 def db_connect():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL missing")
+    # Render Postgres: sslmode=require
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
-def clamp(v: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, v))
-
-def safe_float(x: Any, default: float = 0.0) -> float:
-    try:
-        return float(x)
-    except Exception:
-        return default
-
-def sha1(s: str) -> str:
-    return hashlib.sha1(s.encode("utf-8")).hexdigest()
 
 # ==========================================================
-# INDICATORS
+# SMALL MATH HELPERS (no numpy to keep deps light)
 # ==========================================================
-def sma(values: List[float], n: int) -> Optional[float]:
-    if len(values) < n:
+def sma(values: List[float], period: int) -> Optional[float]:
+    if len(values) < period:
         return None
-    return sum(values[-n:]) / float(n)
+    return sum(values[-period:]) / float(period)
 
-def rsi(values: List[float], n: int = 14) -> Optional[float]:
+
+def slope(values: List[float], n: int = 10) -> Optional[float]:
+    """
+    Simple slope approximation: (last - first)/n on last n points.
+    """
     if len(values) < n + 1:
+        return None
+    first = values[-(n + 1)]
+    last = values[-1]
+    return (last - first) / float(n)
+
+
+def rsi(values: List[float], period: int = 14) -> Optional[float]:
+    if len(values) < period + 1:
         return None
     gains = 0.0
     losses = 0.0
-    for i in range(-n, 0):
+    for i in range(-period, 0):
         diff = values[i] - values[i - 1]
-        if diff >= 0:
+        if diff > 0:
             gains += diff
         else:
             losses += abs(diff)
@@ -96,24 +109,23 @@ def rsi(values: List[float], n: int = 14) -> Optional[float]:
     rs = gains / losses
     return 100.0 - (100.0 / (1.0 + rs))
 
-def returns_std(values: List[float], n: int = 50) -> Optional[float]:
-    if len(values) < n + 1:
-        return None
-    rets = []
-    for i in range(-n, 0):
-        prev = values[i - 1]
-        cur = values[i]
-        if prev <= 0:
-            continue
-        rets.append((cur / prev) - 1.0)
-    if len(rets) < max(10, n // 3):
-        return None
-    mean = sum(rets) / len(rets)
-    var = sum((x - mean) ** 2 for x in rets) / len(rets)
-    return math.sqrt(var)
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
 
 # ==========================================================
-# DATA ACCESS
+# DATA MODELS
+# ==========================================================
+@dataclass
+class RegimeInfo:
+    regime: str   # BULL/BEAR/RANGE
+    score: int
+    asof_ts: datetime
+
+
+# ==========================================================
+# SCHEMA INTROSPECTION (robust inserts)
 # ==========================================================
 def get_table_columns(conn, table: str, schema: str = "public") -> List[str]:
     with conn.cursor() as cur:
@@ -121,425 +133,517 @@ def get_table_columns(conn, table: str, schema: str = "public") -> List[str]:
             """
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_schema=%s AND table_name=%s
+            WHERE table_schema = %s AND table_name = %s
+            ORDER BY ordinal_position
             """,
             (schema, table),
         )
         return [r[0] for r in cur.fetchall()]
 
-def fetch_universe(conn) -> List[str]:
-    """
-    Auto universe from candles table: symbols that have data in last N days for TF_MAIN.
-    """
-    if not AUTO_UNIVERSE:
-        raw = (os.getenv("UNIVERSE") or "").strip()
-        if not raw:
-            return []
-        return [s.strip().upper() for s in raw.split(",") if s.strip()]
 
+# ==========================================================
+# UNIVERSE
+# ==========================================================
+def fetch_universe_symbols(conn, limit: int) -> List[str]:
+    """
+    Pull symbols from candles table.
+    You can later replace this with an "auto_universe" table or exchange metadata.
+    """
     with conn.cursor() as cur:
         cur.execute(
-            f"""
+            """
             SELECT DISTINCT symbol
             FROM public.candles
-            WHERE exchange=%s
-              AND timeframe=%s
-              AND open_time >= (NOW() - INTERVAL '{UNIVERSE_MIN_RECENT_DAYS} days')
-            ORDER BY symbol
+            WHERE exchange = %s
+            ORDER BY symbol ASC
             LIMIT %s
             """,
-            (EXCHANGE, TF_MAIN, UNIVERSE_LIMIT),
-        )
-        return [r[0] for r in cur.fetchall()]
-
-def fetch_candles(conn, symbol: str, timeframe: str, lookback: int) -> List[Dict[str, Any]]:
-    """
-    Returns candles oldest->newest, limited by lookback.
-    """
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(
-            """
-            SELECT open_time, open, high, low, close, quote_volume
-            FROM public.candles
-            WHERE exchange=%s AND symbol=%s AND timeframe=%s
-            ORDER BY open_time DESC
-            LIMIT %s
-            """,
-            (EXCHANGE, symbol, timeframe, lookback),
+            (EXCHANGE, limit),
         )
         rows = cur.fetchall()
-    rows = list(reversed(rows))
-    return [dict(r) for r in rows]
+    return [r[0] for r in rows]
 
-def fetch_latest_regimes(conn, symbols: List[str], timeframe: str) -> Dict[str, Dict[str, Any]]:
-    """
-    Efficient: one query to get latest regime per symbol.
-    """
-    if not symbols:
-        return {}
 
+# ==========================================================
+# MARKET REGIME CACHE (single query)
+# ==========================================================
+def fetch_regime_map(conn, timeframe: str = "4h") -> Dict[str, RegimeInfo]:
+    """
+    Build {symbol -> RegimeInfo} from market_regime latest asof_ts.
+    """
+    out: Dict[str, RegimeInfo] = {}
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             SELECT DISTINCT ON (symbol)
               symbol, regime, score, asof_ts
             FROM public.market_regime
-            WHERE exchange=%s AND timeframe=%s AND symbol = ANY(%s)
+            WHERE exchange = %s AND timeframe = %s
             ORDER BY symbol, asof_ts DESC
             """,
-            (EXCHANGE, timeframe, symbols),
+            (EXCHANGE, timeframe),
         )
         rows = cur.fetchall()
-    out: Dict[str, Dict[str, Any]] = {}
     for r in rows:
-        out[r["symbol"]] = dict(r)
+        try:
+            out[str(r["symbol"])] = RegimeInfo(
+                regime=str(r["regime"] or "RANGE").upper(),
+                score=int(r["score"] or 0),
+                asof_ts=r["asof_ts"],
+            )
+        except Exception:
+            continue
     return out
 
+
 # ==========================================================
-# DEDUP (fingerprints)
+# CANDLES FETCH (tight query: only what we need)
+# ==========================================================
+def fetch_closes(conn, symbol: str, timeframe: str, lookback: int) -> Tuple[List[float], Optional[datetime]]:
+    """
+    Returns closes in chronological order + latest open_time asof.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT open_time, close
+            FROM public.candles
+            WHERE exchange = %s AND symbol = %s AND timeframe = %s
+            ORDER BY open_time DESC
+            LIMIT %s
+            """,
+            (EXCHANGE, symbol, timeframe, lookback),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        return [], None
+
+    # rows are desc; reverse to chronological
+    rows_rev = list(reversed(rows))
+    closes = [float(r[1]) for r in rows_rev if r[1] is not None]
+    asof_ts = rows_rev[-1][0] if rows_rev[-1][0] is not None else None
+    return closes, asof_ts
+
+
+# ==========================================================
+# FINGERPRINT DEDUP (no duplicate trades)
 # ==========================================================
 def ensure_fingerprint_table(conn) -> None:
+    """
+    Safe create-if-not-exists (won't fail if table already exists).
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
               fingerprint TEXT PRIMARY KEY,
-              last_created_at TIMESTAMPTZ
+              last_created_at TIMESTAMPTZ,
+              created_at TIMESTAMPTZ DEFAULT NOW()
             );
             """
         )
     conn.commit()
 
-def fingerprint_exists_recent(conn, fp: str, cooldown_seconds: int) -> bool:
-    with conn.cursor() as cur:
+
+def fingerprint_for(symbol: str, setup_type: str, entry: float, target: float) -> str:
+    return f"{EXCHANGE}|{symbol}|{setup_type}|{round(entry,8)}|{round(target,8)}"
+
+
+def is_duplicate_fingerprint(conn, fp: str, cooldown_seconds: int) -> bool:
+    """
+    True if fingerprint exists and is within cooldown window.
+    """
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            """
-            SELECT last_created_at
-            FROM public.trade_fingerprints
-            WHERE fingerprint=%s
-            """,
+            "SELECT last_created_at FROM public.trade_fingerprints WHERE fingerprint=%s",
             (fp,),
         )
         row = cur.fetchone()
-    if not row or not row[0]:
+    if not row or not row.get("last_created_at"):
         return False
-    last: datetime = row[0]
-    return (now_utc() - last).total_seconds() < cooldown_seconds
+
+    last_ts = row["last_created_at"]
+    if isinstance(last_ts, datetime):
+        age = (now_utc() - last_ts).total_seconds()
+        return age < cooldown_seconds
+    return False
+
 
 def upsert_fingerprint(conn, fp: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
+            INSERT INTO public.trade_fingerprints (fingerprint, last_created_at)
             VALUES (%s, NOW())
             ON CONFLICT (fingerprint)
             DO UPDATE SET last_created_at=EXCLUDED.last_created_at
             """,
             (fp,),
         )
-    conn.commit()
+
 
 # ==========================================================
-# DAILY LIMIT STATE (DB)
+# PREBUY STATE (daily cap)
 # ==========================================================
-def ensure_prebuy_state(conn) -> None:
+def ensure_prebuy_state_table(conn) -> None:
     with conn.cursor() as cur:
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.prebuy_state (
-              day DATE PRIMARY KEY,
-              created_count INTEGER NOT NULL DEFAULT 0,
-              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+              day TEXT PRIMARY KEY,
+              created_count INTEGER DEFAULT 0,
+              updated_at TIMESTAMPTZ DEFAULT NOW()
             );
             """
         )
     conn.commit()
 
-def get_created_today(conn) -> int:
-    with conn.cursor() as cur:
-        cur.execute("SELECT created_count FROM public.prebuy_state WHERE day=CURRENT_DATE")
-        row = cur.fetchone()
-    return int(row[0]) if row else 0
 
-def bump_created_today(conn, n: int = 1) -> None:
+def get_created_today(conn) -> int:
+    day = today_utc_str()
+    with conn.cursor() as cur:
+        cur.execute("SELECT created_count FROM public.prebuy_state WHERE day=%s", (day,))
+        row = cur.fetchone()
+    if not row:
+        return 0
+    return int(row[0] or 0)
+
+
+def inc_created_today(conn, n: int = 1) -> None:
+    day = today_utc_str()
     with conn.cursor() as cur:
         cur.execute(
             """
-            INSERT INTO public.prebuy_state(day, created_count)
-            VALUES (CURRENT_DATE, %s)
+            INSERT INTO public.prebuy_state (day, created_count, updated_at)
+            VALUES (%s, %s, NOW())
             ON CONFLICT (day)
             DO UPDATE SET created_count = public.prebuy_state.created_count + EXCLUDED.created_count,
-                         updated_at=NOW()
+                          updated_at = NOW()
             """,
-            (n,),
+            (day, n),
         )
-    conn.commit()
+
 
 # ==========================================================
-# SCORING / SETUP
+# SMARTER SCORING (win% ↑ without touching exits)
 # ==========================================================
-@dataclass
-class Signal:
-    symbol: str
-    setup_type: str
-    why: str
-    timeframe: str
-    regime: str
-    score: int
-    chance: int
-    confidence: int
-    entry: float
-    stop: float
-    target: float
-    expires_at: datetime
-    meta: Dict[str, Any]
-
-def classify_setup(closes: List[float], highs: List[float], lows: List[float]) -> Tuple[str, str]:
+def compute_overextension_penalty(price: float, ma: Optional[float]) -> float:
     """
-    Minimal but useful:
-    - TREND_PULLBACK when SMA20 > SMA50 and price near SMA20
-    - BREAKOUT_RETEST when close breaks recent high zone
+    Returns penalty factor in [0..1]. 1 = no penalty.
+    If price is far above MA, chances of pullback increase -> lower chance/score.
     """
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    if s20 is None or s50 is None:
-        return "UNKNOWN", "not enough data"
+    if ma is None or ma <= 0:
+        return 1.0
+    ratio = price / ma
+    if ratio <= OVEREXT_PENALTY_START:
+        return 1.0
+    if ratio >= OVEREXT_PENALTY_MAX:
+        return 0.6  # heavy penalty
+    # linear penalty between start and max
+    t = (ratio - OVEREXT_PENALTY_START) / (OVEREXT_PENALTY_MAX - OVEREXT_PENALTY_START)
+    return 1.0 - 0.4 * clamp(t, 0.0, 1.0)  # down to 0.6
 
-    last = closes[-1]
-    dist20 = abs(last - s20) / s20 * 100.0
 
-    recent_high = max(highs[-30:]) if len(highs) >= 30 else max(highs)
-    breakout = last > recent_high * 0.995  # near/above recent high
+def base_score_from_indicators(closes_main: List[float], closes_ctx: List[float]) -> Tuple[int, Dict[str, Any]]:
+    """
+    Produce a 0-100 score + debug info.
+    Keeps it simple but meaningful.
+    """
+    info: Dict[str, Any] = {}
 
-    if s20 > s50 and dist20 <= 2.2:
-        return "TREND_PULLBACK", "trend up + pullback near SMA20"
-    if breakout:
-        return "BREAKOUT_RETEST", "breakout near recent high zone"
-    return "UNKNOWN", "no clean setup"
+    if len(closes_main) < 60 or len(closes_ctx) < 60:
+        return 0, {"reason": "not_enough_candles"}
 
-def build_signal(symbol: str, candles_main: List[Dict[str, Any]], regime_row: Optional[Dict[str, Any]]) -> Optional[Signal]:
-    closes = [safe_float(c["close"]) for c in candles_main]
-    highs = [safe_float(c["high"]) for c in candles_main]
-    lows  = [safe_float(c["low"]) for c in candles_main]
-    qv    = [safe_float(c.get("quote_volume"), 0.0) for c in candles_main]
+    price = closes_main[-1]
+    sma20 = sma(closes_main, 20)
+    sma50 = sma(closes_main, 50)
+    rsi14 = rsi(closes_ctx, 14)
+    slp = slope(closes_main, 10)
 
-    if len(closes) < 60:
-        return None
+    info.update({"price": price, "sma20": sma20, "sma50": sma50, "rsi14": rsi14, "slope10": slp})
 
-    last = closes[-1]
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    r = rsi(closes, 14)
-    vol = returns_std(closes, 50)
+    score = 50
 
-    if s20 is None or s50 is None or r is None or vol is None:
-        return None
+    # Trend bias (main TF)
+    if sma20 and sma50:
+        if sma20 > sma50:
+            score += 15
+        else:
+            score -= 10
 
-    # Liquidity filter (boost win%: avoid dead pairs)
-    avg_qv = sum(qv[-50:]) / max(1, len(qv[-50:]))
-    if avg_qv < MIN_AVG_QUOTE_VOL:
-        return None
+    # Price position vs sma20 (main TF)
+    if sma20:
+        if price > sma20:
+            score += 10
+        else:
+            score -= 8
 
-    # Volatility sanity (avoid too dead or too wild)
-    if vol < MIN_VOLATILITY or vol > MAX_VOLATILITY:
-        return None
+    # Slope (momentum)
+    if slp is not None:
+        if slp > 0:
+            score += 8
+        else:
+            score -= 6
 
-    # Overextension filter (avoid "already ran" entries)
-    overext_pct = abs(last - s20) / s20 * 100.0
-    if overext_pct > MAX_OVEREXT_PCT:
-        return None
+    # RSI (context TF)
+    if rsi14 is not None:
+        if 45 <= rsi14 <= 65:
+            score += 10  # healthy zone
+        elif rsi14 < 35:
+            score -= 8   # weak / falling knife risk
+        elif rsi14 > 75:
+            score -= 10  # too hot -> pullback risk
 
-    setup_type, why = classify_setup(closes, highs, lows)
-    if setup_type == "UNKNOWN":
-        return None
+    # Overextension penalty
+    penalty = compute_overextension_penalty(price, sma20)
+    score = int(round(score * penalty))
 
-    regime = (regime_row or {}).get("regime") or "UNKNOWN"
-    regime_score = int((regime_row or {}).get("score") or 0)
+    score = int(clamp(float(score), 0.0, 100.0))
+    info["overext_penalty"] = penalty
+    info["score_raw"] = score
+    return score, info
 
-    # Base scoring
-    score = 0
-    score += 35 if s20 > s50 else 10
-    score += 20 if 45 <= r <= 65 else 10
-    score += 20 if overext_pct <= 2.5 else 10
-    score += 15 if setup_type == "TREND_PULLBACK" else 10
-    score += 10 if avg_qv >= (MIN_AVG_QUOTE_VOL * 2) else 5
 
-    # Regime-aware penalty/boost (win% up, exits unchanged)
-    # BEAR -> harder to long: penalty
-    if regime == "BEAR":
-        score -= 15
-    elif regime == "BULL":
-        score += 5
-    elif regime == "RANGE":
-        score -= 5
+def regime_adjust(score: int, regime: str) -> Tuple[int, int]:
+    """
+    Adjust score and return (adj_score, chance).
+    - In BEAR: long setups are harder -> reduce
+    - In BULL: slightly boost
+    - In RANGE: neutral
+    """
+    r = (regime or "RANGE").upper()
+    adj = score
 
-    # include regime strength a bit
-    score += int(clamp(regime_score / 10.0, 0, 10))
+    if r == "BEAR":
+        adj = int(round(score * 0.85))
+    elif r == "BULL":
+        adj = int(round(score * 1.05))
+    else:
+        adj = score
 
-    score = int(clamp(score, 0, 100))
+    adj = int(clamp(float(adj), 0.0, 100.0))
 
-    # chance/confidence (simple mapping)
-    chance = int(clamp(score, 0, 100))
-    confidence = int(clamp(score + (5 if regime == "BULL" else 0), 0, 100))
+    # chance: map score -> probability-ish (still heuristic)
+    # Keep conservative.
+    chance = int(clamp(adj, 0, 100))
+    return adj, chance
 
-    # Entry/stop/target (basic; exits remain in trade_monitor)
-    entry = last
-    stop = entry * 0.98  # default 2% stop
-    target = entry + 2 * (entry - stop)  # 2R
 
-    expires_at = now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS)
+def confidence_from_signals(info: Dict[str, Any]) -> int:
+    """
+    Simple confidence based on consistency.
+    """
+    conf = 50
 
-    meta = {
-        "avg_quote_volume": avg_qv,
-        "volatility_std": vol,
-        "overext_pct": overext_pct,
-        "sma20": s20,
-        "sma50": s50,
-        "rsi14": r,
-        "regime_score": regime_score,
-    }
+    price = float(info.get("price") or 0)
+    sma20 = info.get("sma20")
+    sma50 = info.get("sma50")
+    rsi14 = info.get("rsi14")
+    slp = info.get("slope10")
+    pen = float(info.get("overext_penalty") or 1.0)
 
-    return Signal(
-        symbol=symbol,
-        setup_type=setup_type,
-        why=why,
-        timeframe=TF_MAIN,
-        regime=regime,
-        score=score,
-        chance=chance,
-        confidence=confidence,
-        entry=float(entry),
-        stop=float(stop),
-        target=float(target),
-        expires_at=expires_at,
-        meta=meta,
-    )
+    # alignment checks
+    if sma20 and sma50 and sma20 > sma50:
+        conf += 10
+    if sma20 and price > sma20:
+        conf += 8
+    if slp is not None and slp > 0:
+        conf += 6
+    if rsi14 is not None and 45 <= rsi14 <= 65:
+        conf += 8
+
+    # penalty reduces confidence
+    if pen < 0.9:
+        conf -= 10
+
+    return int(clamp(conf, 0, 100))
+
 
 # ==========================================================
-# INSERT pending_approvals (SCHEMA-PROOF)
+# PENDING APPROVALS INSERT (robust columns + SAVEPOINT-safe)
 # ==========================================================
-def insert_pending_schema_proof(conn, pending_cols: List[str], s: Signal) -> Optional[str]:
+def build_prebuy_id(symbol: str) -> str:
+    # stable, human-readable
+    ts = now_utc().strftime("%Y%m%d-%H%M%S")
+    short = uuid.uuid4().hex[:6]
+    return f"PB-{symbol}-{ts}-{short}"
+
+
+def insert_pending(conn, payload: Dict[str, Any]) -> None:
     """
-    Inserts a pending approval row.
-    Only uses columns that exist to avoid crashes when schema differs.
-    Returns created id or None.
+    Insert into public.pending_approvals with only columns that exist.
+    This prevents schema mismatch crashes.
     """
-    prebuy_id = f"PB-{s.symbol}-{int(now_utc().timestamp())}"
+    cols = payload.keys()
+    table_cols = set(get_table_columns(conn, "pending_approvals", "public"))
 
-    payload: Dict[str, Any] = {
-        "id": prebuy_id,
-        "symbol": s.symbol,
-        "setup_type": s.setup_type,
-        "timeframe": s.timeframe,
-        "regime": s.regime,
-        "score": s.score,
-        "chance": s.chance,
-        "confidence": s.confidence,
-        "entry": s.entry,
-        "stop": s.stop,
-        "target": s.target,
-        "status": "PENDING",
-        "created_at": now_utc(),
-        "expires_at": s.expires_at,
-    }
+    use_cols = [c for c in cols if c in table_cols]
+    if not use_cols:
+        raise RuntimeError("pending_approvals table has no matching columns for payload")
 
-    # Optional nice-to-have columns (only if exist)
-    # (keeps future upgrades painless)
-    if "why" in pending_cols:
-        payload["why"] = s.why
-    if "meta" in pending_cols:
-        payload["meta"] = json.dumps(s.meta)
+    placeholders = ", ".join([f"%({c})s" for c in use_cols])
+    col_list = ", ".join(use_cols)
 
-    # filter to existing columns
-    cols = [k for k in payload.keys() if k in pending_cols]
-    if "id" not in cols or "symbol" not in cols:
-        raise RuntimeError("pending_approvals schema missing required columns (id/symbol)")
-
-    values = [payload[c] for c in cols]
-    placeholders = ", ".join(["%s"] * len(cols))
-    col_sql = ", ".join(cols)
-
+    # if your table has id primary key: upsert on id (safe)
+    sql = f"""
+    INSERT INTO public.pending_approvals ({col_list})
+    VALUES ({placeholders})
+    ON CONFLICT (id) DO NOTHING
+    """
     with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            INSERT INTO public.pending_approvals ({col_sql})
-            VALUES ({placeholders})
-            ON CONFLICT (id) DO NOTHING
-            """,
-            values,
-        )
-    conn.commit()
-    return prebuy_id
+        cur.execute(sql, payload)
+
 
 # ==========================================================
-# MAIN
+# MAIN LOOP (transaction-safe + efficient)
 # ==========================================================
 def main() -> int:
     if not DATABASE_URL:
-        log("FATAAL: DATABASE_URL ontbreekt")
+        log("❌ DATABASE_URL ontbreekt.")
         return 2
 
+    t0 = time.time()
+
     with db_connect() as conn:
+        conn.autocommit = False  # we control transaction
+
+        # ensure helper tables exist
         ensure_fingerprint_table(conn)
-        ensure_prebuy_state(conn)
+        ensure_prebuy_state_table(conn)
 
         created_today = get_created_today(conn)
-        day = str(now_utc().date())
-        log(f"🧠 multi_coin_score | day={day} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+        log(f"💡 multi_coin_score | day={today_utc_str()} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
 
-        if created_today >= MAX_PREBUY_PER_DAY:
-            log("⛔ Daglimiet bereikt, skip run.")
-            return 0
-
-        # read pending_approvals schema once (efficiency)
-        pending_cols = get_table_columns(conn, "pending_approvals", "public")
-
-        universe = fetch_universe(conn)
+        # Universe once
+        universe = fetch_universe_symbols(conn, UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
 
-        # regimes in 1 batch (efficiency)
-        regimes = fetch_latest_regimes(conn, universe, TF_MAIN)
+        # Regime cache once (fast)
+        regime_map = fetch_regime_map(conn, timeframe=TF_MAIN)
 
-        created_now = 0
+        created = 0
+        skipped = 0
+
         for sym in universe:
-            if created_today + created_now >= MAX_PREBUY_PER_DAY:
+            if created_today + created >= MAX_PREBUY_PER_DAY and not FORCE_TEST_PREBUY:
                 break
 
+            sp_name = f"sp_{sym.replace('-', '_')}"
             try:
-                candles_main = fetch_candles(conn, sym, TF_MAIN, LOOKBACK_MAIN)
-                sig = build_signal(sym, candles_main, regimes.get(sym))
+                # SAVEPOINT => 1 coin fail won't poison whole run
+                with conn.cursor() as cur:
+                    cur.execute(f"SAVEPOINT {sp_name}")
 
-                if not sig:
+                closes_main, asof_main = fetch_closes(conn, sym, TF_MAIN, LOOKBACK_MAIN)
+                closes_ctx, asof_ctx = fetch_closes(conn, sym, TF_CTX, LOOKBACK_CTX)
+
+                if not closes_main or not closes_ctx or asof_main is None:
+                    skipped += 1
+                    with conn.cursor() as cur:
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
                     continue
 
-                # GO/WATCH gating (do not block WATCH; store both for learning)
-                if sig.score < WATCH_MIN_SCORE:
+                # basic indicators -> score
+                score_raw, info = base_score_from_indicators(closes_main, closes_ctx)
+
+                # regime (fallback RANGE)
+                reg = regime_map.get(sym)
+                regime = (reg.regime if reg else "RANGE")
+                adj_score, chance = regime_adjust(score_raw, regime)
+                confidence = confidence_from_signals(info)
+
+                # classify
+                label = "NO"
+                if FORCE_TEST_PREBUY:
+                    label = "GO"
+                    adj_score = max(adj_score, MIN_SCORE_TO_PREBUY)
+                    chance = max(chance, MIN_SCORE_TO_PREBUY)
+                elif adj_score >= MIN_SCORE_TO_PREBUY:
+                    label = "GO"
+                elif adj_score >= WATCH_MIN_SCORE:
+                    label = "WATCH"
+
+                # Decide whether to store
+                if label == "NO":
+                    skipped += 1
+                    with conn.cursor() as cur:
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
                     continue
 
-                # fingerprint (no duplicates of same trade)
-                fp = sha1(f"{sig.symbol}|{sig.setup_type}|{round(sig.entry, 6)}|{round(sig.target, 6)}")
-                if fingerprint_exists_recent(conn, fp, TRADE_COOLDOWN_SECONDS):
+                # entry/stop/target (proposal only)
+                entry = float(closes_ctx[-1])
+                stop = float(entry * (1.0 - DEFAULT_STOP_PCT))
+                risk = entry - stop
+                target = float(entry + DEFAULT_R_MULT * risk)
+
+                setup_type = "TREND_PULLBACK"  # keep as your primary setup
+                fp = fingerprint_for(sym, setup_type, entry, target)
+
+                # Dedup: do NOT create same trade again
+                if is_duplicate_fingerprint(conn, fp, TRADE_COOLDOWN_SECONDS) and not FORCE_TEST_PREBUY:
+                    skipped += 1
+                    with conn.cursor() as cur:
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
                     continue
 
-                # insert into pending approvals
-                prebuy_id = insert_pending_schema_proof(conn, pending_cols, sig)
-                if prebuy_id:
+                # Build payload for pending_approvals
+                prebuy_id = build_prebuy_id(sym)
+                payload: Dict[str, Any] = {
+                    "id": prebuy_id,
+                    "exchange": EXCHANGE,
+                    "symbol": sym,
+                    "setup_type": setup_type,
+                    "timeframe": TF_MAIN,  # <--- this column caused your earlier crash when missing
+                    "regime": regime,
+                    "score": int(adj_score),
+                    "chance": int(chance),
+                    "confidence": int(confidence),
+                    "entry": float(entry),
+                    "stop": float(stop),
+                    "target": float(target),
+                    "status": ("PENDING" if label == "GO" else "WATCH"),
+                    "created_at": now_utc(),
+                    "expires_at": (now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS)),
+                }
+
+                # Insert GO rows; WATCH rows optionally stored too
+                if label == "GO" or STORE_WATCH_ROWS:
+                    insert_pending(conn, payload)
                     upsert_fingerprint(conn, fp)
-                    bump_created_today(conn, 1)
-                    created_now += 1
 
-                    label = "GO" if sig.score >= MIN_SCORE_TO_PREBUY else "WATCH"
-                    log(
-                        f"✅ {label} {prebuy_id} {sig.symbol} "
-                        f"{sig.setup_type} score={sig.score} regime={sig.regime} "
-                        f"entry={sig.entry:.6f} stop={sig.stop:.6f} target={sig.target:.6f}"
-                    )
+                    if label == "GO":
+                        inc_created_today(conn, 1)
+                        created += 1
+
+                # release savepoint + commit per successful symbol
+                with conn.cursor() as cur:
+                    cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                conn.commit()
+
+                if label == "GO":
+                    log(f"✅ {sym}: GO score={adj_score} chance={chance} regime={regime} id={prebuy_id}")
+                else:
+                    log(f"🟡 {sym}: WATCH score={adj_score} chance={chance} regime={regime} id={prebuy_id}")
 
             except Exception as e:
+                # Rollback to savepoint so the transaction continues clean
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute(f"ROLLBACK TO SAVEPOINT {sp_name}")
+                        cur.execute(f"RELEASE SAVEPOINT {sp_name}")
+                    conn.commit()
+                except Exception:
+                    # If even savepoint rollback fails, do full rollback then continue
+                    conn.rollback()
+
+                skipped += 1
                 log(f"⚠️ skip {sym} error={type(e).__name__}: {e}")
 
-        log(f"DONE created={created_now}")
+        dt = time.time() - t0
+        log(f"✅ DONE created={created} skipped={skipped} seconds={dt:.1f}")
         return 0
+
 
 if __name__ == "__main__":
     try:
