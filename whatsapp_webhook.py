@@ -1,6 +1,7 @@
 # whatsapp_webhook.py
 from __future__ import annotations
 
+import inspect
 import os
 import traceback
 from datetime import datetime, timezone
@@ -29,6 +30,13 @@ if not DATABASE_URL:
 
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 
+# Trader mode:
+# - "paper"  -> alleen paper_trader
+# - "live"   -> alleen live_trader
+# - "auto"   -> probeert eerst paper, dan live
+TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
+
+
 # ==========================================================
 # UTIL
 # ==========================================================
@@ -53,7 +61,6 @@ def twiml(text: str):
 
 def db_connect():
     # Render Postgres: sslmode=require
-    # (als je DATABASE_URL al ssl bevat, is dit alsnog ok)
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
@@ -180,6 +187,58 @@ def mark_consumed(conn, prebuy_id: str) -> None:
 # ==========================================================
 # EXECUTION (TRADER MODULE) - crash-proof, lazy import
 # ==========================================================
+def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> None:
+    """
+    Belangrijk:
+    - Jouw error was: buy_eur() got an unexpected keyword argument 'meta'
+    - Dus we callen buy_eur ALLEEN met kwargs die de functie echt accepteert.
+    """
+    try:
+        sig = inspect.signature(buy_fn)
+        params = sig.parameters
+    except Exception:
+        # fallback: alleen positional
+        buy_fn(symbol, amount_eur)
+        return
+
+    # Altijd minimaal deze 2
+    args = [symbol, amount_eur]
+    kwargs: Dict[str, Any] = {}
+
+    # Stuur meta alleen als supported
+    if "meta" in params:
+        kwargs["meta"] = meta
+
+    # Of stuur losse velden als supported
+    if "prebuy_id" in params:
+        kwargs["prebuy_id"] = meta.get("prebuy_id")
+    if "entry" in params:
+        kwargs["entry"] = meta.get("entry")
+    if "stop" in params:
+        kwargs["stop"] = meta.get("stop")
+    if "stop_loss" in params:
+        kwargs["stop_loss"] = meta.get("stop")
+    if "target" in params:
+        kwargs["target"] = meta.get("target")
+
+    buy_fn(*args, **kwargs)
+
+
+def _get_buy_fn(module_path: str):
+    """
+    Import module en geef buy_eur terug als die bestaat.
+    (Voorkomt: ImportError: cannot import name 'buy_eur' ...)
+    """
+    try:
+        mod = __import__(module_path, fromlist=["buy_eur"])
+        fn = getattr(mod, "buy_eur", None)
+        if not callable(fn):
+            raise AttributeError(f"{module_path}.buy_eur ontbreekt")
+        return fn, None
+    except Exception as e:
+        return None, e
+
+
 def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     """
     Probeert BUY uit te voeren via paper_trader of live_trader.
@@ -189,30 +248,50 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     entry = float(prebuy.get("entry") or 0.0)
     stop = float(prebuy.get("stop") or 0.0)
     target = float(prebuy.get("target") or 0.0)
-    prebuy_id = prebuy.get("id")
+    prebuy_id = str(prebuy.get("id") or "").strip()
 
-    try:
-        from trading.paper_trader import buy_eur  # type: ignore
+    if not symbol:
+        return False, "BUY faalde: symbol ontbreekt."
 
-        meta = {"prebuy_id": prebuy_id, "entry": entry, "stop": stop, "target": target}
-        buy_eur(symbol, float(amount_eur), meta=meta)  # type: ignore
-        return True, f"BUY uitgevoerd (paper) {symbol} €{amount_eur}"
+    meta = {"prebuy_id": prebuy_id, "entry": entry, "stop": stop, "target": target}
 
-    except Exception as e1:
+    attempts: List[Tuple[str, str]] = []
+
+    def try_one(mode: str) -> Tuple[bool, str]:
+        module_path = "trading.paper_trader" if mode == "paper" else "trading.live_trader"
+        buy_fn, err = _get_buy_fn(module_path)
+        if err or buy_fn is None:
+            attempts.append((mode, f"{type(err).__name__}: {err}"))
+            return False, f"{mode} trader niet beschikbaar: {type(err).__name__}: {err}"
+
         try:
-            from trading.live_trader import buy_eur  # type: ignore
+            _call_buy_compat(buy_fn, symbol, float(amount_eur), meta)
+            return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
+        except Exception as e:
+            attempts.append((mode, f"{type(e).__name__}: {e}"))
+            return False, f"{mode} buy error: {type(e).__name__}: {e}"
 
-            meta = {"prebuy_id": prebuy_id, "entry": entry, "stop": stop, "target": target}
-            buy_eur(symbol, float(amount_eur), meta=meta)  # type: ignore
-            return True, f"BUY uitgevoerd (live) {symbol} €{amount_eur}"
+    # Volg TRADER_MODE
+    if TRADER_MODE == "paper":
+        ok, msg = try_one("paper")
+        return ok, msg
 
-        except Exception as e2:
-            return (
-                False,
-                "BUY NIET uitgevoerd (trader ontbreekt of error).\n"
-                f"paper_err={type(e1).__name__}: {e1}\n"
-                f"live_err={type(e2).__name__}: {e2}",
-            )
+    if TRADER_MODE == "live":
+        ok, msg = try_one("live")
+        return ok, msg
+
+    # auto: eerst paper, dan live
+    ok, msg = try_one("paper")
+    if ok:
+        return True, msg
+
+    ok2, msg2 = try_one("live")
+    if ok2:
+        return True, msg2
+
+    # beide faalden
+    detail = "\n".join([f"{m}_err={e}" for (m, e) in attempts]) if attempts else "geen details"
+    return False, "BUY NIET uitgevoerd (trader ontbreekt of error).\n" + detail
 
 
 # ==========================================================
@@ -242,7 +321,8 @@ HELP_TEXT = (
     "TOP (top 5 hoogste chance)\n"
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n\n"
-    "Bedragen: 5/10/15/20/30/100"
+    "Bedragen: 5/10/15/20/30/100\n"
+    "Optioneel: TRADER_MODE=paper|live|auto"
 )
 
 
@@ -324,7 +404,7 @@ def whatsapp():
                 # 1) mark approved
                 mark_approved(conn, prebuy_id)
 
-                # 2) execute buy (crash-proof)
+                # 2) execute buy (crash-proof + compat)
                 ok, msg = execute_buy(p, amount)
 
                 # 3) mark consumed als BUY ok is
