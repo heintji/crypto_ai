@@ -36,7 +36,6 @@ ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
 # - "auto"   -> probeert eerst paper, dan live
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
-
 # ==========================================================
 # UTIL
 # ==========================================================
@@ -75,9 +74,7 @@ def as_aware_utc(dt: Any) -> Optional[datetime]:
     """
     Zorg dat expires_at altijd vergelijkbaar is met now_utc().
     """
-    if not dt:
-        return None
-    if not isinstance(dt, datetime):
+    if not dt or not isinstance(dt, datetime):
         return None
     if dt.tzinfo is None:
         # naive => behandel als UTC (Postgres kan soms zo terugkomen)
@@ -187,7 +184,7 @@ def mark_consumed(conn, prebuy_id: str) -> None:
 # ==========================================================
 # EXECUTION (TRADER MODULE) - crash-proof, lazy import
 # ==========================================================
-def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> None:
+def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> Any:
     """
     Belangrijk:
     - Jouw error was: buy_eur() got an unexpected keyword argument 'meta'
@@ -198,8 +195,7 @@ def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any
         params = sig.parameters
     except Exception:
         # fallback: alleen positional
-        buy_fn(symbol, amount_eur)
-        return
+        return buy_fn(symbol, amount_eur)
 
     # Altijd minimaal deze 2
     args = [symbol, amount_eur]
@@ -214,14 +210,17 @@ def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any
         kwargs["prebuy_id"] = meta.get("prebuy_id")
     if "entry" in params:
         kwargs["entry"] = meta.get("entry")
+
+    # stop variants
     if "stop" in params:
         kwargs["stop"] = meta.get("stop")
     if "stop_loss" in params:
         kwargs["stop_loss"] = meta.get("stop")
+
     if "target" in params:
         kwargs["target"] = meta.get("target")
 
-    buy_fn(*args, **kwargs)
+    return buy_fn(*args, **kwargs)
 
 
 def _get_buy_fn(module_path: str):
@@ -243,6 +242,9 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     """
     Probeert BUY uit te voeren via paper_trader of live_trader.
     Crasht nooit: bij ontbreken import => netjes terug.
+
+    LET OP:
+    We verwachten dat buy_eur een dict teruggeeft met ok=True/False (zoals jouw trader modules).
     """
     symbol = (prebuy.get("symbol") or "").strip()
     entry = float(prebuy.get("entry") or 0.0)
@@ -265,20 +267,27 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
             return False, f"{mode} trader niet beschikbaar: {type(err).__name__}: {err}"
 
         try:
-            _call_buy_compat(buy_fn, symbol, float(amount_eur), meta)
-            return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
+            res = _call_buy_compat(buy_fn, symbol, float(amount_eur), meta)
+
+            # Als trader een dict teruggeeft met ok=True -> succes
+            if isinstance(res, dict):
+                if res.get("ok") is True:
+                    return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
+                return False, f"{mode} BUY faalde: {res}"
+
+            # Als trader niets teruggeeft, beschouwen we dat als succes (maar melden we dat)
+            return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur} (no-return)"
+
         except Exception as e:
             attempts.append((mode, f"{type(e).__name__}: {e}"))
             return False, f"{mode} buy error: {type(e).__name__}: {e}"
 
     # Volg TRADER_MODE
     if TRADER_MODE == "paper":
-        ok, msg = try_one("paper")
-        return ok, msg
+        return try_one("paper")
 
     if TRADER_MODE == "live":
-        ok, msg = try_one("live")
-        return ok, msg
+        return try_one("live")
 
     # auto: eerst paper, dan live
     ok, msg = try_one("paper")
@@ -338,7 +347,6 @@ def whatsapp():
         if not DATABASE_URL:
             return twiml("DATABASE_URL ontbreekt in Render Environment.")
 
-        # DB connect per request (lazy)
         with db_connect() as conn:
             if cmd in ("HELP", "?"):
                 return twiml(HELP_TEXT)
@@ -415,7 +423,6 @@ def whatsapp():
                 # BUY faalde => laat APPROVED staan (zodat je ziet dat jij akkoord gaf)
                 return twiml(f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}")
 
-            # fallback
             return twiml("Onbekend command.\n\n" + HELP_TEXT)
 
     except Exception as e:
