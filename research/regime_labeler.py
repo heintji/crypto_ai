@@ -1,65 +1,40 @@
+# research/regime_labeler.py
 from __future__ import annotations
 
 import os
+import sys
 import math
 import time
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple, Optional
 
 import psycopg2
 
 
 # =========================
-# CONFIG (env + defaults)
+# ENV / DEFAULTS
 # =========================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-EXCHANGE = (os.getenv("REGIME_EXCHANGE") or "binance").strip()
-TIMEFRAME = (os.getenv("REGIME_TIMEFRAME") or "4h").strip()
+EXCHANGE = (os.getenv("EXCHANGE") or "binance").strip()
+TIMEFRAME = (os.getenv("TIMEFRAME") or "4h").strip()
 
-# Hoeveel candles per coin pakken (300 is ruim genoeg voor EMA200 stabiliteit)
-LOOKBACK = int(os.getenv("REGIME_LOOKBACK") or "320")
+# Hoeveel candles ophalen per symbol (moet genoeg zijn voor SMA200 + slope)
+LOOKBACK = int(os.getenv("LOOKBACK") or "320")
 
-# Slope window: EMA50 % verandering over laatste N candles
-SLOPE_WINDOW = int(os.getenv("REGIME_SLOPE_WINDOW") or "10")
+# Max symbols per run (0 = geen limiet)
+SYMBOL_LIMIT = int(os.getenv("SYMBOL_LIMIT") or "155")
 
-# Strength threshold (% afstand EMA50 vs EMA200) om bull/bear serieus te nemen
-MIN_STRENGTH_PCT = float(os.getenv("REGIME_MIN_STRENGTH_PCT") or "0.8")  # 0.8%
+# Extra: alleen symbols die candles hebben
+ONLY_QUOTE = (os.getenv("ONLY_QUOTE") or "USDT").strip().upper()  # optioneel filter op symbol eindigt met USDT
 
-# Max coins per run (0 = alles)
-MAX_SYMBOLS = int(os.getenv("REGIME_MAX_SYMBOLS") or "0")
-
-# Alleen USDT pairs?
-ONLY_USDT = (os.getenv("REGIME_ONLY_USDT") or "1").strip() == "1"
+# Kleine throttle om DB te ontzien (sec)
+SLEEP_BETWEEN = float(os.getenv("SLEEP_BETWEEN") or "0")
 
 
 # =========================
-# Helpers
+# DB HELPERS
 # =========================
-def ema(values: List[float], span: int) -> List[float]:
-    """Simple EMA list."""
-    if not values:
-        return []
-    alpha = 2.0 / (span + 1.0)
-    out = [values[0]]
-    for v in values[1:]:
-        out.append(alpha * v + (1 - alpha) * out[-1])
-    return out
-
-
-def clamp(n: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, n))
-
-
-@dataclass
-class RegimeResult:
-    symbol: str
-    asof_ts: str  # ISO-ish string from DB
-    regime: str   # BULL/BEAR/RANGE
-    score: int    # 0-100
-
-
-def connect():
+def connect_db():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL is empty (set it in Render env)")
     conn = psycopg2.connect(DATABASE_URL)
@@ -67,35 +42,75 @@ def connect():
     return conn
 
 
-def fetch_symbols(conn) -> List[str]:
-    where = "WHERE exchange=%s AND timeframe=%s"
-    params = [EXCHANGE, TIMEFRAME]
-    if ONLY_USDT:
-        where += " AND symbol LIKE %s"
-        params.append("%USDT")
-
-    sql = f"""
-        SELECT DISTINCT symbol
-        FROM public.candles
-        {where}
-        ORDER BY symbol ASC
+def ensure_market_regime_table(conn):
+    """
+    Zorgt dat public.market_regime bestaat (zoals jij 'm al gemaakt hebt).
     """
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.market_regime (
+              exchange   TEXT NOT NULL DEFAULT 'binance',
+              symbol     TEXT NOT NULL,
+              timeframe  TEXT NOT NULL DEFAULT '4h',
+              asof_ts    TIMESTAMPTZ NOT NULL,
+              regime     TEXT NOT NULL,
+              score      INTEGER NOT NULL DEFAULT 0,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              PRIMARY KEY (exchange, symbol, timeframe, asof_ts)
+            );
+            """
+        )
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS market_regime_symbol_ts_idx
+            ON public.market_regime(symbol, asof_ts DESC);
+            """
+        )
+
+
+def fetch_symbols(conn) -> List[str]:
+    """
+    Haalt symbols uit candles table. Filtert optioneel op USDT.
+    """
+    q = """
+        SELECT DISTINCT symbol
+        FROM public.candles
+        WHERE exchange = %s
+          AND timeframe = %s
+    """
+    params = [EXCHANGE, TIMEFRAME]
+
+    if ONLY_QUOTE:
+        q += " AND symbol LIKE %s"
+        params.append(f"%{ONLY_QUOTE}")
+
+    q += " ORDER BY symbol ASC"
+
+    if SYMBOL_LIMIT and SYMBOL_LIMIT > 0:
+        q += " LIMIT %s"
+        params.append(SYMBOL_LIMIT)
+
+    with conn.cursor() as cur:
+        cur.execute(q, tuple(params))
         rows = cur.fetchall()
-    symbols = [r[0] for r in rows]
-    if MAX_SYMBOLS and MAX_SYMBOLS > 0:
-        symbols = symbols[:MAX_SYMBOLS]
-    return symbols
+
+    return [r[0] for r in rows]
 
 
 def fetch_closes(conn, symbol: str) -> Tuple[List[float], Optional[str]]:
+    """
+    Haalt de laatste LOOKBACK closes op + de meest recente open_time (asof_ts).
+    Let op: jouw candles table heeft open_time, geen ts.
+    """
     sql = """
-        SELECT ts, close
+        SELECT open_time, close
         FROM public.candles
-        WHERE exchange=%s AND symbol=%s AND timeframe=%s
-        ORDER BY ts DESC
-        LIMIT %s
+        WHERE exchange = %s
+          AND symbol = %s
+          AND timeframe = %s
+        ORDER BY open_time DESC
+        LIMIT %s;
     """
     with conn.cursor() as cur:
         cur.execute(sql, (EXCHANGE, symbol, TIMEFRAME, LOOKBACK))
@@ -104,91 +119,153 @@ def fetch_closes(conn, symbol: str) -> Tuple[List[float], Optional[str]]:
     if not rows:
         return [], None
 
-    # rows are DESC; reverse to ASC
+    # rows zijn DESC (nieuwste eerst). Voor indicatoren willen we ASC (oudste -> nieuwste).
     rows.reverse()
+
     closes = [float(r[1]) for r in rows]
-    asof_ts = str(rows[-1][0])
+    asof_ts = str(rows[-1][0])  # laatste open_time als string (psycopg2 geeft vaak datetime terug; str is safe voor logging)
     return closes, asof_ts
 
 
-def classify_regime(closes: List[float]) -> Tuple[str, int]:
+# =========================
+# INDICATORS / REGIME
+# =========================
+def sma(values: List[float], period: int) -> Optional[float]:
+    if len(values) < period:
+        return None
+    return sum(values[-period:]) / float(period)
+
+
+def slope(values: List[float], period: int) -> Optional[float]:
     """
-    B = EMA50/EMA200 + slope + strength score
-    - strength_pct = abs(EMA50-EMA200)/EMA200 * 100
-    - slope_pct = (EMA50_now - EMA50_prev)/EMA50_prev * 100 (over SLOPE_WINDOW)
+    Eenvoudige slope: (laatste - eerste) / periode
+    """
+    if len(values) < period + 1:
+        return None
+    start = values[-(period + 1)]
+    end = values[-1]
+    if start == 0:
+        return None
+    return (end - start) / abs(start)
+
+
+def compute_regime(closes: List[float]) -> Tuple[str, int]:
+    """
+    Simpele, robuuste regime:
+    - SMA50 vs SMA200 + slope SMA50
+    - Score 0-100 als 'sterkte' (afstand & trend)
     """
     if len(closes) < 220:
-        return "RANGE", 0
+        return "UNKNOWN", 0
 
-    e50 = ema(closes, 50)
-    e200 = ema(closes, 200)
+    c = closes[-1]
+    sma50 = sma(closes, 50)
+    sma200 = sma(closes, 200)
+    if sma50 is None or sma200 is None:
+        return "UNKNOWN", 0
 
-    ema50_now = e50[-1]
-    ema200_now = e200[-1]
+    # slope op SMA50-achtige beweging: neem slope van closes over 20 candles (4h => ~3.3 dagen)
+    s = slope(closes, 20)
+    s = 0.0 if s is None else s
 
-    if ema200_now == 0:
-        return "RANGE", 0
+    # afstand t.o.v. SMA200 (percent)
+    dist = 0.0
+    if sma200 != 0:
+        dist = (c - sma200) / abs(sma200)
 
-    strength_pct = abs(ema50_now - ema200_now) / ema200_now * 100.0
+    # regime rules
+    if c > sma200 and sma50 > sma200 and s > 0:
+        regime = "BULL"
+    elif c < sma200 and sma50 < sma200 and s < 0:
+        regime = "BEAR"
+    else:
+        regime = "RANGE"
 
-    # slope over window
-    w = min(SLOPE_WINDOW, len(e50) - 2)
-    ema50_prev = e50[-1 - w]
-    slope_pct = 0.0
-    if ema50_prev != 0:
-        slope_pct = (ema50_now - ema50_prev) / ema50_prev * 100.0
+    # score (0-100): combineer trend + afstand
+    # clamp
+    strength = min(1.0, abs(dist) * 3.0)  # dist 0.10 => ~0.30 => best ok
+    trend = min(1.0, abs(s) * 10.0)       # slope 0.01 => 0.10
+    raw = 0.6 * strength + 0.4 * trend
+    score = int(max(0, min(100, round(raw * 100))))
 
-    # Score (0-100): combine strength + slope magnitude
-    # strength contributes up to 70, slope up to 30
-    strength_score = clamp((strength_pct / 3.0) * 70.0, 0.0, 70.0)  # 3% afstand ~ max 70
-    slope_score = clamp((abs(slope_pct) / 1.5) * 30.0, 0.0, 30.0)    # 1.5% move ~ max 30
-    score = int(round(strength_score + slope_score))
-
-    # Regime rules (strenger):
-    if ema50_now > ema200_now and slope_pct > 0 and strength_pct >= MIN_STRENGTH_PCT:
-        return "BULL", score
-    if ema50_now < ema200_now and slope_pct < 0 and strength_pct >= MIN_STRENGTH_PCT:
-        return "BEAR", score
-
-    return "RANGE", score
+    return regime, score
 
 
-def upsert_market_regime(conn, r: RegimeResult) -> None:
+def upsert_regime(conn, symbol: str, asof_ts, regime: str, score: int):
+    """
+    Upsert op (exchange, symbol, timeframe, asof_ts)
+    """
     sql = """
-        INSERT INTO public.market_regime (exchange, symbol, timeframe, asof_ts, regime, score)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO public.market_regime(exchange, symbol, timeframe, asof_ts, regime, score, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, now())
         ON CONFLICT (exchange, symbol, timeframe, asof_ts)
-        DO UPDATE SET regime = EXCLUDED.regime, score = EXCLUDED.score, updated_at = now()
+        DO UPDATE SET
+          regime = EXCLUDED.regime,
+          score = EXCLUDED.score,
+          updated_at = now();
     """
     with conn.cursor() as cur:
-        cur.execute(sql, (EXCHANGE, r.symbol, TIMEFRAME, r.asof_ts, r.regime, r.score))
+        cur.execute(sql, (EXCHANGE, symbol, TIMEFRAME, asof_ts, regime, score))
 
 
+# =========================
+# MAIN
+# =========================
 def main():
     t0 = time.time()
-    conn = connect()
+    conn = connect_db()
+    ensure_market_regime_table(conn)
 
     symbols = fetch_symbols(conn)
     print(f"== regime_labeler B == exchange={EXCHANGE} tf={TIMEFRAME} symbols={len(symbols)} lookback={LOOKBACK}")
 
-    wrote = 0
+    ok = 0
     skipped = 0
 
-    for i, sym in enumerate(symbols, 1):
+    for i, sym in enumerate(symbols, start=1):
         closes, asof_ts = fetch_closes(conn, sym)
         if not closes or not asof_ts:
             skipped += 1
+            print(f"{sym}: skip (no data)")
             continue
 
-        regime, score = classify_regime(closes)
-        upsert_market_regime(conn, RegimeResult(symbol=sym, asof_ts=asof_ts, regime=regime, score=score))
-        wrote += 1
+        regime, score = compute_regime(closes)
+        if regime == "UNKNOWN":
+            skipped += 1
+            print(f"{sym}: skip (not enough candles: {len(closes)})")
+            continue
 
-        if i % 25 == 0:
-            print(f"... {i}/{len(symbols)} wrote={wrote} skipped={skipped}")
+        # Gebruik echte datetime object voor asof_ts als psycopg2 dat terug gaf
+        # fetch_closes geeft str(rows[-1][0]) voor logging, maar we willen de originele waarde.
+        # Daarom: haal 'm nog 1 keer direct op als datetime:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT open_time
+                FROM public.candles
+                WHERE exchange=%s AND symbol=%s AND timeframe=%s
+                ORDER BY open_time DESC
+                LIMIT 1;
+                """,
+                (EXCHANGE, sym, TIMEFRAME),
+            )
+            row = cur.fetchone()
+            dt_asof = row[0] if row else None
+
+        if dt_asof is None:
+            skipped += 1
+            print(f"{sym}: skip (no asof)")
+            continue
+
+        upsert_regime(conn, sym, dt_asof, regime, score)
+        ok += 1
+        print(f"{sym}: {regime} score={score} asof={dt_asof}")
+
+        if SLEEP_BETWEEN > 0:
+            time.sleep(SLEEP_BETWEEN)
 
     dt = time.time() - t0
-    print(f"DONE wrote={wrote} skipped={skipped} seconds={dt:.1f}")
+    print(f"DONE ok={ok} skipped={skipped} seconds={dt:.1f}")
 
 
 if __name__ == "__main__":
