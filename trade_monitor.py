@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
+
 import psycopg2
 import psycopg2.extras
 
@@ -16,7 +17,41 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from trading.paper_trader import sell  # noqa: E402
+# =========================
+# ✅ DATA PATH RESOLVER
+# =========================
+def _get_data_dir() -> str:
+    d = (os.getenv("DATA_DIR") or "").strip()
+    if d:
+        return d
+    return "/data" if os.path.isdir("/data") else "/tmp/data"
+
+DATA_DIR = _get_data_dir()
+LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
+
+STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
+FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
+
+# =========================
+# Binance endpoints (voor prijs / structuur)
+# =========================
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+HTTP_TIMEOUT = 15
+
+STRUCT_INTERVAL = "1h"
+STRUCT_LIMIT = 50
+
+DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
+FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
+
+# =========================
+# ✅ TRADER MODE (AUTO)
+# =========================
+# "paper" -> altijd paper_trader
+# "live"  -> altijd live_trader
+# "auto"  -> per trade: als trade["live"]=True => live, anders paper
+TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
 # =========================
 # ✅ DATABASE (Experience)
@@ -27,14 +62,15 @@ def db_ready() -> bool:
     return bool(DATABASE_URL)
 
 def db_connect():
-    # Render Postgres: sslmode=require
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 def now_utc_dt() -> datetime:
     return datetime.now(timezone.utc)
 
+def _print(msg: str):
+    print(msg, flush=True)
+
 def _table_exists(conn, fq_table: str) -> bool:
-    # fq_table like 'public.experience_trades'
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT to_regclass(%s);", (fq_table,))
@@ -80,13 +116,11 @@ def _safe_int(x: Any, default: int = 0) -> int:
         return default
 
 def _infer_outcome(result_r: float) -> str:
-    # simpele en stabiele mapping
     if abs(result_r) < 0.05:
         return "BREAKEVEN"
     return "WIN" if result_r > 0 else "LOSS"
 
 def _infer_label(trade: Dict[str, Any]) -> str:
-    # liever uit trade zelf; anders afleiden uit score
     if isinstance(trade.get("label"), str) and trade["label"].strip():
         return trade["label"].strip().upper()
     score = _safe_int(trade.get("score"), 0)
@@ -97,18 +131,12 @@ def _infer_label(trade: Dict[str, Any]) -> str:
     return "SKIP"
 
 def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float, result_r: float, outcome: str) -> None:
-    """
-    Insert 1 rij in public.experience_trades (best-effort, schema-safe).
-    We crashen NOOIT je exit-logica als experience niet klopt.
-    """
     if not _table_exists(conn, "public.experience_trades"):
         return
 
-    # columns in DB kunnen verschillen -> alleen vullen wat bestaat
     cols: List[str] = []
     vals: List[Any] = []
 
-    # mogelijke velden (jij hebt ze eerder gedefinieerd)
     candidates: List[Tuple[str, Any]] = [
         ("symbol", trade.get("symbol")),
         ("setup_type", trade.get("setup_type") or "TREND_PULLBACK"),
@@ -116,18 +144,18 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
         ("regime", (trade.get("regime") or "UNKNOWN")),
         ("label", _infer_label(trade)),
         ("score", _safe_int(trade.get("score"), 0)),
-        ("raw_score", trade.get("raw_score")),  # optional
+        ("raw_score", trade.get("raw_score")),
         ("chance", _safe_int(trade.get("chance"), 0)),
         ("confidence", _safe_int(trade.get("confidence"), trade.get("chance") or 0)),
         ("entry", _safe_float(trade.get("entry"), 0.0)),
         ("stop", _safe_float(trade.get("stop") or trade.get("stop_loss"), 0.0)),
-        ("stop_loss", _safe_float(trade.get("stop_loss"), 0.0)),  # als kolom bestaat
+        ("stop_loss", _safe_float(trade.get("stop_loss"), 0.0)),
         ("target", _safe_float(trade.get("target"), 0.0)),
-        ("exit", close_price),                   # als kolom bestaat
-        ("exit_price", close_price),             # als kolom bestaat
+        ("exit", close_price),
+        ("exit_price", close_price),
         ("result_r", result_r),
         ("outcome", outcome),
-        ("is_shadow", False),                    # echte trade
+        ("is_shadow", False),
         ("created_at", now_utc_dt()),
     ]
 
@@ -152,22 +180,16 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
         )
 
 def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
-    """
-    Recompute scoreboard for (setup_type, regime, timeframe) and upsert into public.experience_scoreboard
-    """
     if not _table_exists(conn, "public.experience_scoreboard"):
         return
     if not _table_exists(conn, "public.experience_trades"):
+        return
+    if not _has_column(conn, "experience_trades", "result_r") or not _has_column(conn, "experience_trades", "outcome"):
         return
 
     setup_type = (trade.get("setup_type") or "TREND_PULLBACK")
     regime = (trade.get("regime") or "UNKNOWN")
     timeframe = (trade.get("timeframe") or trade.get("tf") or "4h")
-
-    # compute stats from trades table (best effort)
-    # we use outcome + result_r if columns exist; otherwise skip.
-    if not _has_column(conn, "experience_trades", "result_r") or not _has_column(conn, "experience_trades", "outcome"):
-        return
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -191,7 +213,6 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
     avg_win_r = _safe_float(stats.get("avg_win_r"), 0.0)
     avg_loss_r = _safe_float(stats.get("avg_loss_r"), 0.0)
 
-    # build dynamic upsert for scoreboard table columns that exist
     payload = {
         "setup_type": setup_type,
         "regime": regime,
@@ -216,19 +237,16 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
     if not cols:
         return
 
-    col_sql = ", ".join(cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-
-    # conflict key: usually (setup_type, regime, timeframe)
     conflict_cols = []
     for k in ["setup_type", "regime", "timeframe"]:
         if _has_column(conn, "experience_scoreboard", k):
             conflict_cols.append(k)
 
     if len(conflict_cols) < 2:
-        # weird schema -> don't upsert
         return
 
+    col_sql = ", ".join(cols)
+    placeholders = ", ".join(["%s"] * len(cols))
     set_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in cols if c not in conflict_cols])
 
     with conn.cursor() as cur:
@@ -243,9 +261,6 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
         )
 
 def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: float) -> None:
-    """
-    Wrapper: insert trade + update scoreboard
-    """
     if not db_ready():
         return
     try:
@@ -259,36 +274,7 @@ def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: 
                 conn.rollback()
                 raise
     except Exception as e:
-        # NOOIT exit-logica laten crashen
         _print(f"⚠️ Experience update skipped: {type(e).__name__}: {e}")
-
-# =========================
-# ✅ DATA PATH RESOLVER
-# =========================
-def _get_data_dir() -> str:
-    d = (os.getenv("DATA_DIR") or "").strip()
-    if d:
-        return d
-    return "/data" if os.path.isdir("/data") else "/tmp/data"
-
-DATA_DIR = _get_data_dir()
-LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
-
-STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
-FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
-
-# =========================
-# Binance endpoints (voor prijs / structuur)
-# =========================
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-HTTP_TIMEOUT = 15
-
-STRUCT_INTERVAL = "1h"
-STRUCT_LIMIT = 50
-
-DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
-FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 # =========================
 # WhatsApp (Twilio)
@@ -300,9 +286,6 @@ def twilio_ready() -> bool:
         os.getenv("TWILIO_WHATSAPP_FROM"),
         os.getenv("TWILIO_WHATSAPP_TO"),
     ])
-
-def _print(msg: str):
-    print(msg, flush=True)
 
 def send_whatsapp(message: str) -> bool:
     if not twilio_ready():
@@ -387,6 +370,42 @@ def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
         return 0.0
     return (price - entry) / risk
 
+# =========================
+# ✅ AUTO SELL ROUTER
+# =========================
+_SELL_PAPER = None
+_SELL_LIVE = None
+
+def _get_sell_fn(trade: Dict[str, Any]):
+    """
+    Kiest SELL functie:
+    - TRADER_MODE=paper -> paper_trader.sell
+    - TRADER_MODE=live  -> live_trader.sell
+    - TRADER_MODE=auto  -> als trade['live']=True -> live, anders paper
+    """
+    global _SELL_PAPER, _SELL_LIVE
+
+    prefer = TRADER_MODE
+    if prefer == "auto":
+        prefer = "live" if bool(trade.get("live")) else "paper"
+
+    if prefer == "live":
+        if _SELL_LIVE is None:
+            try:
+                from trading.live_trader import sell as _s  # type: ignore
+                _SELL_LIVE = _s
+            except Exception as e:
+                _print(f"⚠️ live_trader.sell niet beschikbaar -> fallback paper ({type(e).__name__}: {e})")
+                prefer = "paper"
+
+    if prefer == "paper":
+        if _SELL_PAPER is None:
+            from trading.paper_trader import sell as _s  # type: ignore
+            _SELL_PAPER = _s
+
+    return _SELL_LIVE if prefer == "live" else _SELL_PAPER
+
+
 def _send_sell_close_message(
     symbol: str,
     reason: str,
@@ -462,7 +481,8 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
-    sell_res = sell(symbol, 1.0)  # ✅ symbol, niet market
+    sell_fn = _get_sell_fn(trade)
+    sell_res = sell_fn(symbol, 1.0)  # ✅ auto trader
 
     trade["status"] = "CLOSED"
     trade["closed_reason"] = "FORCE_TEST_EXIT"
@@ -524,9 +544,11 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
     _print(f"📊 {symbol} | price={price:.6f} | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
+    sell_fn = _get_sell_fn(trade)
+
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
-        sell_res = sell(symbol, 1.0)  # ✅ symbol
+        sell_res = sell_fn(symbol, 1.0)
 
         trade["status"] = "CLOSED"
         trade["closed_reason"] = "STOP_LOSS_BEFORE_1R"
@@ -534,7 +556,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
         _send_sell_close_message(symbol, "STOP-LOSS vóór 1R", entry, stop_loss, target, r, sell_res)
 
-        # ✅ Experience update
         if isinstance(sell_res, dict) and sell_res.get("ok"):
             exit_price = float(sell_res.get("price", price))
             r_exit = calc_r_multiple(exit_price, entry, stop_loss)
@@ -572,7 +593,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f}")
                     elif last_closed_low < trailing:
                         _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100%")
-                        sell_res = sell(symbol, 1.0)  # ✅ symbol
+                        sell_res = sell_fn(symbol, 1.0)
 
                         trade["status"] = "CLOSED"
                         trade["closed_reason"] = "STRUCTURE_LOWER_LOW"
@@ -580,7 +601,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
                         _send_sell_close_message(symbol, "STRUCTUUR: eerste lower-low", entry, stop_loss, target, r, sell_res)
 
-                        # ✅ Experience update
                         if isinstance(sell_res, dict) and sell_res.get("ok"):
                             exit_price = float(sell_res.get("price", price))
                             r_exit = calc_r_multiple(exit_price, entry, stop_loss)
@@ -600,7 +620,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
-        sell(symbol, 0.40)  # ✅ symbol
+        sell_fn(symbol, 0.40)
         trade["partial_sold_40"] = True
         trade["below_1r_count"] = 1
         trade["last_check"] = now_ts()
@@ -611,7 +631,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
         if trade["below_1r_count"] >= 3:
             _print(f"🔚 {symbol} 3x onder 1R gebleven -> SELL 100% (rest sluiten)")
-            sell_res = sell(symbol, 1.0)  # ✅ symbol
+            sell_res = sell_fn(symbol, 1.0)
 
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "UNDER_1R_3X_CLOSE_REST"
@@ -619,7 +639,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
             _send_sell_close_message(symbol, "Na >1R: 3x onder 1R (rest gesloten)", entry, stop_loss, target, r, sell_res)
 
-            # ✅ Experience update
             if isinstance(sell_res, dict) and sell_res.get("ok"):
                 exit_price = float(sell_res.get("price", price))
                 r_exit = calc_r_multiple(exit_price, entry, stop_loss)
@@ -687,6 +706,7 @@ def main():
     _print(f"LOGS_DIR: {LOGS_DIR}")
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
+    _print(f"TRADER_MODE: {TRADER_MODE}")
     _print(f"DB experience: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
 
     ensure_dir(LOGS_DIR)
