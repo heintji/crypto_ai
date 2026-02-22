@@ -1,9 +1,4 @@
 # trading/live_trader.py
-# =========================================
-# LIVE TRADER (Bitvavo) – execute only (NO strategy)
-# Fix: signature invalid (errorCode 309) -> sign with /v2/... path
-# =========================================
-
 from __future__ import annotations
 
 import os
@@ -11,35 +6,30 @@ import time
 import json
 import hmac
 import hashlib
-from datetime import datetime
 from typing import Any, Dict, Optional
 
 import requests
 
-# =========================================
+# =========================
 # ENV
-# =========================================
+# =========================
 BITVAVO_API_KEY = (os.getenv("BITVAVO_API_KEY") or "").strip()
 BITVAVO_API_SECRET = (os.getenv("BITVAVO_API_SECRET") or "").strip()
+BITVAVO_ACCESS_WINDOW = (os.getenv("BITVAVO_ACCESS_WINDOW") or "10000").strip()  # ms
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "20")
 
 if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
     raise RuntimeError("❌ BITVAVO_API_KEY / BITVAVO_API_SECRET ontbreken")
 
-HTTP_TIMEOUT = 15
+# BELANGRIJK: base ZONDER /v2
+BASE_URL = "https://api.bitvavo.com"
 
-# Bitvavo base host (zonder /v2)
-HOST = "https://api.bitvavo.com"
-
-# =========================================
-# HELPERS
-# =========================================
+# =========================
+# SIGNING
+# =========================
 def _sign(timestamp_ms: str, method: str, path: str, body: str = "") -> str:
-    """
-    Bitvavo signature:
-      signature = HMAC_SHA256(secret, timestamp + method + path + body)
-    BELANGRIJK: path moet EXACT "/v2/..." zijn als je endpoint /v2 gebruikt.
-    """
-    msg = timestamp_ms + method.upper() + path + (body or "")
+    # Bitvavo verwacht: timestamp + method + path + body
+    msg = f"{timestamp_ms}{method}{path}{body}"
     return hmac.new(
         BITVAVO_API_SECRET.encode("utf-8"),
         msg.encode("utf-8"),
@@ -49,171 +39,121 @@ def _sign(timestamp_ms: str, method: str, path: str, body: str = "") -> str:
 
 def _headers(method: str, path: str, body: str = "") -> Dict[str, str]:
     ts = str(int(time.time() * 1000))
-    sig = _sign(ts, method, path, body)
     return {
         "Bitvavo-Access-Key": BITVAVO_API_KEY,
-        "Bitvavo-Access-Signature": sig,
+        "Bitvavo-Access-Signature": _sign(ts, method, path, body),
         "Bitvavo-Access-Timestamp": ts,
-        "Bitvavo-Access-Window": "10000",
+        "Bitvavo-Access-Window": BITVAVO_ACCESS_WINDOW,
         "Content-Type": "application/json",
     }
 
 
-def _market_usdt_to_eur(symbol: str) -> str:
-    """
-    Bot gebruikt vaak Binance symbols zoals INJUSDT.
-    Bitvavo markets zijn bv: INJ-EUR.
-    """
-    s = (symbol or "").strip().upper()
-    if s.endswith("USDT"):
-        base = s[:-4]
-        return f"{base}-EUR"
-    if "-" in s:
-        return s
-    # fallback: als iemand bv "INJ" geeft
-    return f"{s}-EUR"
+def _req(method: str, path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    url = BASE_URL + path
 
+    body = ""
+    data = None
+    if payload is not None:
+        # Exacte JSON string (zonder random spaces/formatting issues)
+        body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+        data = body
 
-def _safe_float(x: Any, default: float = 0.0) -> float:
+    headers = _headers(method, path, body)
+
+    r = requests.request(method, url, headers=headers, data=data, timeout=HTTP_TIMEOUT)
+
+    # Probeer altijd JSON terug te geven (ook bij errors)
     try:
-        return float(x)
+        j = r.json()
     except Exception:
-        return default
+        j = {"raw": r.text}
+
+    if r.status_code >= 400:
+        return {"ok": False, "status": r.status_code, "error": j}
+
+    return {"ok": True, "data": j}
 
 
-def _now_iso() -> str:
-    return datetime.utcnow().isoformat()
+# =========================
+# HELPERS
+# =========================
+def _to_market(symbol: str) -> str:
+    # Jij stuurt symbol als "BTCUSDT" etc.
+    # Bitvavo wil "BTC-EUR"
+    coin = symbol.replace("USDT", "").replace("EUR", "")
+    return f"{coin}-EUR"
 
 
-# =========================================
-# MARKET DATA (optional)
-# =========================================
-def get_price(symbol: str) -> Dict[str, Any]:
+# =========================
+# LIVE BUY/SELL
+# =========================
+def buy_eur(symbol: str, amount_eur: float, prebuy_id: Optional[str] = None, **kwargs) -> Dict[str, Any]:
     """
-    Haal prijs op via Bitvavo ticker/price.
-    Return dict zodat caller kan loggen.
+    Market BUY met amountQuote in EUR.
     """
-    market = _market_usdt_to_eur(symbol)
-    path = "/v2/ticker/price"
-    url = HOST + path
-    try:
-        r = requests.get(url, params={"market": market}, timeout=HTTP_TIMEOUT)
-        if r.status_code >= 400:
-            return {"ok": False, "status": r.status_code, "error": r.text[:300], "market": market}
-        data = r.json()
-        return {"ok": True, "market": market, "price": _safe_float(data.get("price"))}
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "market": market}
+    market = _to_market(symbol)
+    path = "/v2/order"
 
-
-# =========================================
-# LIVE BUY (market, quote amount in EUR)
-# =========================================
-def buy_eur(
-    symbol: str,
-    amount_eur: float,
-    prebuy_id: Optional[str] = None,
-    entry: Optional[float] = None,
-    stop_loss: Optional[float] = None,
-    target: Optional[float] = None,
-) -> Dict[str, Any]:
-    """
-    Plaatst een MARKET BUY op Bitvavo met amountQuote (EUR).
-    Deze module doet alleen execution (geen strategie).
-    """
-    market = _market_usdt_to_eur(symbol)
-
-    # Body exact als string gebruiken voor signing
-    body_obj = {
+    payload = {
         "market": market,
         "side": "buy",
         "orderType": "market",
         "amountQuote": f"{float(amount_eur):.2f}",
     }
-    body = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False)
 
-    path = "/v2/order"  # ✅ BELANGRIJK: signen met /v2/...
-    url = HOST + path
+    res = _req("POST", path, payload)
+    if not res.get("ok"):
+        return res
 
-    try:
-        r = requests.post(url, headers=_headers("POST", path, body), data=body, timeout=HTTP_TIMEOUT)
-        if r.status_code >= 400:
-            return {
-                "ok": False,
-                "status": r.status_code,
-                "error": r.text[:500],
-                "market": market,
-                "prebuy_id": prebuy_id,
-            }
+    data = res.get("data", {}) or {}
 
-        res = r.json()
+    # Bitvavo kan velden verschillend teruggeven per account/orderType
+    filled_amount = float(data.get("filledAmount") or 0.0)
+    price = float(data.get("price") or 0.0)
 
-        # Bitvavo response velden kunnen verschillen; we pakken safe
-        filled_qty = _safe_float(res.get("filledAmount") or res.get("amount"))
-        price = _safe_float(res.get("price"))
-
-        return {
-            "ok": True,
-            "market": market,
-            "symbol": symbol,
-            "filled_qty": filled_qty,
-            "price": price,
-            "raw": res,
-            "prebuy_id": prebuy_id,
-            "meta": {"entry": entry, "stop_loss": stop_loss, "target": target, "ts": _now_iso()},
-        }
-
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": f"{type(e).__name__}: {e}",
-            "market": market,
-            "prebuy_id": prebuy_id,
-        }
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "market": market,
+        "qty": filled_amount,
+        "price": price,
+        "prebuy_id": prebuy_id,
+        "raw": data,
+    }
 
 
-# =========================================
-# LIVE SELL (market, base amount)
-# =========================================
-def sell_amount(symbol: str, amount_base: float) -> Dict[str, Any]:
+def sell(symbol: str, fraction: float = 1.0, qty_total: Optional[float] = None, **kwargs) -> Dict[str, Any]:
     """
-    Plaatst MARKET SELL met amount (base).
+    Market SELL.
+    Als qty_total wordt meegegeven, verkopen we qty_total * fraction.
+    Anders MOET jouw monitor/paper_state de qty bepalen (daarom is qty_total optioneel).
     """
-    market = _market_usdt_to_eur(symbol)
+    if qty_total is None:
+        return {"ok": False, "reason": "QTY_TOTAL_REQUIRED_FOR_LIVE_SELL"}
 
-    body_obj = {
+    market = _to_market(symbol)
+    qty = float(qty_total) * float(fraction)
+
+    path = "/v2/order"
+    payload = {
         "market": market,
         "side": "sell",
         "orderType": "market",
-        "amount": f"{float(amount_base):.8f}",
+        "amount": f"{qty:.8f}",
     }
-    body = json.dumps(body_obj, separators=(",", ":"), ensure_ascii=False)
 
-    path = "/v2/order"  # ✅ signen met /v2/...
-    url = HOST + path
+    res = _req("POST", path, payload)
+    if not res.get("ok"):
+        return res
 
-    try:
-        r = requests.post(url, headers=_headers("POST", path, body), data=body, timeout=HTTP_TIMEOUT)
-        if r.status_code >= 400:
-            return {"ok": False, "status": r.status_code, "error": r.text[:500], "market": market}
+    data = res.get("data", {}) or {}
+    price = float(data.get("price") or 0.0)
 
-        res = r.json()
-        price = _safe_float(res.get("price"))
-        filled_qty = _safe_float(res.get("filledAmount") or res.get("amount"))
-
-        return {"ok": True, "market": market, "price": price, "filled_qty": filled_qty, "raw": res}
-
-    except Exception as e:
-        return {"ok": False, "error": f"{type(e).__name__}: {e}", "market": market}
-
-
-# Convenience wrapper (trade_monitor gebruikt vaak sell(symbol, fraction))
-def sell(symbol: str, fraction: float = 1.0, position_qty: Optional[float] = None) -> Dict[str, Any]:
-    """
-    Als je trade_monitor een qty weet (position_qty), kan je fraction toepassen.
-    Anders moet caller sell_amount direct gebruiken.
-    """
-    if position_qty is None:
-        return {"ok": False, "reason": "position_qty_required_for_fraction_sell"}
-    qty = float(position_qty) * float(fraction)
-    return sell_amount(symbol, qty)
+    return {
+        "ok": True,
+        "symbol": symbol,
+        "market": market,
+        "qty": qty,
+        "price": price,
+        "raw": data,
+    }
