@@ -6,58 +6,55 @@ import hmac
 import json
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 import requests
 
 # ==========================================================
-# BITVAVO ENV
+# ENV
 # ==========================================================
 BITVAVO_API_KEY = (os.getenv("BITVAVO_API_KEY") or "").strip()
 BITVAVO_API_SECRET = (os.getenv("BITVAVO_API_SECRET") or "").strip()
 
-# Bitvavo vereist in jouw account blijkbaar een operatorId bij orders.
-# Zet deze in Render Environment:
-# BITVAVO_OPERATOR_ID=...
+# Optional: alleen invullen als Bitvavo het echt eist (meestal NIET nodig voor particuliere accounts)
 BITVAVO_OPERATOR_ID = (os.getenv("BITVAVO_OPERATOR_ID") or "").strip()
 
-# Access window (ms). 10000 is prima.
-BITVAVO_ACCESS_WINDOW = (os.getenv("BITVAVO_ACCESS_WINDOW") or "10000").strip()
+# Bitvavo base url (NIET veranderen)
+BITVAVO_BASE_URL = (os.getenv("BITVAVO_BASE_URL") or "https://api.bitvavo.com").strip().rstrip("/")
 
-# Base URL (LET OP: base eindigt op /v2)
-BASE_URL = "https://api.bitvavo.com/v2"
+# Access Window in ms (Bitvavo default vaak 10000)
+BITVAVO_ACCESS_WINDOW = str(int(os.getenv("BITVAVO_ACCESS_WINDOW") or "10000"))
 
-# Signing path moet beginnen met /v2/...
-# Voor POST order is endpoint in base: /order
-# maar in signature string moet EXACT "/v2/order" staan.
-SIGN_PREFIX = "/v2"
+# Timeout
+HTTP_TIMEOUT = float(os.getenv("BITVAVO_HTTP_TIMEOUT") or "15")
 
 
 # ==========================================================
-# UTIL
+# HELPERS
 # ==========================================================
-def _ts_ms() -> str:
+def _now_ms() -> str:
     return str(int(time.time() * 1000))
 
 
-def _json_body(payload: Dict[str, Any]) -> str:
+def _canonical_json(data: Dict[str, Any]) -> str:
     """
-    Body moet exact hetzelfde zijn als wat je verstuurt.
-    Daarom: compacte JSON, geen spaties.
+    Belangrijk: body-string moet EXACT hetzelfde zijn als wat je verstuurt.
+    Daarom gebruiken we compacte JSON zonder extra spaties.
     """
-    return json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(data, separators=(",", ":"), ensure_ascii=False)
 
 
-def _sign(timestamp_ms: str, method: str, sign_path: str, body: str) -> str:
+def _sign(secret: str, timestamp_ms: str, method: str, path: str, body: str) -> str:
     """
-    Bitvavo signature = HMAC_SHA256(secret, timestamp + method + path + body)
+    Bitvavo signature:
+    HMAC_SHA256(secret, timestamp + method + path + body)
     """
-    msg = f"{timestamp_ms}{method.upper()}{sign_path}{body}"
-    mac = hmac.new(BITVAVO_API_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256)
-    return mac.hexdigest()
+    msg = (timestamp_ms + method.upper() + path + body).encode("utf-8")
+    key = secret.encode("utf-8")
+    return hmac.new(key, msg, hashlib.sha256).hexdigest()
 
 
-def _headers(timestamp_ms: str, signature: str) -> Dict[str, str]:
+def _headers(signature: str, timestamp_ms: str) -> Dict[str, str]:
     return {
         "Bitvavo-Access-Key": BITVAVO_API_KEY,
         "Bitvavo-Access-Signature": signature,
@@ -68,186 +65,152 @@ def _headers(timestamp_ms: str, signature: str) -> Dict[str, str]:
     }
 
 
-def _require_keys() -> Optional[str]:
-    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
-        return "BITVAVO_API_KEY / BITVAVO_API_SECRET ontbreekt."
-    return None
-
-
-def _map_symbol_to_market(symbol: str) -> Tuple[Optional[str], Optional[str]]:
+def _symbol_to_market(symbol: str) -> str:
     """
-    Jouw bot gebruikt vaak BINANCE symbols zoals:
-    - INJUSDT, ATUSDT, ENSOUSDT, ...
-    Bitvavo gebruikt markets zoals:
-    - INJ-EUR, AT-EUR, ENSO-EUR, ...
-
-    We mappen:
-    <COIN>USDT  -> <COIN>-EUR
-    <COIN>EUR   -> <COIN>-EUR (als iemand al EUR stuurt)
-    Anders: fout terug.
-
-    (Bitvavo heeft niet elke coin. Als market niet bestaat -> Bitvavo geeft error.)
+    Bot werkt met Binance-symbols zoals ENSOUSDT.
+    Bitvavo gebruikt markets zoals ENSO-EUR.
     """
     s = (symbol or "").strip().upper()
-
     if not s:
-        return None, "symbol ontbreekt"
+        return ""
 
-    # Als iemand al market geeft (met -)
     if "-" in s:
-        return s, None
+        # al in Bitvavo format (BTC-EUR)
+        return s
 
-    # USDT suffix -> EUR market
     if s.endswith("USDT"):
-        coin = s[:-4]
-        if not coin:
-            return None, f"kan coin niet bepalen uit {s}"
-        return f"{coin}-EUR", None
+        base = s[:-4]
+        return f"{base}-EUR"
 
-    # EUR suffix als string zonder dash (bv BTCEUR) -> BTC-EUR
-    if s.endswith("EUR"):
-        coin = s[:-3]
-        if not coin:
-            return None, f"kan coin niet bepalen uit {s}"
-        return f"{coin}-EUR", None
-
-    return None, f"symbol formaat niet herkend voor Bitvavo market: {s}"
+    # fallback: neem aan dat het al base is
+    return f"{s}-EUR"
 
 
-# ==========================================================
-# CORE REQUEST
-# ==========================================================
-def _request(method: str, api_path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    api_path = "/order" of "/balance" etc (zonder /v2)
-    sign_path = "/v2" + api_path
-    """
-    missing = _require_keys()
-    if missing:
-        return {"ok": False, "status": 0, "error": missing}
+def _post(path: str, body_dict: Dict[str, Any]) -> Dict[str, Any]:
+    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+        return {"ok": False, "status": 0, "error": "Missing BITVAVO_API_KEY/BITVAVO_API_SECRET"}
 
-    method_u = method.upper()
-    api_path = api_path if api_path.startswith("/") else f"/{api_path}"
-    sign_path = f"{SIGN_PREFIX}{api_path}"
+    url = f"{BITVAVO_BASE_URL}{path}"
 
-    body = ""
-    if payload is not None:
-        body = _json_body(payload)
+    timestamp_ms = _now_ms()
+    body = _canonical_json(body_dict)
 
-    ts = _ts_ms()
-    sig = _sign(ts, method_u, sign_path, body)
-    headers = _headers(ts, sig)
-
-    url = f"{BASE_URL}{api_path}"
+    signature = _sign(BITVAVO_API_SECRET, timestamp_ms, "POST", path, body)
+    headers = _headers(signature, timestamp_ms)
 
     try:
-        if method_u == "GET":
-            r = requests.get(url, headers=headers, timeout=20)
-        else:
-            r = requests.request(method_u, url, headers=headers, data=body.encode("utf-8"), timeout=20)
-
-        # Probeer JSON te lezen
+        r = requests.post(url, headers=headers, data=body.encode("utf-8"), timeout=HTTP_TIMEOUT)
+        txt = r.text or ""
         try:
             data = r.json()
         except Exception:
-            data = {"raw": r.text}
+            data = {"raw": txt}
 
-        # Bitvavo errors zijn vaak dicts met errorCode/error
-        if r.status_code >= 400:
-            return {"ok": False, "status": r.status_code, "error": data}
+        if 200 <= r.status_code < 300:
+            return {"ok": True, "status": r.status_code, "data": data}
 
-        return {"ok": True, "status": r.status_code, "data": data}
+        # Bitvavo errors zitten vaak in: {"errorCode":..., "error": "..."}
+        return {"ok": False, "status": r.status_code, "error": data, "raw": txt}
 
     except Exception as e:
-        return {"ok": False, "status": 0, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": False, "status": 0, "error": f"request error: {type(e).__name__}: {e}"}
 
 
 # ==========================================================
-# PUBLIC API (wordt door whatsapp_webhook gebruikt)
+# PUBLIC API (wordt aangeroepen door whatsapp_webhook / trade_monitor)
 # ==========================================================
-def buy_eur(symbol: str, amount_eur: float, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def buy_eur(
+    symbol: str,
+    amount_eur: float,
+    meta: Optional[Dict[str, Any]] = None,
+    *,
+    prebuy_id: Optional[str] = None,
+    entry: Optional[float] = None,
+    stop: Optional[float] = None,
+    target: Optional[float] = None,
+) -> Dict[str, Any]:
     """
-    Plaatst een MARKET BUY op Bitvavo voor een bedrag in EUR.
+    Plaats een MARKET BUY op Bitvavo voor een EUR bedrag.
+    We gebruiken amountQuote (EUR) zodat je precies €X koopt.
 
-    Bitvavo market order met quote bedrag:
-      {
-        "market": "INJ-EUR",
-        "side": "buy",
-        "orderType": "market",
-        "amountQuote": "5"
-        "operatorId": "..."
-      }
-
-    Return:
-      {"ok": True, "status": 200, "data": {...}} of {"ok": False, "status": 400/403, "error": {...}}
+    Return format:
+    { ok: True/False, status, market, ... }
     """
-    market, err = _map_symbol_to_market(symbol)
-    if err:
-        return {"ok": False, "status": 0, "error": err, "symbol": symbol}
+    market = _symbol_to_market(symbol)
+    if not market:
+        return {"ok": False, "status": 0, "error": "symbol/market missing"}
 
-    if not BITVAVO_OPERATOR_ID:
-        # Dit is exact jouw huidige errorCode 203.
-        return {
-            "ok": False,
-            "status": 0,
-            "error": "BITVAVO_OPERATOR_ID ontbreekt. Bitvavo vereist operatorId bij orders.",
-            "market": market,
-            "prebuy_id": (meta or {}).get("prebuy_id") if meta else None,
-        }
-
+    # payload volgens Bitvavo /v2/order
     payload: Dict[str, Any] = {
         "market": market,
         "side": "buy",
         "orderType": "market",
-        # quote bedrag = EUR bedrag
+        # amountQuote = bedrag in quote currency (EUR)
         "amountQuote": str(float(amount_eur)),
-        "operatorId": BITVAVO_OPERATOR_ID,
     }
 
-    res = _request("POST", "/order", payload=payload)
+    # Optioneel: operatorId ALLEEN als Bitvavo het eist (meestal niet bij privé accounts)
+    # Als BITVAVO_OPERATOR_ID leeg is, sturen we dit NIET mee.
+    if BITVAVO_OPERATOR_ID:
+        payload["operatorId"] = BITVAVO_OPERATOR_ID
 
-    # voeg context toe (handig in logs/whatsapp)
-    res["market"] = market
-    if meta:
-        res["prebuy_id"] = meta.get("prebuy_id")
-    return res
+    # Meta/debug info (niet naar Bitvavo, wel terug in response)
+    meta_out = {
+        "prebuy_id": prebuy_id or (meta or {}).get("prebuy_id"),
+        "entry": entry if entry is not None else (meta or {}).get("entry"),
+        "stop": stop if stop is not None else (meta or {}).get("stop"),
+        "target": target if target is not None else (meta or {}).get("target"),
+    }
 
+    res = _post("/v2/order", payload)
 
-def sell_market(symbol: str, amount_base: float, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """
-    MARKET SELL van een hoeveelheid base coin (bv 0.12 INJ).
-    """
-    market, err = _map_symbol_to_market(symbol)
-    if err:
-        return {"ok": False, "status": 0, "error": err, "symbol": symbol}
-
-    if not BITVAVO_OPERATOR_ID:
+    if res.get("ok") is True:
         return {
-            "ok": False,
-            "status": 0,
-            "error": "BITVAVO_OPERATOR_ID ontbreekt. Bitvavo vereist operatorId bij orders.",
+            "ok": True,
+            "status": res.get("status"),
             "market": market,
+            "amount_eur": float(amount_eur),
+            "meta": meta_out,
+            "data": res.get("data"),
         }
 
-    payload: Dict[str, Any] = {
+    return {
+        "ok": False,
+        "status": res.get("status"),
         "market": market,
+        "amount_eur": float(amount_eur),
+        "meta": meta_out,
+        "error": res.get("error"),
+        "raw": res.get("raw"),
+        "hint": "Als je errorCode 309 krijgt: signature klopt niet -> check dat BITVAVO_API_SECRET exact is en dat base url https://api.bitvavo.com is.",
+    }
+
+
+def sell_amount(
+    market: str,
+    amount_base: float,
+    meta: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    MARKET SELL op Bitvavo van een base-amount (bijv. 0.01 BTC).
+    """
+    m = _symbol_to_market(market)
+    if not m:
+        return {"ok": False, "status": 0, "error": "market missing"}
+
+    payload: Dict[str, Any] = {
+        "market": m,
         "side": "sell",
         "orderType": "market",
         "amount": str(float(amount_base)),
-        "operatorId": BITVAVO_OPERATOR_ID,
     }
 
-    res = _request("POST", "/order", payload=payload)
-    res["market"] = market
-    if meta:
-        res["prebuy_id"] = meta.get("prebuy_id")
-    return res
+    if BITVAVO_OPERATOR_ID:
+        payload["operatorId"] = BITVAVO_OPERATOR_ID
 
+    res = _post("/v2/order", payload)
 
-def ping_auth() -> Dict[str, Any]:
-    """
-    Snelle check of signing/keys goed zijn.
-    Balance endpoint is vaak /balance.
-    Als dit 403 signature invalid geeft -> signing nog fout / key fout.
-    """
-    return _request("GET", "/balance")
+    if res.get("ok") is True:
+        return {"ok": True, "status": res.get("status"), "market": m, "amount": float(amount_base), "data": res.get("data"), "meta": meta or {}}
+
+    return {"ok": False, "status": res.get("status"), "market": m, "amount": float(amount_base), "error": res.get("error"), "raw": res.get("raw"), "meta": meta or {}}
