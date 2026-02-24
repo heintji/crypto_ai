@@ -16,15 +16,10 @@ try:
 except Exception:  # pragma: no cover
     MessagingResponse = None  # type: ignore
 
-
 app = Flask(__name__)
 
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-if not DATABASE_URL:
-    DATABASE_URL = ""
-
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip() or ""
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
-
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
 
@@ -73,7 +68,12 @@ def healthz():
     return "OK", 200
 
 
+# ---------------- DB ----------------
 def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    Toon zowel PENDING als APPROVED zodat je failed-buys terugziet.
+    (APPROVED kan betekenen: jij zei YES maar BUY faalde.)
+    """
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
@@ -83,9 +83,12 @@ def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
               entry, stop, target,
               status, created_at, expires_at
             FROM public.pending_approvals
-            WHERE COALESCE(status,'PENDING') = 'PENDING'
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
               AND (expires_at IS NULL OR expires_at > NOW())
-            ORDER BY COALESCE(chance,0) DESC, created_at ASC
+            ORDER BY
+              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
+              COALESCE(chance,0) DESC,
+              created_at ASC
             LIMIT %s
             """,
             (limit,),
@@ -156,6 +159,7 @@ def mark_consumed(conn, prebuy_id: str) -> None:
     conn.commit()
 
 
+# ---------------- TRADER ----------------
 def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> Any:
     try:
         sig = inspect.signature(buy_fn)
@@ -172,12 +176,10 @@ def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any
         kwargs["prebuy_id"] = meta.get("prebuy_id")
     if "entry" in params:
         kwargs["entry"] = meta.get("entry")
-
     if "stop" in params:
         kwargs["stop"] = meta.get("stop")
     if "stop_loss" in params:
         kwargs["stop_loss"] = meta.get("stop")
-
     if "target" in params:
         kwargs["target"] = meta.get("target")
 
@@ -217,14 +219,11 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
 
         try:
             res = _call_buy_compat(buy_fn, symbol, float(amount_eur), meta)
-
             if isinstance(res, dict):
                 if res.get("ok") is True:
                     return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
                 return False, f"{mode} BUY faalde: {res}"
-
             return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur} (no-return)"
-
         except Exception as e:
             attempts.append((mode, f"{type(e).__name__}: {e}"))
             return False, f"{mode} buy error: {type(e).__name__}: {e}"
@@ -243,30 +242,30 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
         return True, msg2
 
     detail = "\n".join([f"{m}_err={e}" for (m, e) in attempts]) if attempts else "geen details"
-    return False, "BUY NIET uitgevoerd (trader ontbreekt of error).\n" + detail
+    return False, "BUY NIET uitgevoerd.\n" + detail
 
 
+# ---------------- COMMANDS ----------------
 def parse_command(text: str) -> Tuple[str, List[str]]:
     t = (text or "").strip()
     if not t:
         return "HELP", []
     parts = t.split()
-    cmd = parts[0].upper()
-    args = parts[1:]
-    return cmd, args
+    return parts[0].upper(), parts[1:]
 
 
 def fmt_prebuy_row(p: Dict[str, Any]) -> str:
+    st = (p.get("status") or "PENDING").upper()
     return (
-        f"{p.get('id')} | {p.get('symbol')} | chance={p.get('chance')} | score={p.get('score')} | "
-        f"{p.get('setup_type')} | entry={p.get('entry')}"
+        f"{p.get('id')} | {p.get('symbol')} | status={st} | chance={p.get('chance')} "
+        f"| score={p.get('score')} | {p.get('setup_type')} | entry={p.get('entry')}"
     )
 
 
 HELP_TEXT = (
     "Commands:\n"
     "HELP\n"
-    "LIST (laat pending zien)\n"
+    "LIST (laat pending/approved zien)\n"
     "TOP (top 5 hoogste chance)\n"
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n\n"
@@ -291,8 +290,8 @@ def whatsapp():
             if cmd == "LIST":
                 pending = fetch_pending(conn, limit=10)
                 if not pending:
-                    return twiml("Geen pending Pre-BUYs.")
-                lines = [f"Pending Pre-BUYs (max 10) | trader={TRADER_MODE}:"]
+                    return twiml("Geen pending/approved Pre-BUYs.")
+                lines = ["Pre-BUYs (PENDING/APPROVED):"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]  of  NO <ID>")
                 return twiml("\n".join(lines))
@@ -300,8 +299,8 @@ def whatsapp():
             if cmd == "TOP":
                 pending = fetch_pending(conn, limit=5)
                 if not pending:
-                    return twiml("Geen pending Pre-BUYs.")
-                lines = [f"TOP 5 (chance) | trader={TRADER_MODE}:"]
+                    return twiml("Geen pending/approved Pre-BUYs.")
+                lines = ["TOP 5 (chance):"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]")
                 return twiml("\n".join(lines))
@@ -332,11 +331,11 @@ def whatsapp():
                 else:
                     p = get_top_pending(conn)
                     if not p:
-                        return twiml("Geen pending Pre-BUYs om te keuren.")
+                        return twiml("Geen pending/approved Pre-BUYs om te keuren.")
                     prebuy_id = str(p.get("id"))
 
                 status = (p.get("status") or "PENDING").upper()
-                if status != "PENDING":
+                if status not in ("PENDING", "APPROVED"):
                     return twiml(f"Kan niet YES doen: status is {status}")
 
                 exp = as_aware_utc(p.get("expires_at"))
@@ -344,6 +343,7 @@ def whatsapp():
                     mark_rejected(conn, prebuy_id)
                     return twiml("Deze Pre-BUY is verlopen en is nu afgewezen.")
 
+                # Mark approved (ook bij retry)
                 mark_approved(conn, prebuy_id)
 
                 ok, msg = execute_buy(p, amount)
@@ -352,7 +352,8 @@ def whatsapp():
                     mark_consumed(conn, prebuy_id)
                     return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
 
-                return twiml(f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}")
+                # BUY faalde => blijft APPROVED zodat je hem terugziet in LIST/TOP en kunt retryen
+                return twiml(f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}\n\nTIP: probeer nogmaals YES <bedrag> {prebuy_id}")
 
             return twiml("Onbekend command.\n\n" + HELP_TEXT)
 
