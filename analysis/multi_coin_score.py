@@ -7,7 +7,7 @@ import hashlib
 import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Callable
 
 import psycopg2
 import psycopg2.extras
@@ -28,14 +28,19 @@ TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
 TF_CTX = (os.getenv("TF_CTX") or "1h").strip()
 
 # Pre-buy regels
-MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "5")
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "80")  # GO
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")          # WATCH
+# ✅ AANGEPAST: max 10 beste trades per dag
+MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "10")
+
+# ✅ AANGEPAST: realistischer thresholds om meer trades te vinden
+# Let op: dit zijn defaults; je kunt ze in Render ENV overschrijven.
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "70")  # GO
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "60")          # WATCH
 
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 
 # Dedup / cooldown
-TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
+# ✅ AANGEPAST: iets minder streng om meer opportunities toe te laten (env override blijft mogelijk)
+TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(2 * 60 * 60))
 
 # Performance / candles
 MIN_CANDLES = int(os.getenv("MIN_CANDLES") or "120")  # genoeg voor SMA/RSI etc
@@ -47,6 +52,9 @@ FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 # Scoreboard refresh (hoe vaak per run)
 SCOREBOARD_REFRESH = (os.getenv("SCOREBOARD_REFRESH") or "1").strip() == "1"
 
+# Optional: hoeveel candidates je intern bewaart (performance)
+# (Niet nodig, maar handig als je later meerdere setups toevoegt)
+MAX_CANDIDATES_BUFFER = int(os.getenv("MAX_CANDIDATES_BUFFER") or "5000")
 
 # ==========================================================
 # HELPERS
@@ -164,12 +172,13 @@ def detect_regime_4h(closes_4h: List[float]) -> str:
     return "RANGE"
 
 
+# ✅ AANGEPAST: minder hard straffen, zodat BEAR niet “nooit GO” wordt
 def normalize_score(raw_score: float, regime: str) -> int:
     reg = (regime or "RANGE").upper()
     if reg == "BEAR":
-        raw_score -= 8
+        raw_score -= 4    # was 8
     elif reg == "RANGE":
-        raw_score -= 4
+        raw_score -= 2    # was 4
     raw_score = max(0, min(100, raw_score))
     return int(round(raw_score))
 
@@ -607,6 +616,94 @@ def fetch_scoreboard(conn, exchange: str, timeframe: str, setup_type: str, regim
 
 
 # ==========================================================
+# SETUP FRAMEWORK (B-ready)
+# ==========================================================
+@dataclass
+class SetupCandidate:
+    symbol: str
+    setup_type: str
+    timeframe: str
+    regime: str
+    raw_score: int
+    score: int
+    chance: int
+    confidence: int
+    entry: float
+    stop: float
+    target: float
+    label: str
+    fp_value: str
+
+
+def evaluate_trend_pullback(
+    conn,
+    schema: SchemaInfo,
+    symbol: str,
+    tf_main: str,
+    tf_ctx: str,
+) -> Optional[SetupCandidate]:
+    """
+    Huidige setup: TREND_PULLBACK
+    Later kun je naast deze functie extra evaluate_* toevoegen.
+    """
+
+    candles_main = fetch_candles(conn, symbol, tf_main, MIN_CANDLES)
+    candles_ctx = fetch_candles(conn, symbol, tf_ctx, MIN_CANDLES)
+
+    if len(candles_main) < MIN_CANDLES or len(candles_ctx) < MIN_CANDLES:
+        return None
+
+    closes_main = [safe_float(c["close"]) for c in candles_main]
+    closes_ctx = [safe_float(c["close"]) for c in candles_ctx]
+
+    closes_4h = fetch_regime_closes_4h(conn, symbol)
+    regime = detect_regime_4h(closes_4h)
+
+    raw_score, entry, stop, target = compute_score_and_levels(closes_main, closes_ctx)
+    score = normalize_score(raw_score, regime)
+
+    if FORCE_TEST_PREBUY:
+        score = max(score, MIN_SCORE_TO_PREBUY)
+
+    label = label_from_score(score)
+    if label == "SKIP":
+        return None
+
+    chance = chance_from_score(score, regime)
+    confidence = chance
+
+    setup_type = "TREND_PULLBACK"
+    fp_value = make_fingerprint(symbol, setup_type, entry, target)
+
+    if fingerprint_recent(conn, schema, fp_value, TRADE_COOLDOWN_SECONDS):
+        return None
+
+    return SetupCandidate(
+        symbol=symbol,
+        setup_type=setup_type,
+        timeframe=tf_main,
+        regime=regime,
+        raw_score=int(raw_score),
+        score=int(score),
+        chance=int(chance),
+        confidence=int(confidence),
+        entry=float(entry),
+        stop=float(stop),
+        target=float(target),
+        label=label,
+        fp_value=fp_value,
+    )
+
+
+SETUPS: List[Callable[..., Optional[SetupCandidate]]] = [
+    evaluate_trend_pullback,
+    # Later:
+    # evaluate_breakout,
+    # evaluate_mean_reversion,
+]
+
+
+# ==========================================================
 # MAIN
 # ==========================================================
 def main() -> None:
@@ -627,112 +724,118 @@ def main() -> None:
         universe = fetch_binance_usdt_symbols(UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
 
-        created = 0
-        skipped = 0
-
         # scoreboard refresh only for combos we touched (setup+regime)
         touched: Set[Tuple[str, str, str]] = set()  # (timeframe, setup_type, regime)
 
+        # ✅ NIEUW: 2-fase systeem
+        # fase 1: verzamel candidates
+        candidates: List[SetupCandidate] = []
+        scanned = 0
+        skipped = 0
+
         for symbol in universe:
-            if created_today >= MAX_PREBUY_PER_DAY:
+            scanned += 1
+
+            # als we al vol zitten, hoeven we nog niet te stoppen met scannen
+            # want we willen "beste 10" -> we moeten alles ranken.
+            try:
+                for eval_fn in SETUPS:
+                    cand = eval_fn(conn, schema, symbol, TF_MAIN, TF_CTX)
+                    if cand:
+                        candidates.append(cand)
+
+                        # buffer protection (bij extreem veel setups later)
+                        if len(candidates) > MAX_CANDIDATES_BUFFER:
+                            # keep only top-ish by score to avoid memory blowup
+                            candidates.sort(
+                                key=lambda c: (
+                                    1 if c.label == "GO" else 0,
+                                    c.score,
+                                    c.chance,
+                                ),
+                                reverse=True,
+                            )
+                            candidates = candidates[:MAX_CANDIDATES_BUFFER]
+            except Exception as e:
                 skipped += 1
                 continue
 
+        # fase 2: rank en selecteer top slots_left
+        slots_left = max(0, MAX_PREBUY_PER_DAY - created_today)
+
+        if slots_left <= 0:
+            elapsed = round(time.time() - start, 1)
+            log(f"✅ DONE (daily cap reached) scanned={scanned} candidates={len(candidates)} skipped={skipped} seconds={elapsed}")
+            return
+
+        # ✅ GO eerst, hoogste score eerst, dan chance
+        candidates.sort(
+            key=lambda c: (
+                1 if c.label == "GO" else 0,
+                c.score,
+                c.chance,
+            ),
+            reverse=True,
+        )
+
+        selected = candidates[:slots_left]
+
+        created = 0
+
+        # Insert selected candidates
+        for cand in selected:
             try:
-                candles_main = fetch_candles(conn, symbol, TF_MAIN, MIN_CANDLES)
-                candles_ctx = fetch_candles(conn, symbol, TF_CTX, MIN_CANDLES)
-
-                if len(candles_main) < MIN_CANDLES or len(candles_ctx) < MIN_CANDLES:
-                    skipped += 1
-                    continue
-
-                closes_main = [safe_float(c["close"]) for c in candles_main]
-                closes_ctx = [safe_float(c["close"]) for c in candles_ctx]
-
-                # Regime op 4h
-                closes_4h = fetch_regime_closes_4h(conn, symbol)
-                regime = detect_regime_4h(closes_4h)
-
-                # Raw score + normalize
-                raw_score, entry, stop, target = compute_score_and_levels(closes_main, closes_ctx)
-                score = normalize_score(raw_score, regime)
-
-                if FORCE_TEST_PREBUY:
-                    score = max(score, MIN_SCORE_TO_PREBUY)
-
-                label = label_from_score(score)
-                if label == "SKIP":
-                    skipped += 1
-                    continue
-
-                chance = chance_from_score(score, regime)
-                confidence = chance
-
-                setup_type = "TREND_PULLBACK"
-                fp_value = make_fingerprint(symbol, setup_type, entry, target)
-
-                if fingerprint_recent(conn, schema, fp_value, TRADE_COOLDOWN_SECONDS):
-                    skipped += 1
-                    continue
-
-                prebuy_id = f"PB-{symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}-{fp_value[:6]}"
+                prebuy_id = f"PB-{cand.symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}-{cand.fp_value[:6]}"
                 expires_at = now_utc() + timedelta(seconds=PREBUY_VALID_SECONDS)
 
                 payload: Dict[str, Any] = {
                     "id": prebuy_id,
-                    "symbol": symbol,
-                    "setup_type": setup_type,
-                    "timeframe": TF_MAIN,
-                    "regime": regime,
-                    "score": int(score),  # normalized
-                    "chance": int(chance),
-                    "confidence": int(confidence),
-                    "entry": float(entry),
-                    "stop": float(stop),
-                    "target": float(target),
+                    "symbol": cand.symbol,
+                    "setup_type": cand.setup_type,
+                    "timeframe": cand.timeframe,
+                    "regime": cand.regime,
+                    "score": int(cand.score),
+                    "chance": int(cand.chance),
+                    "confidence": int(cand.confidence),
+                    "entry": float(cand.entry),
+                    "stop": float(cand.stop),
+                    "target": float(cand.target),
                     "status": "PENDING",
                     "created_at": now_utc(),
                     "expires_at": expires_at,
                 }
                 if schema.pending_has_raw_score:
-                    payload["raw_score"] = int(raw_score)
+                    payload["raw_score"] = int(cand.raw_score)
 
-                # Experience payload (log GO/WATCH als ervaring)
                 exp_payload: Dict[str, Any] = {
-                    "id": prebuy_id,  # 1 id gebruiken is simpel en strak
+                    "id": prebuy_id,
                     "exchange": EXCHANGE,
-                    "symbol": symbol,
-                    "timeframe": TF_MAIN,
-                    "setup_type": setup_type,
-                    "regime": regime,
-                    "label": label,
-                    "score": int(score),
-                    "raw_score": int(raw_score),
-                    "chance": int(chance),
-                    "confidence": int(confidence),
-                    "entry": float(entry),
-                    "stop": float(stop),
-                    "target": float(target),
+                    "symbol": cand.symbol,
+                    "timeframe": cand.timeframe,
+                    "setup_type": cand.setup_type,
+                    "regime": cand.regime,
+                    "label": cand.label,
+                    "score": int(cand.score),
+                    "raw_score": int(cand.raw_score),
+                    "chance": int(cand.chance),
+                    "confidence": int(cand.confidence),
+                    "entry": float(cand.entry),
+                    "stop": float(cand.stop),
+                    "target": float(cand.target),
                     "outcome": "UNKNOWN",
                     "is_shadow": True,
                     "created_at": now_utc(),
                 }
 
-                try:
-                    insert_pending(conn, schema, payload)
-                    upsert_fingerprint(conn, schema, fp_value)
-                    inc_created_today(conn, schema, 1)
+                insert_pending(conn, schema, payload)
+                upsert_fingerprint(conn, schema, cand.fp_value)
+                inc_created_today(conn, schema, 1)
 
-                    if schema.has_experience_trades:
-                        insert_experience_trade(conn, exp_payload)
-                        touched.add((TF_MAIN, setup_type, regime))
+                if schema.has_experience_trades:
+                    insert_experience_trade(conn, exp_payload)
+                    touched.add((cand.timeframe, cand.setup_type, cand.regime))
 
-                    conn.commit()
-                except Exception as db_e:
-                    conn.rollback()
-                    skipped += 1
-                    log(f"⚠️ skip {symbol} db_error={type(db_e).__name__}: {db_e}")
-                    continue
+                conn.commit()
 
                 created += 1
                 created_today += 1
@@ -741,7 +844,7 @@ def main() -> None:
                 sb_txt = ""
                 if schema.has_experience_scoreboard:
                     try:
-                        sb = fetch_scoreboard(conn, EXCHANGE, TF_MAIN, setup_type, regime)
+                        sb = fetch_scoreboard(conn, EXCHANGE, cand.timeframe, cand.setup_type, cand.regime)
                         if sb:
                             n_total = safe_int(sb.get("n_total"), 0)
                             winrate = float(sb.get("winrate") or 0.0)
@@ -753,19 +856,16 @@ def main() -> None:
                         except Exception:
                             pass
 
-                dot = "🟢" if label == "GO" else "🟡"
+                dot = "🟢" if cand.label == "GO" else "🟡"
                 log(
-                    f"{dot} {symbol}: {label} raw={raw_score} norm={score} chance={chance} "
-                    f"regime={regime} id={prebuy_id}{sb_txt}"
+                    f"{dot} {cand.symbol}: {cand.label} raw={cand.raw_score} norm={cand.score} chance={cand.chance} "
+                    f"regime={cand.regime} id={prebuy_id}{sb_txt}"
                 )
 
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                skipped += 1
-                log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
+            except Exception as db_e:
+                conn.rollback()
+                log(f"⚠️ insert fail {cand.symbol} err={type(db_e).__name__}: {db_e}")
+                continue
 
         # Refresh scoreboard rows we touched (alleen als er closed trades zijn)
         if SCOREBOARD_REFRESH and schema.has_experience_scoreboard and schema.has_experience_trades and touched:
@@ -779,7 +879,7 @@ def main() -> None:
                 log(f"⚠️ scoreboard refresh failed: {type(e).__name__}: {e}")
 
         elapsed = round(time.time() - start, 1)
-        log(f"✅ DONE created={created} skipped={skipped} seconds={elapsed}")
+        log(f"✅ DONE scanned={scanned} candidates={len(candidates)} selected={created} skipped={skipped} seconds={elapsed}")
 
 
 if __name__ == "__main__":
