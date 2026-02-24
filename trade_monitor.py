@@ -6,7 +6,6 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 
 import requests
-
 import psycopg2
 import psycopg2.extras
 
@@ -46,15 +45,23 @@ DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  #
 FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 # =========================
-# ✅ TRADER MODE (AUTO)
+# ✅ TRADER MODE
 # =========================
 # "paper" -> altijd paper_trader
 # "live"  -> altijd live_trader
-# "auto"  -> per trade: als trade["live"]=True => live, anders paper
-TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
+# "auto"  -> voor BUY: live-first (aan te raden), voor SELL: trade['live'] bepaalt
+TRADER_MODE = (os.getenv("TRADER_MODE") or "live").strip().lower()
 
 # =========================
-# ✅ DATABASE (Experience)
+# ✅ QUEUE SETTINGS (APPROVED -> BUY)
+# =========================
+# Hoeveel approved orders per cycle verwerken
+BUY_QUEUE_BATCH = int(os.getenv("BUY_QUEUE_BATCH") or "5")
+# Optioneel: cooldown zodat je niet elke 10 sec dezelfde APPROVED opnieuw probeert
+BUY_RETRY_COOLDOWN_SECONDS = int(os.getenv("BUY_RETRY_COOLDOWN_SECONDS") or "60")
+
+# =========================
+# ✅ DATABASE
 # =========================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
@@ -70,6 +77,9 @@ def now_utc_dt() -> datetime:
 def _print(msg: str):
     print(msg, flush=True)
 
+# =========================
+# DB schema helpers
+# =========================
 def _table_exists(conn, fq_table: str) -> bool:
     try:
         with conn.cursor() as cur:
@@ -115,6 +125,36 @@ def _safe_int(x: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+# =========================
+# Ensure pending_approvals queue fields exist
+# =========================
+def ensure_queue_schema(conn) -> None:
+    """
+    Zorgt dat queue velden bestaan zodat webhook + worker samen kunnen werken.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "ALTER TABLE public.pending_approvals "
+            "ADD COLUMN IF NOT EXISTS approved_amount INTEGER"
+        )
+        cur.execute(
+            "ALTER TABLE public.pending_approvals "
+            "ADD COLUMN IF NOT EXISTS last_buy_error TEXT"
+        )
+        cur.execute(
+            "ALTER TABLE public.pending_approvals "
+            "ADD COLUMN IF NOT EXISTS buy_attempts INTEGER NOT NULL DEFAULT 0"
+        )
+        # optional: last_buy_attempt_at for cooldown logic
+        cur.execute(
+            "ALTER TABLE public.pending_approvals "
+            "ADD COLUMN IF NOT EXISTS last_buy_attempt_at TIMESTAMPTZ"
+        )
+    conn.commit()
+
+# =========================
+# Experience (close)
+# =========================
 def _infer_outcome(result_r: float) -> str:
     if abs(result_r) < 0.05:
         return "BREAKEVEN"
@@ -138,6 +178,8 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
     vals: List[Any] = []
 
     candidates: List[Tuple[str, Any]] = [
+        ("id", trade.get("prebuy_id") or trade.get("id")),
+        ("exchange", trade.get("exchange") or "bitvavo"),
         ("symbol", trade.get("symbol")),
         ("setup_type", trade.get("setup_type") or "TREND_PULLBACK"),
         ("timeframe", trade.get("timeframe") or trade.get("tf") or "4h"),
@@ -148,8 +190,7 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
         ("chance", _safe_int(trade.get("chance"), 0)),
         ("confidence", _safe_int(trade.get("confidence"), trade.get("chance") or 0)),
         ("entry", _safe_float(trade.get("entry"), 0.0)),
-        ("stop", _safe_float(trade.get("stop") or trade.get("stop_loss"), 0.0)),
-        ("stop_loss", _safe_float(trade.get("stop_loss"), 0.0)),
+        ("stop", _safe_float(trade.get("stop_loss") or trade.get("stop"), 0.0)),
         ("target", _safe_float(trade.get("target"), 0.0)),
         ("exit", close_price),
         ("exit_price", close_price),
@@ -175,6 +216,7 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
             f"""
             INSERT INTO public.experience_trades ({col_sql})
             VALUES ({placeholders})
+            ON CONFLICT (id) DO NOTHING
             """,
             tuple(vals),
         )
@@ -190,74 +232,56 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
     setup_type = (trade.get("setup_type") or "TREND_PULLBACK")
     regime = (trade.get("regime") or "UNKNOWN")
     timeframe = (trade.get("timeframe") or trade.get("tf") or "4h")
+    exchange = (trade.get("exchange") or "bitvavo")
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             """
             SELECT
-              COUNT(*)::int AS n,
+              COUNT(*)::int AS n_total,
+              COUNT(*) FILTER (WHERE outcome='WIN')::int AS n_win,
+              COUNT(*) FILTER (WHERE outcome='LOSS')::int AS n_loss,
               AVG(result_r)::float AS avg_r,
-              AVG(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END)::float AS win_rate,
-              AVG(CASE WHEN outcome='WIN' THEN result_r END)::float AS avg_win_r,
-              AVG(CASE WHEN outcome='LOSS' THEN result_r END)::float AS avg_loss_r
+              AVG(result_r) FILTER (WHERE outcome='WIN')::float AS avg_win_r,
+              AVG(result_r) FILTER (WHERE outcome='LOSS')::float AS avg_loss_r
             FROM public.experience_trades
-            WHERE setup_type=%s AND regime=%s AND timeframe=%s
+            WHERE exchange=%s AND setup_type=%s AND regime=%s AND timeframe=%s
+              AND outcome IN ('WIN','LOSS','BREAKEVEN')
             """,
-            (setup_type, regime, timeframe),
+            (exchange, setup_type, regime, timeframe),
         )
         stats = cur.fetchone() or {}
 
-    n = _safe_int(stats.get("n"), 0)
+    n_total = _safe_int(stats.get("n_total"), 0)
+    n_win = _safe_int(stats.get("n_win"), 0)
+    n_loss = _safe_int(stats.get("n_loss"), 0)
+    denom = max(1, (n_win + n_loss))
+    winrate = n_win / denom
+
     avg_r = _safe_float(stats.get("avg_r"), 0.0)
-    win_rate = _safe_float(stats.get("win_rate"), 0.0)
     avg_win_r = _safe_float(stats.get("avg_win_r"), 0.0)
     avg_loss_r = _safe_float(stats.get("avg_loss_r"), 0.0)
 
-    payload = {
-        "setup_type": setup_type,
-        "regime": regime,
-        "timeframe": timeframe,
-        "n": n,
-        "avg_r": avg_r,
-        "win_rate": win_rate,
-        "avg_win_r": avg_win_r,
-        "avg_loss_r": avg_loss_r,
-        "updated_at": now_utc_dt(),
-        "asof_ts": now_utc_dt(),
-        "created_at": now_utc_dt(),
-    }
-
-    cols: List[str] = []
-    vals: List[Any] = []
-    for k, v in payload.items():
-        if _has_column(conn, "experience_scoreboard", k):
-            cols.append(k)
-            vals.append(v)
-
-    if not cols:
-        return
-
-    conflict_cols = []
-    for k in ["setup_type", "regime", "timeframe"]:
-        if _has_column(conn, "experience_scoreboard", k):
-            conflict_cols.append(k)
-
-    if len(conflict_cols) < 2:
-        return
-
-    col_sql = ", ".join(cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-    set_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in cols if c not in conflict_cols])
+    expectancy = (winrate * avg_win_r) + ((1.0 - winrate) * avg_loss_r)
 
     with conn.cursor() as cur:
         cur.execute(
-            f"""
-            INSERT INTO public.experience_scoreboard ({col_sql})
-            VALUES ({placeholders})
-            ON CONFLICT ({", ".join(conflict_cols)})
-            DO UPDATE SET {set_sql}
+            """
+            INSERT INTO public.experience_scoreboard
+              (exchange, timeframe, setup_type, regime, n_total, n_win, n_loss, winrate, avg_r, expectancy, updated_at)
+            VALUES
+              (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+            ON CONFLICT (exchange, timeframe, setup_type, regime)
+            DO UPDATE SET
+              n_total=EXCLUDED.n_total,
+              n_win=EXCLUDED.n_win,
+              n_loss=EXCLUDED.n_loss,
+              winrate=EXCLUDED.winrate,
+              avg_r=EXCLUDED.avg_r,
+              expectancy=EXCLUDED.expectancy,
+              updated_at=NOW()
             """,
-            tuple(vals),
+            (exchange, timeframe, setup_type, regime, n_total, n_win, n_loss, winrate, avg_r, expectancy),
         )
 
 def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: float) -> None:
@@ -371,7 +395,38 @@ def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
     return (price - entry) / risk
 
 # =========================
-# ✅ AUTO SELL ROUTER
+# ✅ BUY ROUTER (NEW)
+# =========================
+_BUY_PAPER = None
+_BUY_LIVE = None
+
+def _get_buy_fn(prefer: str):
+    """
+    prefer: "paper" or "live"
+    """
+    global _BUY_PAPER, _BUY_LIVE
+    if prefer == "live":
+        if _BUY_LIVE is None:
+            from trading.live_trader import buy_eur as _b  # type: ignore
+            _BUY_LIVE = _b
+        return _BUY_LIVE
+    else:
+        if _BUY_PAPER is None:
+            from trading.paper_trader import buy_eur as _b  # type: ignore
+            _BUY_PAPER = _b
+        return _BUY_PAPER
+
+def _choose_buy_mode() -> str:
+    """
+    Voor queued buys wil je meestal LIVE.
+    TRADER_MODE=auto -> live-first.
+    """
+    if TRADER_MODE in ("live", "paper"):
+        return TRADER_MODE
+    return "live"  # auto -> live-first
+
+# =========================
+# ✅ SELL ROUTER (BESTAAND)
 # =========================
 _SELL_PAPER = None
 _SELL_LIVE = None
@@ -405,7 +460,244 @@ def _get_sell_fn(trade: Dict[str, Any]):
 
     return _SELL_LIVE if prefer == "live" else _SELL_PAPER
 
+# =========================
+# ✅ DB QUEUE FUNCTIONS (NEW)
+# =========================
+def fetch_approved_queue(conn, limit: int) -> List[Dict[str, Any]]:
+    """
+    Pakt APPROVED prebuys met approved_amount.
+    Cooldown: pakt geen records die net geprobeerd zijn.
+    """
+    cooldown_sql = ""
+    params: List[Any] = []
 
+    if _has_column(conn, "pending_approvals", "last_buy_attempt_at"):
+        cooldown_sql = "AND (last_buy_attempt_at IS NULL OR last_buy_attempt_at < NOW() - (%s || ' seconds')::interval)"
+        params.append(BUY_RETRY_COOLDOWN_SECONDS)
+
+    params.append(limit)
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT
+              id, symbol, setup_type, timeframe, regime,
+              score, chance, confidence,
+              entry, stop, target,
+              status, created_at, expires_at,
+              approved_amount, buy_attempts
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING')='APPROVED'
+              AND approved_amount IS NOT NULL
+              AND (expires_at IS NULL OR expires_at > NOW())
+              {cooldown_sql}
+            ORDER BY COALESCE(chance,0) DESC, created_at ASC
+            LIMIT %s
+            """,
+            tuple(params),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+def mark_buy_attempt(conn, prebuy_id: str) -> None:
+    """
+    zet last_buy_attempt_at = NOW() + increment attempts
+    """
+    with conn.cursor() as cur:
+        if _has_column(conn, "pending_approvals", "last_buy_attempt_at"):
+            cur.execute(
+                """
+                UPDATE public.pending_approvals
+                SET buy_attempts = COALESCE(buy_attempts,0) + 1,
+                    last_buy_attempt_at = NOW()
+                WHERE id=%s
+                """,
+                (prebuy_id,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE public.pending_approvals
+                SET buy_attempts = COALESCE(buy_attempts,0) + 1
+                WHERE id=%s
+                """,
+                (prebuy_id,),
+            )
+    conn.commit()
+
+def mark_buy_failed(conn, prebuy_id: str, err_text: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.pending_approvals
+            SET last_buy_error=%s
+            WHERE id=%s
+            """,
+            (err_text[:4000], prebuy_id),
+        )
+    conn.commit()
+
+def mark_consumed(conn, prebuy_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE public.pending_approvals
+            SET status='CONSUMED', consumed_at=NOW()
+            WHERE id=%s
+            """,
+            (prebuy_id,),
+        )
+    conn.commit()
+
+# =========================
+# ✅ CREATE OPEN TRADE IN STATE (NEW)
+# =========================
+def add_open_trade_to_state(state: Dict[str, Any], prebuy: Dict[str, Any], *, live: bool, buy_res: Dict[str, Any]) -> None:
+    """
+    Na succesvolle BUY maken we een open_trade zodat jouw bestaande monitoring/sell regels werken.
+    """
+    symbol = str(prebuy.get("symbol") or "").strip()
+    if not symbol:
+        return
+
+    entry = _safe_float(prebuy.get("entry"), 0.0)
+    stop_loss = _safe_float(prebuy.get("stop") or prebuy.get("stop_loss"), 0.0)
+    target = _safe_float(prebuy.get("target"), 0.0)
+
+    # Als entry niet bekend is, fallback op actuele prijs
+    if entry <= 0:
+        try:
+            entry = get_price(symbol)
+        except Exception:
+            entry = 0.0
+
+    # positions: markeer dat we positie hebben
+    positions = state.get("positions", {}) or {}
+    positions[symbol] = {
+        "live": bool(live),
+        "opened_at": now_ts(),
+        "source": "queue_buy",
+        "prebuy_id": str(prebuy.get("id")),
+    }
+    state["positions"] = positions
+
+    # open_trades lijst
+    open_trades = state.get("open_trades", []) or []
+    # voorkom duplicate
+    open_trades = [t for t in open_trades if t.get("symbol") != symbol]
+
+    open_trades.append({
+        "id": str(prebuy.get("id")),
+        "prebuy_id": str(prebuy.get("id")),
+        "symbol": symbol,
+        "exchange": "bitvavo",
+        "setup_type": prebuy.get("setup_type") or "TREND_PULLBACK",
+        "timeframe": prebuy.get("timeframe") or "4h",
+        "regime": prebuy.get("regime") or "UNKNOWN",
+        "score": _safe_int(prebuy.get("score"), 0),
+        "raw_score": prebuy.get("raw_score"),
+        "chance": _safe_int(prebuy.get("chance"), 0),
+        "confidence": _safe_int(prebuy.get("confidence"), _safe_int(prebuy.get("chance"), 0)),
+        "entry": entry,
+        "stop_loss": stop_loss,
+        "target": target,
+        "live": bool(live),
+        "status": "OPEN",
+        "opened_at": now_ts(),
+        "max_r": 0.0,
+        "had_over_1r": False,
+        "partial_sold_40": False,
+        "below_1r_count": 0,
+        "target_reached_notified": False,
+        "mode": "NORMAL",
+        "last_check": now_ts(),
+        "buy_result": buy_res,  # debug info
+    })
+
+    state["open_trades"] = open_trades
+
+# =========================
+# ✅ PROCESS APPROVED QUEUE (NEW)
+# =========================
+def process_approved_queue(state: Dict[str, Any]) -> None:
+    """
+    Haalt APPROVED prebuys uit DB en voert BUY uit.
+    """
+    if not db_ready():
+        _print("ℹ️ DB niet klaar, queue processing overslaan.")
+        return
+
+    with db_connect() as conn:
+        ensure_queue_schema(conn)
+
+        approved = fetch_approved_queue(conn, BUY_QUEUE_BATCH)
+        if not approved:
+            _print("ℹ️ Geen APPROVED queue items gevonden.")
+            return
+
+        _print(f"🟦 Queue: gevonden {len(approved)} APPROVED item(s)")
+
+        for p in approved:
+            prebuy_id = str(p.get("id") or "")
+            symbol = str(p.get("symbol") or "")
+            amount = _safe_int(p.get("approved_amount"), 0)
+
+            if not prebuy_id or not symbol or amount <= 0:
+                _print(f"⚠️ Queue item ongeldig: id={prebuy_id} symbol={symbol} amount={amount}")
+                continue
+
+            # mark attempt (cooldown + attempts)
+            mark_buy_attempt(conn, prebuy_id)
+
+            prefer_mode = _choose_buy_mode()  # live-first in auto
+            buy_fn = _get_buy_fn(prefer_mode)
+
+            meta = {
+                "prebuy_id": prebuy_id,
+                "entry": _safe_float(p.get("entry"), 0.0),
+                "stop": _safe_float(p.get("stop"), 0.0),
+                "target": _safe_float(p.get("target"), 0.0),
+            }
+
+            _print(f"🟩 BUY attempt ({prefer_mode}) {symbol} €{amount} id={prebuy_id}")
+
+            try:
+                res = buy_fn(symbol, float(amount), meta=meta)  # live_trader supports meta
+            except TypeError:
+                # compat fallback if trader doesn't accept meta
+                res = buy_fn(symbol, float(amount))
+            except Exception as e:
+                res = {"ok": False, "status": 500, "error": f"{type(e).__name__}: {e}"}
+
+            if isinstance(res, dict) and res.get("ok") is True:
+                _print(f"✅ BUY OK {symbol} id={prebuy_id} res_status={res.get('status')}")
+                # mark consumed so it disappears from LIST
+                mark_consumed(conn, prebuy_id)
+
+                # add to state so monitoring works
+                add_open_trade_to_state(state, p, live=(prefer_mode == "live"), buy_res=res)
+                save_state(state)
+
+                send_whatsapp(
+                    f"✅ BUY uitgevoerd ({prefer_mode})\n"
+                    f"{symbol} €{amount}\n"
+                    f"ID: {prebuy_id}"
+                )
+            else:
+                err_txt = str(res)
+                _print(f"❌ BUY FAIL {symbol} id={prebuy_id} err={err_txt[:200]}")
+                mark_buy_failed(conn, prebuy_id, err_txt)
+
+                send_whatsapp(
+                    f"❌ BUY faalde ({prefer_mode})\n"
+                    f"{symbol} €{amount}\n"
+                    f"ID: {prebuy_id}\n"
+                    f"Error: {err_txt[:400]}"
+                )
+
+# =========================
+# ✅ FORCE EXIT (1x)
+# =========================
 def _send_sell_close_message(
     symbol: str,
     reason: str,
@@ -438,9 +730,6 @@ def _send_sell_close_message(
     )
     send_whatsapp(msg)
 
-# =========================
-# ✅ FORCE EXIT (1x)
-# =========================
 def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     if not FORCE_TEST_EXIT:
         return False
@@ -482,7 +771,7 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
     sell_fn = _get_sell_fn(trade)
-    sell_res = sell_fn(symbol, 1.0)  # ✅ auto trader
+    sell_res = sell_fn(symbol, 1.0)
 
     trade["status"] = "CLOSED"
     trade["closed_reason"] = "FORCE_TEST_EXIT"
@@ -498,7 +787,6 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
         sell_result=sell_res,
     )
 
-    # ✅ Experience update (alleen als SELL ok)
     if isinstance(sell_res, dict) and sell_res.get("ok"):
         exit_price = float(sell_res.get("price", price))
         r_exit = calc_r_multiple(exit_price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
@@ -514,7 +802,7 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     return True
 
 # =========================
-# Core rules (jouw set)
+# Core rules (jouw set) - UNCHANGED
 # =========================
 def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Optional[float] = None) -> bool:
     symbol = trade.get("symbol")
@@ -657,9 +945,17 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = None):
     state = load_state()
 
+    # 0) NEW: process queue approved buys first
+    try:
+        process_approved_queue(state)
+    except Exception as e:
+        _print(f"⚠️ Queue processing error: {type(e).__name__}: {e}")
+
+    # 1) force exit logic
     if _force_exit_once_if_enabled(state):
         return
 
+    # 2) monitor open trades
     open_trades = state.get("open_trades", []) or []
     if not open_trades:
         _print("ℹ️ Geen open_trades gevonden. Niets te monitoren.")
@@ -693,8 +989,8 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Crypto_AI trade monitor (exit checks).")
-    parser.add_argument("--once", action="store_true", help="Run 1 check and exit.")
+    parser = argparse.ArgumentParser(description="Crypto_AI trade monitor (queue buys + exit checks).")
+    parser.add_argument("--once", action="store_true", help="Run 1 cycle and exit.")
     parser.add_argument("--sleep", type=int, default=DEFAULT_SLEEP_SECONDS, help="Seconds between cycles.")
     parser.add_argument("--symbol", type=str, default=None, help="Only monitor one symbol (e.g., BTCUSDT).")
     parser.add_argument("--test-price", type=float, default=None, help="Override price for testing.")
@@ -707,7 +1003,9 @@ def main():
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
     _print(f"TRADER_MODE: {TRADER_MODE}")
-    _print(f"DB experience: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
+    _print(f"DB: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
+    _print(f"BUY_QUEUE_BATCH: {BUY_QUEUE_BATCH}")
+    _print(f"BUY_RETRY_COOLDOWN_SECONDS: {BUY_RETRY_COOLDOWN_SECONDS}")
 
     ensure_dir(LOGS_DIR)
 
