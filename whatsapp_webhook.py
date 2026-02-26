@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import inspect
 import os
-import time
 import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -17,29 +16,16 @@ try:
 except Exception:  # pragma: no cover
     MessagingResponse = None  # type: ignore
 
-
-# ============================================================
-# APP
-# ============================================================
 app = Flask(__name__)
 
-# ============================================================
-# ENV
-# ============================================================
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()  # paper|live|auto
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip() or ""
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
+TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
-# DB connect timeout (voorkomt hangen -> 502)
-DB_CONNECT_TIMEOUT_SECONDS = int(os.getenv("DB_CONNECT_TIMEOUT_SECONDS") or "5")
-
-# Optioneel: extra debug logging
-DEBUG_WEBHOOK = (os.getenv("DEBUG_WEBHOOK") or "0").strip() in {"1", "true", "yes", "on"}
+# Laat WATCH ook zien in LIST/TOP?
+SHOW_WATCH = (os.getenv("SHOW_WATCH") or "1").strip().lower() in {"1", "true", "yes", "on"}
 
 
-# ============================================================
-# HELPERS
-# ============================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -49,15 +35,15 @@ def log(msg: str) -> None:
 
 
 def twiml(text: str):
-    """
-    Altijd iets teruggeven aan Twilio.
-    Als Twilio lib ontbreekt -> plain text.
-    """
     if MessagingResponse is None:
         return (text, 200, {"Content-Type": "text/plain; charset=utf-8"})
     resp = MessagingResponse()
     resp.message(text)
     return (str(resp), 200, {"Content-Type": "application/xml"})
+
+
+def db_connect():
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 def safe_int(x: Any, default: int = 0) -> int:
@@ -75,28 +61,8 @@ def as_aware_utc(dt: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def db_ready() -> bool:
-    return bool(DATABASE_URL)
-
-
-def db_connect():
-    """
-    connect_timeout voorkomt dat je webhook "hangt"
-    en daardoor 502's veroorzaakt.
-    """
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        connect_timeout=DB_CONNECT_TIMEOUT_SECONDS,
-    )
-
-
-# ============================================================
-# ROUTES (BELANGRIJK VOOR RENDER)
-# ============================================================
 @app.get("/")
 def root():
-    # Render/uptime checks komen hier vaak op uit.
     return "OK", 200
 
 
@@ -105,31 +71,41 @@ def healthz():
     return "OK", 200
 
 
-# ============================================================
-# DB QUERIES
-# ============================================================
+# ---------------- DB ----------------
+def _wanted_statuses() -> Tuple[str, ...]:
+    # PENDING + APPROVED altijd, WATCH optioneel
+    if SHOW_WATCH:
+        return ("PENDING", "APPROVED", "WATCH")
+    return ("PENDING", "APPROVED")
+
+
 def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
     """
-    Toon zowel PENDING als APPROVED zodat failed-buys terug te zien zijn.
+    Toon PENDING/APPROVED (en optioneel WATCH) die niet verlopen zijn.
     """
+    statuses = _wanted_statuses()
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
-            """
+            f"""
             SELECT
               id, symbol, setup_type, timeframe, regime,
               score, chance, confidence,
               entry, stop, target,
               status, created_at, expires_at
             FROM public.pending_approvals
-            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+            WHERE COALESCE(status,'PENDING') = ANY(%s)
               AND (expires_at IS NULL OR expires_at > NOW())
             ORDER BY
-              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
+              CASE
+                WHEN COALESCE(status,'PENDING')='PENDING' THEN 0
+                WHEN COALESCE(status,'PENDING')='APPROVED' THEN 1
+                ELSE 2
+              END,
               COALESCE(chance,0) DESC,
               created_at ASC
             LIMIT %s
             """,
-            (limit,),
+            (list(statuses), limit),
         )
         rows = cur.fetchall()
     return [dict(r) for r in rows]
@@ -158,6 +134,16 @@ def get_top_pending(conn) -> Optional[Dict[str, Any]]:
     return rows[0] if rows else None
 
 
+def stats(conn) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COALESCE(status,'PENDING') as status, COUNT(*)::int FROM public.pending_approvals GROUP BY 1 ORDER BY 2 DESC;")
+        rows = cur.fetchall()
+    lines = ["DB STATS (pending_approvals):"]
+    for st, cnt in rows:
+        lines.append(f"- {st}: {cnt}")
+    return "\n".join(lines)
+
+
 def mark_rejected(conn, prebuy_id: str) -> None:
     with conn.cursor() as cur:
         cur.execute(
@@ -168,6 +154,7 @@ def mark_rejected(conn, prebuy_id: str) -> None:
             """,
             (prebuy_id,),
         )
+    conn.commit()
 
 
 def mark_approved(conn, prebuy_id: str) -> None:
@@ -180,6 +167,7 @@ def mark_approved(conn, prebuy_id: str) -> None:
             """,
             (prebuy_id,),
         )
+    conn.commit()
 
 
 def mark_consumed(conn, prebuy_id: str) -> None:
@@ -192,15 +180,11 @@ def mark_consumed(conn, prebuy_id: str) -> None:
             """,
             (prebuy_id,),
         )
+    conn.commit()
 
 
-# ============================================================
-# TRADER LOADER (compat)
-# ============================================================
+# ---------------- TRADER ----------------
 def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> Any:
-    """
-    Ondersteunt meerdere buy_eur signatures (meta/prebuy_id/entry/stop/target).
-    """
     try:
         sig = inspect.signature(buy_fn)
         params = sig.parameters
@@ -238,12 +222,6 @@ def _get_buy_fn(module_path: str):
 
 
 def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
-    """
-    TRADER_MODE:
-      - paper: altijd paper_trader
-      - live : altijd live_trader
-      - auto : probeert paper, als dat faalt -> live
-    """
     symbol = (prebuy.get("symbol") or "").strip()
     entry = float(prebuy.get("entry") or 0.0)
     stop = float(prebuy.get("stop") or 0.0)
@@ -269,7 +247,6 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
                 if res.get("ok") is True:
                     return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
                 return False, f"{mode} BUY faalde: {res}"
-            # Als trader geen dict returned, nemen we aan: ok
             return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur} (no-return)"
         except Exception as e:
             attempts.append((mode, f"{type(e).__name__}: {e}"))
@@ -280,7 +257,7 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     if TRADER_MODE == "live":
         return try_one("live")
 
-    # auto
+    # auto: probeer paper, dan live
     ok, msg = try_one("paper")
     if ok:
         return True, msg
@@ -293,9 +270,7 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     return False, "BUY NIET uitgevoerd.\n" + detail
 
 
-# ============================================================
-# COMMANDS
-# ============================================================
+# ---------------- COMMANDS ----------------
 def parse_command(text: str) -> Tuple[str, List[str]]:
     t = (text or "").strip()
     if not t:
@@ -317,121 +292,104 @@ HELP_TEXT = (
     "HELP\n"
     "LIST (laat pending/approved zien)\n"
     "TOP (top 5 hoogste chance)\n"
+    "STATS (DB status counts)\n"
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n\n"
     "Bedragen: 5/10/15/20/30/100\n"
-    "TRADER_MODE=paper|live|auto"
+    "TRADER_MODE=paper|live|auto\n"
+    "SHOW_WATCH=1 (toon WATCH in LIST/TOP)"
 )
 
 
-# ============================================================
-# MAIN WHATSAPP WEBHOOK
-# ============================================================
 @app.post("/whatsapp")
 def whatsapp():
-    start = time.time()
     try:
         body = (request.values.get("Body") or "").strip()
         cmd, args = parse_command(body)
 
-        if DEBUG_WEBHOOK:
-            log(f"📩 /whatsapp cmd={cmd} args={args} raw='{body}'")
-
-        if not db_ready():
-            return twiml("DATABASE_URL ontbreekt in Render Environment.")
+        if not DATABASE_URL:
+            return twiml("DATABASE_URL ontbreekt in Render Environment (deze service).")
 
         with db_connect() as conn:
-            # Zorg dat elke query safe is
-            try:
-                if cmd in ("HELP", "?"):
-                    return twiml(HELP_TEXT)
+            if cmd in ("HELP", "?"):
+                return twiml(HELP_TEXT)
 
-                if cmd == "LIST":
-                    pending = fetch_pending(conn, limit=10)
-                    if not pending:
-                        return twiml("Geen pending/approved Pre-BUYs.")
-                    lines = ["Pre-BUYs (PENDING/APPROVED):"]
-                    lines += [fmt_prebuy_row(p) for p in pending]
-                    lines.append("\nGebruik: YES <bedrag> [ID]  of  NO <ID>")
-                    return twiml("\n".join(lines))
+            if cmd == "STATS":
+                return twiml(stats(conn))
 
-                if cmd == "TOP":
-                    pending = fetch_pending(conn, limit=5)
-                    if not pending:
-                        return twiml("Geen pending/approved Pre-BUYs.")
-                    lines = ["TOP 5 (chance):"]
-                    lines += [fmt_prebuy_row(p) for p in pending]
-                    lines.append("\nGebruik: YES <bedrag> [ID]")
-                    return twiml("\n".join(lines))
+            if cmd == "LIST":
+                pending = fetch_pending(conn, limit=10)
+                if not pending:
+                    return twiml("Geen pending/approved Pre-BUYs (of alles is verlopen/status anders). Gebruik STATS.")
+                lines = ["Pre-BUYs (PENDING/APPROVED" + ("/WATCH" if SHOW_WATCH else "") + "):"]
+                lines += [fmt_prebuy_row(p) for p in pending]
+                lines.append("\nGebruik: YES <bedrag> [ID]  of  NO <ID>")
+                return twiml("\n".join(lines))
 
-                if cmd == "NO":
-                    if not args:
-                        return twiml("Gebruik: NO <ID>")
-                    prebuy_id = args[0].strip()
+            if cmd == "TOP":
+                pending = fetch_pending(conn, limit=5)
+                if not pending:
+                    return twiml("Geen pending/approved Pre-BUYs. Gebruik STATS.")
+                lines = ["TOP 5 (chance):"]
+                lines += [fmt_prebuy_row(p) for p in pending]
+                lines.append("\nGebruik: YES <bedrag> [ID]")
+                return twiml("\n".join(lines))
+
+            if cmd == "NO":
+                if not args:
+                    return twiml("Gebruik: NO <ID>")
+                prebuy_id = args[0].strip()
+                p = get_pending_by_id(conn, prebuy_id)
+                if not p:
+                    return twiml("ID niet gevonden.")
+                mark_rejected(conn, prebuy_id)
+                return twiml(f"Afgewezen: {prebuy_id}")
+
+            if cmd == "YES":
+                if len(args) < 1:
+                    return twiml("Gebruik: YES <bedrag> [ID]")
+
+                amount = safe_int(args[0], 0)
+                if amount not in ALLOWED_AMOUNTS:
+                    return twiml("Bedrag ongeldig. Toegestaan: 5/10/15/20/30/100")
+
+                if len(args) >= 2:
+                    prebuy_id = args[1].strip()
                     p = get_pending_by_id(conn, prebuy_id)
                     if not p:
                         return twiml("ID niet gevonden.")
+                else:
+                    p = get_top_pending(conn)
+                    if not p:
+                        return twiml("Geen pending/approved Pre-BUYs om te keuren. Gebruik LIST of STATS.")
+                    prebuy_id = str(p.get("id"))
+
+                status = (p.get("status") or "PENDING").upper()
+                if status not in ("PENDING", "APPROVED", "WATCH"):
+                    return twiml(f"Kan niet YES doen: status is {status}")
+
+                exp = as_aware_utc(p.get("expires_at"))
+                if exp and exp <= now_utc():
                     mark_rejected(conn, prebuy_id)
-                    conn.commit()
-                    return twiml(f"Afgewezen: {prebuy_id}")
+                    return twiml("Deze Pre-BUY is verlopen en is nu afgewezen.")
 
-                if cmd == "YES":
-                    if len(args) < 1:
-                        return twiml("Gebruik: YES <bedrag> [ID]")
+                # Mark approved (ook bij retry)
+                mark_approved(conn, prebuy_id)
 
-                    amount = safe_int(args[0], 0)
-                    if amount not in ALLOWED_AMOUNTS:
-                        return twiml("Bedrag ongeldig. Toegestaan: 5/10/15/20/30/100")
+                ok, msg = execute_buy(p, amount)
 
-                    # Met ID
-                    if len(args) >= 2:
-                        prebuy_id = args[1].strip()
-                        p = get_pending_by_id(conn, prebuy_id)
-                        if not p:
-                            return twiml("ID niet gevonden.")
-                    else:
-                        # Zonder ID -> top 1
-                        p = get_top_pending(conn)
-                        if not p:
-                            return twiml("Geen pending/approved Pre-BUYs om te keuren.")
-                        prebuy_id = str(p.get("id"))
+                if ok:
+                    mark_consumed(conn, prebuy_id)
+                    return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
 
-                    status = (p.get("status") or "PENDING").upper()
-                    if status not in ("PENDING", "APPROVED"):
-                        return twiml(f"Kan niet YES doen: status is {status}")
+                # BUY faalde => blijft APPROVED zodat je hem terugziet en kunt retryen
+                return twiml(
+                    f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}\n\n"
+                    f"TIP: probeer nogmaals YES <bedrag> {prebuy_id}\n"
+                    f"TIP2: check STATS voor DB status"
+                )
 
-                    exp = as_aware_utc(p.get("expires_at"))
-                    if exp and exp <= now_utc():
-                        mark_rejected(conn, prebuy_id)
-                        conn.commit()
-                        return twiml("Deze Pre-BUY is verlopen en is nu afgewezen.")
-
-                    # Mark approved (ook bij retry)
-                    mark_approved(conn, prebuy_id)
-                    conn.commit()
-
-                    ok, msg = execute_buy(p, amount)
-
-                    if ok:
-                        # BUY gelukt -> consumed
-                        mark_consumed(conn, prebuy_id)
-                        conn.commit()
-                        return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
-
-                    # BUY faalde -> blijft APPROVED zodat je opnieuw YES kunt doen
-                    return twiml(
-                        f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}\n\n"
-                        f"TIP: probeer nogmaals YES <bedrag> {prebuy_id}"
-                    )
-
-                return twiml("Onbekend command.\n\n" + HELP_TEXT)
-
-            except Exception as e:
-                try:
-                    conn.rollback()
-                except Exception:
-                    pass
-                raise e
+            return twiml("Onbekend command.\n\n" + HELP_TEXT)
 
     except Exception as e:
         log("❌ ERROR in /whatsapp")
@@ -439,13 +397,7 @@ def whatsapp():
         log(traceback.format_exc())
         return twiml("Interne fout. Check Render logs.")
 
-    finally:
-        if DEBUG_WEBHOOK:
-            ms = int((time.time() - start) * 1000)
-            log(f"⏱️ webhook done in {ms}ms")
-
 
 if __name__ == "__main__":
-    # Render geeft PORT mee
     port = int(os.getenv("PORT") or "10000")
     app.run(host="0.0.0.0", port=port)
