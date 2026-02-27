@@ -20,15 +20,14 @@ app = Flask(__name__)
 
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-# ✅ jouw gewenste bedragen
+# ✅ JOUW gewenste bedragen
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 40, 50}
 
 # paper | live | auto
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
-# ✅ max items
-LIST_LIMIT = int(os.getenv("LIST_LIMIT") or "10")
-TOP_LIMIT = int(os.getenv("TOP_LIMIT") or "10")
+# ✅ hoeveel regels LIST/TOP laat zien
+LIST_LIMIT = int(os.getenv("LIST_LIMIT") or "10")  # max 10 tegelijk
 
 
 def now_utc() -> datetime:
@@ -73,21 +72,6 @@ def as_aware_utc(dt: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def col_exists(conn, table: str, col: str, schema: str = "public") -> bool:
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            SELECT EXISTS(
-              SELECT 1
-              FROM information_schema.columns
-              WHERE table_schema=%s AND table_name=%s AND column_name=%s
-            )
-            """,
-            (schema, table, col),
-        )
-        return bool(cur.fetchone()[0])
-
-
 @app.get("/")
 def root():
     return "OK", 200
@@ -98,84 +82,64 @@ def healthz():
     return "OK", 200
 
 
-# =========================
-# Kans-tekst (jouw wording)
-# =========================
-def chance_label(chance: int) -> str:
-    # jij wilde: "kans heel groot / kans groot / kans goed"
-    if chance >= 90:
-        return "KANS HEEL GROOT"
-    if chance >= 80:
-        return "KANS GROOT"
-    return "KANS GOED"
+# ---------------- DB helpers ----------------
+def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT EXISTS(
+              SELECT 1 FROM information_schema.columns
+              WHERE table_schema=%s AND table_name=%s AND column_name=%s
+            )
+            """,
+            (schema, table, col),
+        )
+        return bool(cur.fetchone()[0])
 
 
-# =========================
-# DB helpers (schema-robust)
-# =========================
-def _select_expr(conn) -> Dict[str, str]:
-    """
-    Bouwt veilige SELECT expressies.
-    Als kolom ontbreekt -> selecteer NULL of fallback zodat webhook niet crasht.
-    """
-    have_tf = col_exists(conn, "pending_approvals", "timeframe")
-    have_conf = col_exists(conn, "pending_approvals", "confidence")
-    have_stop = col_exists(conn, "pending_approvals", "stop")
-    have_target = col_exists(conn, "pending_approvals", "target")
-    have_entry = col_exists(conn, "pending_approvals", "entry")
-    have_score = col_exists(conn, "pending_approvals", "score")
-    have_chance = col_exists(conn, "pending_approvals", "chance")
-    have_setup = col_exists(conn, "pending_approvals", "setup_type")
-    have_regime = col_exists(conn, "pending_approvals", "regime")
-
-    return {
-        "timeframe": "timeframe" if have_tf else "NULL::text AS timeframe",
-        "confidence": "confidence" if have_conf else "NULL::int AS confidence",
-        "stop": "stop" if have_stop else "NULL::float AS stop",
-        "target": "target" if have_target else "NULL::float AS target",
-        "entry": "entry" if have_entry else "NULL::float AS entry",
-        "score": "score" if have_score else "NULL::int AS score",
-        "chance": "chance" if have_chance else "NULL::int AS chance",
-        "setup_type": "setup_type" if have_setup else "NULL::text AS setup_type",
-        "regime": "regime" if have_regime else "NULL::text AS regime",
-    }
+def chance_label(ch: int) -> str:
+    # ✅ JOUW tekstlabels
+    if ch >= 90:
+        return "kans heel groot"
+    if ch >= 80:
+        return "kans groot"
+    if ch >= 70:
+        return "kans goed"
+    return "kans laag"
 
 
 def fetch_prebuys(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
     """
     LIST: toon ACTIVE PENDING/APPROVED
-    LISTALL: toon ook EXPIRED
-    ✅ crash-proof: werkt ook als kolommen ontbreken
+    LISTALL: toon ook EXPIRED zodat je ziet wat er misgaat
     """
-    sel = _select_expr(conn)
+    has_raw = table_has_column(conn, "pending_approvals", "raw_score")
+
+    # raw_score alleen selecteren als kolom bestaat
+    raw_select = ", raw_score" if has_raw else ""
+
     extra_expired = "" if include_expired else "AND (expires_at IS NULL OR expires_at > NOW())"
 
-    sql = f"""
-        SELECT
-          id,
-          symbol,
-          {sel["setup_type"]},
-          {sel["timeframe"]},
-          {sel["regime"]},
-          {sel["score"]},
-          {sel["chance"]},
-          {sel["confidence"]},
-          {sel["entry"]},
-          {sel["stop"]},
-          {sel["target"]},
-          status, created_at, expires_at
-        FROM public.pending_approvals
-        WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
-          {extra_expired}
-        ORDER BY
-          CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
-          COALESCE(chance,0) DESC,
-          created_at ASC
-        LIMIT %s
-    """
-
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, (limit,))
+        cur.execute(
+            f"""
+            SELECT
+              id, symbol, setup_type, timeframe, regime
+              {raw_select},
+              score, chance, confidence,
+              entry, stop, target,
+              status, created_at, expires_at
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              {extra_expired}
+            ORDER BY
+              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
+              COALESCE(chance,0) DESC,
+              created_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
         rows = cur.fetchall()
     return [dict(r) for r in rows]
 
@@ -203,27 +167,23 @@ def stats(conn) -> Dict[str, int]:
 
 
 def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
-    sel = _select_expr(conn)
-    sql = f"""
-        SELECT
-          id,
-          symbol,
-          {sel["setup_type"]},
-          {sel["timeframe"]},
-          {sel["regime"]},
-          {sel["score"]},
-          {sel["chance"]},
-          {sel["confidence"]},
-          {sel["entry"]},
-          {sel["stop"]},
-          {sel["target"]},
-          status, created_at, expires_at
-        FROM public.pending_approvals
-        WHERE id = %s
-        LIMIT 1
-    """
+    has_raw = table_has_column(conn, "pending_approvals", "raw_score")
+    raw_select = ", raw_score" if has_raw else ""
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, (prebuy_id,))
+        cur.execute(
+            f"""
+            SELECT
+              id, symbol, setup_type, timeframe, regime
+              {raw_select},
+              score, chance, confidence,
+              entry, stop, target,
+              status, created_at, expires_at
+            FROM public.pending_approvals
+            WHERE id = %s
+            """,
+            (prebuy_id,),
+        )
         row = cur.fetchone()
     return dict(row) if row else None
 
@@ -272,9 +232,7 @@ def mark_consumed(conn, prebuy_id: str) -> None:
     conn.commit()
 
 
-# =========================
-# TRADER
-# =========================
+# ---------------- TRADER ----------------
 def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> Any:
     try:
         sig = inspect.signature(buy_fn)
@@ -354,9 +312,7 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     return False, "BUY NIET uitgevoerd (paper én live faalden)."
 
 
-# =========================
-# COMMANDS
-# =========================
+# ---------------- COMMANDS ----------------
 def parse_command(text: str) -> Tuple[str, List[str]]:
     t = (text or "").strip()
     if not t:
@@ -365,85 +321,63 @@ def parse_command(text: str) -> Tuple[str, List[str]]:
     return parts[0].upper(), parts[1:]
 
 
-def looks_like_prebuy_id(s: str) -> bool:
-    # jouw IDs zijn vaak PB-SYMBOL-YYYYMMDD-HHMMSS-xxxxxx
-    s = (s or "").strip()
-    return s.startswith("PB-") and len(s) >= 10
-
-
 def fmt_prebuy_row(p: Dict[str, Any]) -> str:
     st = (p.get("status") or "PENDING").upper()
-
-    symbol = (p.get("symbol") or "-").upper()
-    tf = p.get("timeframe") or "-"
-    setup = p.get("setup_type") or "-"
-    regime = p.get("regime") or "-"
-
-    score = safe_int(p.get("score"), 0)
     chance = safe_int(p.get("chance"), 0)
+    label = chance_label(chance)
 
     exp = p.get("expires_at")
-    exp_s = exp.strftime("%Y-%m-%d %H:%M UTC") if isinstance(exp, datetime) else "-"
+    exp_s = exp.isoformat() if isinstance(exp, datetime) else str(exp) if exp else "-"
 
+    # ✅ duidelijk coin + kans tekst
     return (
-        f"{p.get('id')} | {symbol} | {chance_label(chance)} ({chance}) | score={score} "
-        f"| tf={tf} | {setup} | regime={regime} | exp={exp_s} | status={st}"
+        f"{p.get('id')} | {p.get('symbol')} | {label} ({chance}) | score={p.get('score')}"
+        f" | {p.get('setup_type')} | entry={p.get('entry')} | exp={exp_s} | status={st}"
     )
 
 
 def fmt_prebuy_full(p: Dict[str, Any]) -> str:
     st = (p.get("status") or "PENDING").upper()
-    symbol = (p.get("symbol") or "-").upper()
-    tf = p.get("timeframe") or "-"
-    setup = p.get("setup_type") or "-"
-    regime = p.get("regime") or "-"
-
-    score = safe_int(p.get("score"), 0)
     chance = safe_int(p.get("chance"), 0)
-    conf = p.get("confidence")
-    conf_txt = f"{safe_int(conf, 0)}" if conf is not None else "-"
+    label = chance_label(chance)
 
-    entry = safe_float(p.get("entry"), 0.0)
-    stop = safe_float(p.get("stop"), 0.0)
-    target = safe_float(p.get("target"), 0.0)
+    exp = as_aware_utc(p.get("expires_at"))
+    crt = as_aware_utc(p.get("created_at"))
 
-    created = p.get("created_at")
-    created_s = created.strftime("%Y-%m-%d %H:%M UTC") if isinstance(created, datetime) else "-"
+    raw = p.get("raw_score", None)
 
-    exp = p.get("expires_at")
-    exp_s = exp.strftime("%Y-%m-%d %H:%M UTC") if isinstance(exp, datetime) else "-"
-
-    return (
-        f"📌 PRE-BUY DETAIL\n"
-        f"ID: {p.get('id')}\n"
-        f"COIN: {symbol}\n"
-        f"Status: {st}\n"
-        f"Timeframe: {tf}\n"
-        f"Setup: {setup}\n"
-        f"Regime: {regime}\n\n"
-        f"Score: {score}\n"
-        f"Chance: {chance_label(chance)} ({chance})\n"
-        f"Confidence: {conf_txt}\n\n"
-        f"Entry: {entry:.6f}\n"
-        f"Stop:  {stop:.6f}\n"
-        f"Target:{target:.6f}\n\n"
-        f"Created: {created_s}\n"
-        f"Expires: {exp_s}\n\n"
-        f"Kopen: YES <bedrag> {p.get('id')}\n"
-        f"Afwijzen: NO {p.get('id')}"
-    )
+    lines = []
+    lines.append("📌 PRE-BUY DETAILS")
+    lines.append(f"ID: {p.get('id')}")
+    lines.append(f"COIN: {p.get('symbol')}")
+    lines.append(f"Status: {st}")
+    lines.append(f"Setup: {p.get('setup_type')} | TF: {p.get('timeframe')} | Regime: {p.get('regime')}")
+    if raw is not None:
+        lines.append(f"Score: {p.get('score')} (raw={raw})")
+    else:
+        lines.append(f"Score: {p.get('score')}")
+    lines.append(f"Kans: {label} ({chance}) | confidence={p.get('confidence')}")
+    lines.append(f"Entry:  {p.get('entry')}")
+    lines.append(f"Stop:   {p.get('stop')}")
+    lines.append(f"Target: {p.get('target')}")
+    lines.append(f"Created: {crt.isoformat() if crt else p.get('created_at')}")
+    lines.append(f"Expires: {exp.isoformat() if exp else p.get('expires_at')}")
+    lines.append("")
+    lines.append(f"Kopen: YES <bedrag> {p.get('id')}")
+    lines.append("Bedragen: 5/10/15/20/30/40/50")
+    return "\n".join(lines)
 
 
 HELP_TEXT = (
     "Commands:\n"
     "HELP\n"
-    "LIST (max 10 ACTIVE)\n"
+    "LIST (top 10 ACTIVE PENDING/APPROVED)\n"
     "LISTALL (incl EXPIRED)\n"
-    "TOP (top 10 chance - ACTIVE)\n"
+    "TOP (top 10 beste kans - ACTIVE)\n"
     "STATS\n"
-    "YES <bedrag> [ID]\n"
+    "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n"
-    "SHOW <ID>  (of stuur alleen ID)\n\n"
+    "DETAIL <ID> (of stuur alleen de ID)\n\n"
     "Bedragen: 5/10/15/20/30/40/50\n"
     "TRADER_MODE=paper|live|auto"
 )
@@ -457,9 +391,9 @@ def whatsapp():
         if not DATABASE_URL:
             return twiml("DATABASE_URL ontbreekt in Render Environment.")
 
-        # ✅ extra: als user alleen een ID stuurt -> detail
-        if looks_like_prebuy_id(body):
-            cmd = "SHOW"
+        # ✅ als iemand alleen een Prebuy ID stuurt → detail
+        if body.startswith("PB-") and " " not in body:
+            cmd = "DETAIL"
             args = [body.strip()]
         else:
             cmd, args = parse_command(body)
@@ -475,7 +409,7 @@ def whatsapp():
                     f"pending_or_approved = {s['pending_or_approved']}\n"
                     f"active_now = {s['active_now']}\n"
                     f"expired_now = {s['expired_now']}\n\n"
-                    "Als active_now=0 en expired_now>0, dan zijn je Pre-BUYs verlopen."
+                    "Tip: als active_now=0 en expired_now>0 → je hebt alleen oude verlopen Pre-BUYs."
                 )
 
             if cmd == "LIST":
@@ -485,39 +419,38 @@ def whatsapp():
                     return twiml(
                         "Geen ACTIVE pending/approved Pre-BUYs.\n"
                         f"(expired_now={s['expired_now']})\n\n"
-                        "Tip: STATS of LISTALL."
+                        "Tip: stuur STATS of LISTALL."
                     )
-                lines = [f"Pre-BUYs (ACTIVE) max {LIST_LIMIT}:"]
+                lines = ["Pre-BUYs (ACTIVE) — max 10:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
-                lines.append("\nTip: stuur een ID los om alle info te zien.")
+                lines.append("\nTip: stuur een ID (PB-...) voor alle details.")
                 return twiml("\n".join(lines))
 
             if cmd == "LISTALL":
                 pending = fetch_prebuys(conn, limit=LIST_LIMIT, include_expired=True)
                 if not pending:
                     return twiml("Geen pending/approved records gevonden.")
-                lines = [f"Pre-BUYs (incl EXPIRED) max {LIST_LIMIT}:"]
+                lines = ["Pre-BUYs (incl EXPIRED) — max 10:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
-                lines.append("\nTip: stuur een ID los om alle info te zien.")
                 return twiml("\n".join(lines))
 
             if cmd == "TOP":
-                pending = fetch_prebuys(conn, limit=TOP_LIMIT, include_expired=False)
+                pending = fetch_prebuys(conn, limit=LIST_LIMIT, include_expired=False)
                 if not pending:
                     s = stats(conn)
                     return twiml(
                         "Geen ACTIVE pending/approved Pre-BUYs.\n"
                         f"(expired_now={s['expired_now']})\n\n"
-                        "Tip: STATS"
+                        "Tip: STATS of LISTALL"
                     )
-                lines = [f"TOP {TOP_LIMIT} (chance) - ACTIVE:"]
+                lines = ["🏆 TOP 10 (beste kans) — ACTIVE:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
-                lines.append("\nGebruik: YES <bedrag> [ID]")
+                lines.append("\nTip: stuur een ID (PB-...) voor alle details.")
                 return twiml("\n".join(lines))
 
-            if cmd == "SHOW":
+            if cmd in ("DETAIL", "ID"):
                 if not args:
-                    return twiml("Gebruik: SHOW <ID>  (of stuur alleen het ID)")
+                    return twiml("Gebruik: DETAIL <ID>  (of stuur alleen de ID)")
                 prebuy_id = args[0].strip()
                 p = get_pending_by_id(conn, prebuy_id)
                 if not p:
@@ -562,10 +495,11 @@ def whatsapp():
                     return twiml(
                         "Deze Pre-BUY is verlopen.\n"
                         f"ID: {prebuy_id}\n\n"
-                        "Tip: wacht op nieuwe Pre-BUYs (expires wordt nu correct gezet in multi_coin_score)."
+                        "Tip: wacht op nieuwe Pre-BUY of gebruik TOP."
                     )
 
                 mark_approved(conn, prebuy_id)
+
                 ok, msg = execute_buy(p, amount)
 
                 if ok:
