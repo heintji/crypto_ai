@@ -18,12 +18,11 @@ except Exception:  # pragma: no cover
 
 app = Flask(__name__)
 
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip() or ""
+DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 100}
-TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
-# Laat WATCH ook zien in LIST/TOP?
-SHOW_WATCH = (os.getenv("SHOW_WATCH") or "1").strip().lower() in {"1", "true", "yes", "on"}
+# paper | live | auto
+TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
 
 def now_utc() -> datetime:
@@ -72,18 +71,13 @@ def healthz():
 
 
 # ---------------- DB ----------------
-def _wanted_statuses() -> Tuple[str, ...]:
-    # PENDING + APPROVED altijd, WATCH optioneel
-    if SHOW_WATCH:
-        return ("PENDING", "APPROVED", "WATCH")
-    return ("PENDING", "APPROVED")
-
-
-def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
+def fetch_prebuys(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
     """
-    Toon PENDING/APPROVED (en optioneel WATCH) die niet verlopen zijn.
+    LIST: toon ACTIVE PENDING/APPROVED
+    LISTALL: toon ook EXPIRED zodat je ziet wat er misgaat
     """
-    statuses = _wanted_statuses()
+    extra_expired = "" if include_expired else "AND (expires_at IS NULL OR expires_at > NOW())"
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"""
@@ -93,22 +87,40 @@ def fetch_pending(conn, limit: int = 10) -> List[Dict[str, Any]]:
               entry, stop, target,
               status, created_at, expires_at
             FROM public.pending_approvals
-            WHERE COALESCE(status,'PENDING') = ANY(%s)
-              AND (expires_at IS NULL OR expires_at > NOW())
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              {extra_expired}
             ORDER BY
-              CASE
-                WHEN COALESCE(status,'PENDING')='PENDING' THEN 0
-                WHEN COALESCE(status,'PENDING')='APPROVED' THEN 1
-                ELSE 2
-              END,
+              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
               COALESCE(chance,0) DESC,
               created_at ASC
             LIMIT %s
             """,
-            (list(statuses), limit),
+            (limit,),
         )
         rows = cur.fetchall()
     return [dict(r) for r in rows]
+
+
+def stats(conn) -> Dict[str, int]:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+              COUNT(*) FILTER (WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED'))::int AS pending_or_approved,
+              COUNT(*) FILTER (
+                WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+                  AND (expires_at IS NULL OR expires_at > NOW())
+              )::int AS active_now,
+              COUNT(*) FILTER (
+                WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+                  AND expires_at IS NOT NULL
+                  AND expires_at <= NOW()
+              )::int AS expired_now
+            FROM public.pending_approvals
+            """
+        )
+        row = cur.fetchone() or (0, 0, 0)
+    return {"pending_or_approved": row[0], "active_now": row[1], "expired_now": row[2]}
 
 
 def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
@@ -130,18 +142,8 @@ def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_top_pending(conn) -> Optional[Dict[str, Any]]:
-    rows = fetch_pending(conn, limit=1)
+    rows = fetch_prebuys(conn, limit=1, include_expired=False)
     return rows[0] if rows else None
-
-
-def stats(conn) -> str:
-    with conn.cursor() as cur:
-        cur.execute("SELECT COALESCE(status,'PENDING') as status, COUNT(*)::int FROM public.pending_approvals GROUP BY 1 ORDER BY 2 DESC;")
-        rows = cur.fetchall()
-    lines = ["DB STATS (pending_approvals):"]
-    for st, cnt in rows:
-        lines.append(f"- {st}: {cnt}")
-    return "\n".join(lines)
 
 
 def mark_rejected(conn, prebuy_id: str) -> None:
@@ -211,14 +213,11 @@ def _call_buy_compat(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any
 
 
 def _get_buy_fn(module_path: str):
-    try:
-        mod = __import__(module_path, fromlist=["buy_eur"])
-        fn = getattr(mod, "buy_eur", None)
-        if not callable(fn):
-            raise AttributeError(f"{module_path}.buy_eur ontbreekt")
-        return fn, None
-    except Exception as e:
-        return None, e
+    mod = __import__(module_path, fromlist=["buy_eur"])
+    fn = getattr(mod, "buy_eur", None)
+    if not callable(fn):
+        raise AttributeError(f"{module_path}.buy_eur ontbreekt")
+    return fn
 
 
 def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
@@ -232,14 +231,13 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
         return False, "BUY faalde: symbol ontbreekt."
 
     meta = {"prebuy_id": prebuy_id, "entry": entry, "stop": stop, "target": target}
-    attempts: List[Tuple[str, str]] = []
 
     def try_one(mode: str) -> Tuple[bool, str]:
         module_path = "trading.paper_trader" if mode == "paper" else "trading.live_trader"
-        buy_fn, err = _get_buy_fn(module_path)
-        if err or buy_fn is None:
-            attempts.append((mode, f"{type(err).__name__}: {err}"))
-            return False, f"{mode} trader niet beschikbaar: {type(err).__name__}: {err}"
+        try:
+            buy_fn = _get_buy_fn(module_path)
+        except Exception as e:
+            return False, f"{mode} trader niet beschikbaar: {type(e).__name__}: {e}"
 
         try:
             res = _call_buy_compat(buy_fn, symbol, float(amount_eur), meta)
@@ -247,9 +245,8 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
                 if res.get("ok") is True:
                     return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
                 return False, f"{mode} BUY faalde: {res}"
-            return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur} (no-return)"
+            return True, f"BUY uitgevoerd ({mode}) {symbol} €{amount_eur}"
         except Exception as e:
-            attempts.append((mode, f"{type(e).__name__}: {e}"))
             return False, f"{mode} buy error: {type(e).__name__}: {e}"
 
     if TRADER_MODE == "paper":
@@ -257,7 +254,6 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     if TRADER_MODE == "live":
         return try_one("live")
 
-    # auto: probeer paper, dan live
     ok, msg = try_one("paper")
     if ok:
         return True, msg
@@ -266,8 +262,7 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     if ok2:
         return True, msg2
 
-    detail = "\n".join([f"{m}_err={e}" for (m, e) in attempts]) if attempts else "geen details"
-    return False, "BUY NIET uitgevoerd.\n" + detail
+    return False, "BUY NIET uitgevoerd (paper én live faalden)."
 
 
 # ---------------- COMMANDS ----------------
@@ -281,23 +276,25 @@ def parse_command(text: str) -> Tuple[str, List[str]]:
 
 def fmt_prebuy_row(p: Dict[str, Any]) -> str:
     st = (p.get("status") or "PENDING").upper()
+    exp = p.get("expires_at")
+    exp_s = exp.isoformat() if isinstance(exp, datetime) else str(exp) if exp else "-"
     return (
         f"{p.get('id')} | {p.get('symbol')} | status={st} | chance={p.get('chance')} "
-        f"| score={p.get('score')} | {p.get('setup_type')} | entry={p.get('entry')}"
+        f"| score={p.get('score')} | {p.get('setup_type')} | entry={p.get('entry')} | exp={exp_s}"
     )
 
 
 HELP_TEXT = (
     "Commands:\n"
     "HELP\n"
-    "LIST (laat pending/approved zien)\n"
-    "TOP (top 5 hoogste chance)\n"
-    "STATS (DB status counts)\n"
+    "LIST (alleen ACTIVE PENDING/APPROVED)\n"
+    "LISTALL (ook EXPIRED)\n"
+    "TOP (top 5 hoogste chance - ACTIVE)\n"
+    "STATS (active vs expired)\n"
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n\n"
     "Bedragen: 5/10/15/20/30/100\n"
-    "TRADER_MODE=paper|live|auto\n"
-    "SHOW_WATCH=1 (toon WATCH in LIST/TOP)"
+    "TRADER_MODE=paper|live|auto"
 )
 
 
@@ -308,29 +305,54 @@ def whatsapp():
         cmd, args = parse_command(body)
 
         if not DATABASE_URL:
-            return twiml("DATABASE_URL ontbreekt in Render Environment (deze service).")
+            return twiml("DATABASE_URL ontbreekt in Render Environment.")
 
         with db_connect() as conn:
             if cmd in ("HELP", "?"):
                 return twiml(HELP_TEXT)
 
             if cmd == "STATS":
-                return twiml(stats(conn))
+                s = stats(conn)
+                return twiml(
+                    "STATS:\n"
+                    f"pending_or_approved = {s['pending_or_approved']}\n"
+                    f"active_now = {s['active_now']}\n"
+                    f"expired_now = {s['expired_now']}\n\n"
+                    "Als active_now=0 en expired_now>0, dan klopt je expires_at/created_at timing niet."
+                )
 
             if cmd == "LIST":
-                pending = fetch_pending(conn, limit=10)
+                pending = fetch_prebuys(conn, limit=10, include_expired=False)
+                s = stats(conn)
                 if not pending:
-                    return twiml("Geen pending/approved Pre-BUYs (of alles is verlopen/status anders). Gebruik STATS.")
-                lines = ["Pre-BUYs (PENDING/APPROVED" + ("/WATCH" if SHOW_WATCH else "") + "):"]
+                    return twiml(
+                        "Geen ACTIVE pending/approved Pre-BUYs.\n"
+                        f"(expired_now={s['expired_now']})\n\n"
+                        "Tip: stuur STATS of LISTALL om te zien wat er gebeurt."
+                    )
+                lines = ["Pre-BUYs (ACTIVE PENDING/APPROVED):"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]  of  NO <ID>")
                 return twiml("\n".join(lines))
 
-            if cmd == "TOP":
-                pending = fetch_pending(conn, limit=5)
+            if cmd == "LISTALL":
+                pending = fetch_prebuys(conn, limit=10, include_expired=True)
                 if not pending:
-                    return twiml("Geen pending/approved Pre-BUYs. Gebruik STATS.")
-                lines = ["TOP 5 (chance):"]
+                    return twiml("Geen pending/approved records gevonden.")
+                lines = ["Pre-BUYs (PENDING/APPROVED incl EXPIRED):"]
+                lines += [fmt_prebuy_row(p) for p in pending]
+                return twiml("\n".join(lines))
+
+            if cmd == "TOP":
+                pending = fetch_prebuys(conn, limit=5, include_expired=False)
+                if not pending:
+                    s = stats(conn)
+                    return twiml(
+                        "Geen ACTIVE pending/approved Pre-BUYs.\n"
+                        f"(expired_now={s['expired_now']})\n\n"
+                        "Tip: STATS"
+                    )
+                lines = ["TOP 5 (chance) - ACTIVE:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 lines.append("\nGebruik: YES <bedrag> [ID]")
                 return twiml("\n".join(lines))
@@ -361,17 +383,21 @@ def whatsapp():
                 else:
                     p = get_top_pending(conn)
                     if not p:
-                        return twiml("Geen pending/approved Pre-BUYs om te keuren. Gebruik LIST of STATS.")
+                        return twiml("Geen ACTIVE pending/approved Pre-BUYs om te keuren.")
                     prebuy_id = str(p.get("id"))
 
                 status = (p.get("status") or "PENDING").upper()
-                if status not in ("PENDING", "APPROVED", "WATCH"):
+                if status not in ("PENDING", "APPROVED"):
                     return twiml(f"Kan niet YES doen: status is {status}")
 
                 exp = as_aware_utc(p.get("expires_at"))
                 if exp and exp <= now_utc():
-                    mark_rejected(conn, prebuy_id)
-                    return twiml("Deze Pre-BUY is verlopen en is nu afgewezen.")
+                    # Laat hem netjes zien als verlopen
+                    return twiml(
+                        "Deze Pre-BUY is verlopen.\n"
+                        f"ID: {prebuy_id}\n\n"
+                        "Fix: multi_coin_score moet expires_at goed zetten (NOW()+4h)."
+                    )
 
                 # Mark approved (ook bij retry)
                 mark_approved(conn, prebuy_id)
@@ -382,11 +408,10 @@ def whatsapp():
                     mark_consumed(conn, prebuy_id)
                     return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
 
-                # BUY faalde => blijft APPROVED zodat je hem terugziet en kunt retryen
+                # BUY faalde => blijft APPROVED (voor retry)
                 return twiml(
                     f"GOEDGEKEURD ✅\nMaar BUY faalde:\n{msg}\nID: {prebuy_id}\n\n"
-                    f"TIP: probeer nogmaals YES <bedrag> {prebuy_id}\n"
-                    f"TIP2: check STATS voor DB status"
+                    f"TIP: probeer nogmaals YES <bedrag> {prebuy_id}"
                 )
 
             return twiml("Onbekend command.\n\n" + HELP_TEXT)
