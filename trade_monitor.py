@@ -1,9 +1,39 @@
+# trade_monitor.py
+# ==========================================================
+# ✅ Trade monitor (exit logic) — LIVE + PAPER compatible
+#
+# Wat is hier aangepast (zonder jouw exit-logica te veranderen):
+# 1) ✅ STATE_PATH auto switch:
+#    - TRADER_MODE=live  -> LIVE_STATE_PATH (default /data/live_state.json)
+#    - TRADER_MODE=paper -> PAPER_STATE_PATH
+#    - TRADER_MODE=auto  -> default LIVE_STATE_PATH (want jouw doel is live)
+#
+# 2) ✅ PRICE SOURCE auto:
+#    - Als trade live is -> Bitvavo prijs (EUR market)
+#    - Anders -> Binance prijs (USDT)
+#
+# 3) ✅ SYMBOL NORMALIZATION:
+#    - Als je trade symbol = BTCUSDT (Binance-wereld) maar live -> wordt BTC-EUR voor Bitvavo price
+#    - Als je trade symbol al "BTC-EUR" is -> blijft het zo
+#
+# 4) ✅ STRUCTUUR-MODE lows:
+#    - Live -> Bitvavo candles (als beschikbaar) of fallback Binance
+#    - Paper/Binance -> Binance lows
+#
+# 5) ✅ EXTRA DEBUG:
+#    - Print duidelijk welke prijsbron gebruikt wordt + market mapping
+#
+# Jouw exit-regels blijven EXACT hetzelfde.
+# ==========================================================
+
+from __future__ import annotations
+
 import os
 import sys
 import json
 import time
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import requests
 
@@ -29,22 +59,6 @@ def _get_data_dir() -> str:
 DATA_DIR = _get_data_dir()
 LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
 
-STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
-FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
-
-# =========================
-# Binance endpoints (prijs/structuur)
-# =========================
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
-BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
-HTTP_TIMEOUT = 15
-
-STRUCT_INTERVAL = "1h"
-STRUCT_LIMIT = 50
-
-DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
-FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
-
 # =========================
 # ✅ TRADER MODE
 # =========================
@@ -52,6 +66,46 @@ FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1"
 # "live"  -> altijd live_trader
 # "auto"  -> per trade: als trade["live"]=True => live, anders paper
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
+
+# =========================
+# ✅ STATE PATHS (paper vs live)
+# =========================
+PAPER_STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
+LIVE_STATE_PATH = (os.getenv("LIVE_STATE_PATH") or os.path.join(DATA_DIR, "live_state.json")).strip()
+
+def _choose_state_path() -> str:
+    # Jij zit in live fase -> in auto willen we live als default
+    if TRADER_MODE == "paper":
+        return PAPER_STATE_PATH
+    if TRADER_MODE == "live":
+        return LIVE_STATE_PATH
+    # auto: default live, tenzij jij expres paper wil testen
+    return LIVE_STATE_PATH
+
+STATE_PATH = _choose_state_path()
+
+FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
+
+# =========================
+# Binance endpoints (prijs/structuur)
+# =========================
+BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
+
+# =========================
+# Bitvavo endpoints (prijs/structuur)
+# =========================
+BITVAVO_BASE_URL = "https://api.bitvavo.com"
+BITVAVO_TICKER_URL = BITVAVO_BASE_URL + "/v2/ticker/price"     # GET ?market=BTC-EUR
+BITVAVO_CANDLES_URL = BITVAVO_BASE_URL + "/v2/candles"         # GET /v2/candles/{market}?interval=...&limit=...
+
+HTTP_TIMEOUT = 15
+
+STRUCT_INTERVAL = "1h"
+STRUCT_LIMIT = 50
+
+DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
+FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 # =========================
 # ✅ DATABASE (Experience)
@@ -312,6 +366,7 @@ def ensure_parent_dir(path: str) -> None:
 def load_state() -> Dict[str, Any]:
     ensure_parent_dir(STATE_PATH)
     if not os.path.isfile(STATE_PATH):
+        # default state
         return {"positions": {}, "open_trades": []}
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
@@ -334,18 +389,119 @@ def now_ts() -> int:
     return int(time.time())
 
 # =========================
-# Market data
+# ✅ Symbol mapping helpers
 # =========================
-def get_price(symbol: str) -> float:
+def is_bitvavo_market(symbol: str) -> bool:
+    s = (symbol or "").strip()
+    return "-" in s and s.upper().endswith(("-EUR", "-USDT"))
+
+def binance_to_bitvavo_market(symbol: str) -> str:
+    """
+    BTCUSDT -> BTC-EUR (we traden EUR bij Bitvavo)
+    ETHUSDT -> ETH-EUR
+    Als al market -> return as-is
+    """
+    s = (symbol or "").strip().upper()
+    if not s:
+        return ""
+    if "-" in s:
+        return s
+    base = s.replace("USDT", "").replace("EUR", "")
+    return f"{base}-EUR"
+
+def bitvavo_to_binance_symbol(market: str) -> str:
+    """
+    BTC-EUR -> BTCUSDT (fallback)
+    """
+    m = (market or "").strip().upper()
+    if not m:
+        return ""
+    if "-" not in m:
+        return m
+    base = m.split("-")[0]
+    return f"{base}USDT"
+
+def is_live_trade(trade: Dict[str, Any]) -> bool:
+    if TRADER_MODE == "live":
+        return True
+    if TRADER_MODE == "paper":
+        return False
+    # auto
+    return bool(trade.get("live", False))
+
+# =========================
+# Market data (live=Bitvavo, paper=Binance)
+# =========================
+def get_price_binance(symbol: str) -> float:
     r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return float(r.json()["price"])
 
-def get_klines_lows(symbol: str, interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> List[float]:
+def get_price_bitvavo(market: str) -> float:
+    r = requests.get(BITVAVO_TICKER_URL, params={"market": market}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    # data = {"market":"BTC-EUR","price":"...."}  (meestal dict)
+    if isinstance(data, dict) and "price" in data:
+        return float(data["price"])
+    # soms list response (afhankelijk endpoint)
+    if isinstance(data, list) and data:
+        return float(data[0].get("price"))
+    raise RuntimeError(f"Unexpected bitvavo ticker response: {data}")
+
+def get_price(symbol: str, trade: Optional[Dict[str, Any]] = None) -> Tuple[float, str]:
+    """
+    Return (price, source_text)
+    """
+    if trade and is_live_trade(trade):
+        market = binance_to_bitvavo_market(symbol)
+        price = get_price_bitvavo(market)
+        return price, f"bitvavo({market})"
+    # paper/binance
+    sym = symbol if symbol.endswith("USDT") else bitvavo_to_binance_symbol(symbol)
+    price = get_price_binance(sym)
+    return price, f"binance({sym})"
+
+def get_klines_lows_binance(symbol: str, interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> List[float]:
     r = requests.get(BINANCE_KLINES_URL, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
     return [float(k[3]) for k in data]
+
+def get_klines_lows_bitvavo(market: str, interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> List[float]:
+    # Bitvavo expects intervals like "1h" and returns array rows
+    # /v2/candles/{market}?interval=1h&limit=50
+    url = BITVAVO_CANDLES_URL + f"/{market}"
+    r = requests.get(url, params={"interval": interval, "limit": str(limit)}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    data = r.json()
+    # Each candle row typically: [timestamp, open, high, low, close, volume]
+    lows: List[float] = []
+    if isinstance(data, list):
+        for row in data:
+            try:
+                lows.append(float(row[3]))
+            except Exception:
+                pass
+    return lows
+
+def get_klines_lows(symbol: str, trade: Dict[str, Any], interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> Tuple[List[float], str]:
+    """
+    Return (lows, source_text)
+    """
+    if is_live_trade(trade):
+        market = binance_to_bitvavo_market(symbol)
+        try:
+            lows = get_klines_lows_bitvavo(market, interval=interval, limit=limit)
+            if lows:
+                return lows, f"bitvavo_candles({market},{interval})"
+        except Exception as e:
+            _print(f"⚠️ Bitvavo candles fail {market}: {type(e).__name__}: {e} -> fallback Binance")
+
+    # fallback binance
+    sym = symbol if symbol.endswith("USDT") else bitvavo_to_binance_symbol(symbol)
+    lows = get_klines_lows_binance(sym, interval=interval, limit=limit)
+    return lows, f"binance_klines({sym},{interval})"
 
 def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
     risk = (entry - stop_loss)
@@ -360,12 +516,6 @@ _SELL_PAPER = None
 _SELL_LIVE = None
 
 def _get_sell_fn(trade: Dict[str, Any]):
-    """
-    Kiest SELL functie:
-    - TRADER_MODE=paper -> paper_trader.sell
-    - TRADER_MODE=live  -> live_trader.sell
-    - TRADER_MODE=auto  -> als trade['live']=True -> live, anders paper
-    """
     global _SELL_PAPER, _SELL_LIVE
 
     prefer = TRADER_MODE
@@ -390,9 +540,7 @@ def _get_sell_fn(trade: Dict[str, Any]):
 
 def _send_sell_close_message(symbol: str, reason: str, entry: float, stop_loss: float, target: float, r_now: float, sell_result: Dict[str, Any]):
     if not isinstance(sell_result, dict) or not sell_result.get("ok"):
-        send_whatsapp(
-            f"⚠️ SELL MISLUKT ({symbol})\nReden: {reason}\nDetails: {sell_result}"
-        )
+        send_whatsapp(f"⚠️ SELL MISLUKT ({symbol})\nReden: {reason}\nDetails: {sell_result}")
         return
 
     exit_price = float(sell_result.get("price", 0.0))
@@ -443,14 +591,15 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
         return False
 
     try:
-        price = get_price(symbol)
+        price, src = get_price(symbol, trade)
     except Exception as e:
-        _print(f"FORCE_TEST_EXIT: price fetch error {symbol}: {e}")
+        _print(f"FORCE_TEST_EXIT: price fetch error {symbol}: {type(e).__name__}: {e}")
         price = entry if entry > 0 else 0.0
+        src = "fallback(entry)"
 
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
-    _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test)")
+    _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test) | price={price:.6f} src={src}")
     sell_fn = _get_sell_fn(trade)
     sell_res = sell_fn(symbol, 1.0)
 
@@ -475,7 +624,7 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     return True
 
 # =========================
-# Core rules (jouw set)
+# Core rules (jouw set) — ongewijzigd
 # =========================
 def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Optional[float] = None) -> bool:
     symbol = trade.get("symbol")
@@ -487,7 +636,12 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         _print(f"⚠️ Trade overslaan (ongeldige data): {trade}")
         return False
 
-    price = float(test_price) if test_price is not None else get_price(symbol)
+    if test_price is not None:
+        price = float(test_price)
+        src = "test_price"
+    else:
+        price, src = get_price(symbol, trade)
+
     r = calc_r_multiple(price, entry, stop_loss)
 
     trade.setdefault("mode", "NORMAL")
@@ -503,7 +657,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     if r >= 1.0:
         trade["had_over_1r"] = True
 
-    _print(f"📊 {symbol} | price={price:.6f} | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
+    _print(f"📊 {symbol} | price={price:.6f} ({src}) | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
     sell_fn = _get_sell_fn(trade)
 
@@ -543,20 +697,20 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     # 3) STRUCTUUR mode: higher lows volgen, eerste lower low => close 100%
     if trade.get("mode") == "STRUCTUUR":
         try:
-            lows = get_klines_lows(symbol)
+            lows, lows_src = get_klines_lows(symbol, trade)
             if len(lows) >= 3:
                 last_closed_low = lows[-2]
                 trailing = trade.get("struct_trailing_low")
                 if trailing is None:
                     trade["struct_trailing_low"] = last_closed_low
-                    _print(f"🧱 {symbol} STRUCTUUR init trailing_low={last_closed_low:.6f}")
+                    _print(f"🧱 {symbol} STRUCTUUR init trailing_low={last_closed_low:.6f} ({lows_src})")
                 else:
                     trailing = float(trailing)
                     if last_closed_low > trailing:
                         trade["struct_trailing_low"] = last_closed_low
-                        _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f}")
+                        _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f} ({lows_src})")
                     elif last_closed_low < trailing:
-                        _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100%")
+                        _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100% ({lows_src})")
                         sell_res = sell_fn(symbol, 1.0)
 
                         trade["status"] = "CLOSED"
@@ -572,7 +726,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
                         return True
         except Exception as e:
-            _print(f"⚠️ STRUCTUUR fetch error {symbol}: {e}")
+            _print(f"⚠️ STRUCTUUR fetch error {symbol}: {type(e).__name__}: {e}")
 
         trade["last_check"] = now_ts()
         return False
@@ -671,9 +825,9 @@ def main():
     _print(f"Project root: {PROJECT_ROOT}")
     _print(f"DATA_DIR: {DATA_DIR}")
     _print(f"LOGS_DIR: {LOGS_DIR}")
+    _print(f"TRADER_MODE: {TRADER_MODE}")
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
-    _print(f"TRADER_MODE: {TRADER_MODE}")
     _print(f"DB experience: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
 
     ensure_dir(LOGS_DIR)
@@ -686,7 +840,7 @@ def main():
         try:
             run_once(test_price=args.test_price, only_symbol=args.symbol)
         except Exception as e:
-            _print(f"⚠️ Monitor error: {e}")
+            _print(f"⚠️ Monitor error: {type(e).__name__}: {e}")
         time.sleep(int(args.sleep))
 
 if __name__ == "__main__":
