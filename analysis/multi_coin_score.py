@@ -25,18 +25,15 @@ UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")
 TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
 TF_CTX = (os.getenv("TF_CTX") or "1h").strip()
 
-# ✅ agressiever zoeken: daily cap hoger mag
-MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "50")
+# ✅ agressiever zoeken, maar spam voorkomen via MAX_ACTIVE_PREBUYS
+MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "50")     # mag hoog
+MAX_ACTIVE_PREBUYS = int(os.getenv("MAX_ACTIVE_PREBUYS") or "10")     # ✅ jouw wens: max 10 tegelijk
 
-# ✅ maar: max 10 tegelijk ACTIVE (WhatsApp ontploft niet)
-MAX_ACTIVE_PREBUYS = int(os.getenv("MAX_ACTIVE_PREBUYS") or "10")
+MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "78")
+WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "68")
 
-# ✅ alleen beste in pending? (WATCH alleen learning)
+# ✅ WATCH wel leren, maar niet in pending tenzij jij dat wil
 INCLUDE_WATCH_IN_PENDING = (os.getenv("INCLUDE_WATCH_IN_PENDING") or "0").strip() == "1"
-
-# Score drempels (iets ruimer = meer kansen)
-MIN_SCORE_TO_PREBUY = int(os.getenv("MIN_SCORE_TO_PREBUY") or "78")  # GO
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "68")          # WATCH
 
 PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
 TRADE_COOLDOWN_SECONDS = int(os.getenv("TRADE_COOLDOWN_SECONDS") or str(6 * 60 * 60))
@@ -46,13 +43,6 @@ REGIME_CANDLES = int(os.getenv("REGIME_CANDLES") or "300")
 
 FORCE_TEST_PREBUY = (os.getenv("FORCE_TEST_PREBUY") or "0").strip() == "1"
 SCOREBOARD_REFRESH = (os.getenv("SCOREBOARD_REFRESH") or "1").strip() == "1"
-
-# WhatsApp push: zet standaard UIT (rust). Jij kijkt via TOP/LIST.
-ENABLE_WHATSAPP_PUSH = (os.getenv("ENABLE_WHATSAPP_PUSH") or "0").strip() == "1"
-TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
-TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
-TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
-TWILIO_WHATSAPP_TO = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
 
 # ==========================================================
 # HELPERS
@@ -91,31 +81,6 @@ def round_sig(x: float, sig: int = 6) -> float:
     if x == 0:
         return 0.0
     return round(x, sig - int(math.floor(math.log10(abs(x)))) - 1)
-
-
-def twilio_ready() -> bool:
-    return bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM and TWILIO_WHATSAPP_TO)
-
-
-def send_whatsapp(message: str) -> bool:
-    if not ENABLE_WHATSAPP_PUSH:
-        return False
-    if not twilio_ready():
-        log("📭 WhatsApp push overgeslagen (Twilio env vars ontbreken).")
-        return False
-
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
-    data = {"From": TWILIO_WHATSAPP_FROM, "To": TWILIO_WHATSAPP_TO, "Body": message}
-
-    try:
-        r = requests.post(url, data=data, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN), timeout=20)
-        if r.status_code >= 400:
-            log(f"⚠️ Twilio send failed ({r.status_code}): {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        log(f"⚠️ Twilio send exception: {type(e).__name__}: {e}")
-        return False
 
 
 # ==========================================================
@@ -270,6 +235,8 @@ def detect_trade_fingerprints_pk_col(conn) -> str:
 
     if table_has_column(conn, "trade_fingerprints", "fingerprint"):
         return "fingerprint"
+    if table_has_column(conn, "trade_fingerprints", "fp"):
+        return "fp"
 
     with conn.cursor() as cur:
         cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
@@ -315,7 +282,7 @@ def detect_schema(conn) -> SchemaInfo:
 
 
 # ==========================================================
-# DB READ: candles from Postgres
+# DB READ: candles
 # ==========================================================
 def fetch_candles(conn, symbol: str, timeframe: str, limit: int) -> List[Dict[str, Any]]:
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
@@ -394,7 +361,7 @@ def chance_from_score(score: int, regime: str) -> int:
 
 
 # ==========================================================
-# DEDUP (trade_fingerprints)
+# DEDUP
 # ==========================================================
 def make_fingerprint(symbol: str, setup_type: str, entry: float, target: float) -> str:
     key = f"{symbol}|{setup_type}|{round_sig(entry, 8)}|{round_sig(target, 8)}"
@@ -429,6 +396,9 @@ def fingerprint_recent(conn, schema: SchemaInfo, fp_value: str, cooldown_seconds
 
 
 def upsert_fingerprint(conn, schema: SchemaInfo, fp_value: str) -> None:
+    if not fp_value:
+        return
+
     col = schema.fingerprints_pk_col
     with conn.cursor() as cur:
         cur.execute(
@@ -458,7 +428,9 @@ def get_created_today(conn, schema: SchemaInfo) -> int:
             (day,),
         )
         row = cur.fetchone()
-    return safe_int(row.get("created_count"), 0) if row else 0
+    if not row:
+        return 0
+    return safe_int(row.get("created_count"), 0)
 
 
 def inc_created_today(conn, schema: SchemaInfo, inc: int = 1) -> None:
@@ -478,6 +450,22 @@ def inc_created_today(conn, schema: SchemaInfo, inc: int = 1) -> None:
 
 
 # ==========================================================
+# ACTIVE CAP (anti spam)
+# ==========================================================
+def count_active_prebuys(conn) -> int:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*)::int
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              AND (expires_at IS NULL OR expires_at > NOW())
+            """
+        )
+        return int(cur.fetchone()[0] or 0)
+
+
+# ==========================================================
 # INSERT pending_approvals
 # ==========================================================
 def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
@@ -487,8 +475,10 @@ def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
         "entry", "stop", "target",
         "status", "created_at", "expires_at",
     ]
+
     if schema.pending_has_timeframe:
         base_cols.insert(3, "timeframe")
+
     if schema.pending_has_raw_score and "raw_score" in payload:
         if "raw_score" not in base_cols:
             base_cols.insert(base_cols.index("score"), "raw_score")
@@ -515,50 +505,8 @@ def insert_pending(conn, schema: SchemaInfo, payload: Dict[str, Any]) -> None:
         )
 
 
-def expire_excess_active(conn, max_active: int) -> None:
-    """
-    ✅ Houd maximaal N ACTIVE (PENDING/APPROVED) over.
-    Alles daarboven (slechtste/oudste) zetten we op EXPIRED.
-    """
-    with conn.cursor() as cur:
-        # count active
-        cur.execute(
-            """
-            SELECT COUNT(*)::int
-            FROM public.pending_approvals
-            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
-              AND (expires_at IS NULL OR expires_at > NOW())
-            """
-        )
-        active = int(cur.fetchone()[0] or 0)
-
-        if active <= max_active:
-            return
-
-        over = active - max_active
-
-        # expire the worst ones: lowest chance first, then oldest
-        cur.execute(
-            """
-            WITH to_expire AS (
-              SELECT id
-              FROM public.pending_approvals
-              WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
-                AND (expires_at IS NULL OR expires_at > NOW())
-              ORDER BY COALESCE(chance,0) ASC, created_at ASC
-              LIMIT %s
-            )
-            UPDATE public.pending_approvals p
-            SET status='EXPIRED'
-            FROM to_expire t
-            WHERE p.id = t.id
-            """,
-            (over,),
-        )
-
-
 # ==========================================================
-# EXPERIENCE
+# EXPERIENCE (optioneel)
 # ==========================================================
 def insert_experience_trade(conn, payload: Dict[str, Any]) -> None:
     if not payload:
@@ -609,22 +557,31 @@ def main() -> None:
 
         created_today = get_created_today(conn, schema)
         day = get_day_key()
+        active_now = count_active_prebuys(conn)
+
         log(f"🟣 multi_coin_score | day={day} | created_today={created_today}/{MAX_PREBUY_PER_DAY}")
+        log(f"🧯 ACTIVE CAP | active_now={active_now}/{MAX_ACTIVE_PREBUYS}")
         log(f"🔧 trade_fingerprints PK column = {schema.fingerprints_pk_col}")
-        log(f"📨 WhatsApp push: {'ON' if (ENABLE_WHATSAPP_PUSH and twilio_ready()) else 'OFF'}")
-        log(f"📌 MAX_ACTIVE_PREBUYS = {MAX_ACTIVE_PREBUYS} | INCLUDE_WATCH_IN_PENDING={INCLUDE_WATCH_IN_PENDING}")
+        log(f"⚙️ INCLUDE_WATCH_IN_PENDING={INCLUDE_WATCH_IN_PENDING}")
 
         universe = fetch_binance_usdt_symbols(UNIVERSE_LIMIT)
         log(f"📌 universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
 
         created = 0
         skipped = 0
-        touched: Set[Tuple[str, str, str]] = set()
+        candidates = 0
 
         for symbol in universe:
+            # 1) daily cap
             if created_today >= MAX_PREBUY_PER_DAY:
                 skipped += 1
                 continue
+
+            # 2) active cap (anti spam)
+            active_now = count_active_prebuys(conn)
+            if active_now >= MAX_ACTIVE_PREBUYS:
+                log(f"🛑 STOP: active_now={active_now} >= MAX_ACTIVE_PREBUYS={MAX_ACTIVE_PREBUYS}")
+                break
 
             try:
                 candles_main = fetch_candles(conn, symbol, TF_MAIN, MIN_CANDLES)
@@ -651,34 +608,14 @@ def main() -> None:
                     skipped += 1
                     continue
 
-                # ✅ WATCH alleen opslaan als learning, niet altijd naar pending
+                # ✅ alleen GO naar pending, WATCH alleen als jij INCLUDE_WATCH_IN_PENDING aanzet
                 if label == "WATCH" and not INCLUDE_WATCH_IN_PENDING:
-                    # wel experience loggen
-                    pre_id_tmp = f"XP-{symbol}-{now_utc().strftime('%Y%m%d-%H%M%S')}"
-                    if schema.has_experience_trades:
-                        insert_experience_trade(conn, {
-                            "id": pre_id_tmp,
-                            "exchange": EXCHANGE,
-                            "symbol": symbol,
-                            "timeframe": TF_MAIN,
-                            "setup_type": "TREND_PULLBACK",
-                            "regime": regime,
-                            "label": "WATCH",
-                            "score": int(score),
-                            "raw_score": int(raw_score),
-                            "chance": int(chance_from_score(score, regime)),
-                            "confidence": int(chance_from_score(score, regime)),
-                            "entry": float(entry),
-                            "stop": float(stop),
-                            "target": float(target),
-                            "outcome": "UNKNOWN",
-                            "is_shadow": True,
-                            "created_at": now_utc(),
-                        })
-                        conn.commit()
+                    # wel tellen als candidate (voor logging)
+                    candidates += 1
                     skipped += 1
                     continue
 
+                candidates += 1
                 chance = chance_from_score(score, regime)
                 confidence = chance
 
@@ -740,9 +677,6 @@ def main() -> None:
                     if schema.has_experience_trades:
                         insert_experience_trade(conn, exp_payload)
 
-                    # ✅ max 10 ACTIVE overhouden
-                    expire_excess_active(conn, MAX_ACTIVE_PREBUYS)
-
                     conn.commit()
                 except Exception as db_e:
                     conn.rollback()
@@ -754,22 +688,7 @@ def main() -> None:
                 created_today += 1
 
                 dot = "🟢" if label == "GO" else "🟡"
-                log(f"{dot} {symbol}: {label} raw={raw_score} norm={score} chance={chance} regime={regime} id={prebuy_id}")
-
-                # ✅ WhatsApp push alleen als jij ENABLE_WHATSAPP_PUSH=1 zet
-                if ENABLE_WHATSAPP_PUSH:
-                    msg = (
-                        f"{dot} PRE-BUY {label}\n"
-                        f"{symbol} | tf={TF_MAIN} | regime={regime}\n"
-                        f"score={score} (raw={raw_score}) | chance={chance}\n"
-                        f"entry={entry:.6f}\n"
-                        f"stop={stop:.6f}\n"
-                        f"target={target:.6f}\n"
-                        f"expires={expires_at.strftime('%H:%M UTC')}\n"
-                        f"ID: {prebuy_id}\n\n"
-                        f"Keuren: YES <bedrag> {prebuy_id}"
-                    )
-                    send_whatsapp(msg)
+                log(f"{dot} CREATED {symbol} {label} score={score} chance={chance} regime={regime} id={prebuy_id}")
 
             except Exception as e:
                 try:
@@ -780,7 +699,7 @@ def main() -> None:
                 log(f"⚠️ skip {symbol} error={type(e).__name__}: {e}")
 
         elapsed = round(time.time() - start, 1)
-        log(f"✅ DONE created={created} skipped={skipped} seconds={elapsed}")
+        log(f"✅ DONE created={created} candidates={candidates} scanned={len(universe)} skipped={skipped} seconds={elapsed}")
 
 
 if __name__ == "__main__":
