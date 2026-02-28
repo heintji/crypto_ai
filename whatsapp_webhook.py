@@ -20,17 +20,14 @@ app = Flask(__name__)
 
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-# ✅ jouw nieuwe bedragen
+# ✅ bedragen aangepast (jouw wens)
 ALLOWED_AMOUNTS = {5, 10, 15, 20, 30, 40, 50}
 
 # paper | live | auto
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
-# ✅ jij wil max 10 tegelijk in WhatsApp
-LIST_LIMIT = int(os.getenv("WHATSAPP_LIST_LIMIT") or "10")
-TOP_LIMIT = int(os.getenv("WHATSAPP_TOP_LIMIT") or "10")
 
-
+# ---------------- basics ----------------
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -73,27 +70,7 @@ def as_aware_utc(dt: Any) -> Optional[datetime]:
     return dt.astimezone(timezone.utc)
 
 
-def chance_text(ch: Any) -> str:
-    c = safe_int(ch, 0)
-    # ✅ jouw labels
-    if c >= 85:
-        return "kans HEEL GROOT"
-    if c >= 75:
-        return "kans GROOT"
-    if c >= 65:
-        return "kans GOED"
-    return "kans LAGER"
-
-
-def fmt_price(x: Any) -> str:
-    v = safe_float(x, 0.0)
-    if v == 0:
-        return "-"
-    # compact maar duidelijk
-    return f"{v:.6f}"
-
-
-def column_exists(conn, table: str, col: str, schema: str = "public") -> bool:
+def table_has_column(conn, table: str, col: str, schema: str = "public") -> bool:
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -118,33 +95,107 @@ def healthz():
     return "OK", 200
 
 
-# ---------------- DB ----------------
-def _select_cols(conn) -> str:
-    # ✅ raw_score alleen meenemen als kolom bestaat (anders crash)
-    has_raw = column_exists(conn, "pending_approvals", "raw_score")
-    raw_sql = ", raw_score" if has_raw else ""
-    return f"""
-      id, symbol, setup_type, timeframe, regime,
-      score{raw_sql}, chance, confidence,
-      entry, stop, target,
-      status, created_at, expires_at
-    """
+# ---------------- label helpers ----------------
+def kans_tekst(chance: int) -> str:
+    # ✅ jouw woorden
+    if chance >= 85:
+        return "Kans heel groot"
+    if chance >= 75:
+        return "Kans groot"
+    if chance >= 65:
+        return "Kans goed"
+    return "Kans laag"
+
+
+def fmt_trade_card(p: Dict[str, Any]) -> str:
+    prebuy_id = str(p.get("id") or "-")
+    symbol = str(p.get("symbol") or "-")
+    setup = str(p.get("setup_type") or "-")
+    tf = str(p.get("timeframe") or "-")
+    regime = str(p.get("regime") or "-")
+    status = str((p.get("status") or "PENDING")).upper()
+
+    score = safe_int(p.get("score"), 0)
+    chance = safe_int(p.get("chance"), 0)
+    conf = safe_int(p.get("confidence"), chance)
+
+    entry = safe_float(p.get("entry"), 0.0)
+    stop = safe_float(p.get("stop"), 0.0)
+    target = safe_float(p.get("target"), 0.0)
+
+    exp = as_aware_utc(p.get("expires_at"))
+    exp_s = exp.strftime("%Y-%m-%d %H:%M UTC") if exp else "-"
+
+    extra_raw = ""
+    if p.get("raw_score") is not None:
+        extra_raw = f" (raw={safe_int(p.get('raw_score'), 0)})"
+
+    return (
+        f"📌 TRADE DETAILS\n"
+        f"Coin: {symbol}\n"
+        f"ID: {prebuy_id}\n"
+        f"Status: {status}\n"
+        f"Setup: {setup}\n"
+        f"Timeframe: {tf}\n"
+        f"Regime: {regime}\n\n"
+        f"Score: {score}{extra_raw}\n"
+        f"Chance: {chance} → {kans_tekst(chance)}\n"
+        f"Confidence: {conf}\n\n"
+        f"Entry: {entry}\n"
+        f"Stop: {stop}\n"
+        f"Target: {target}\n"
+        f"Expires: {exp_s}\n\n"
+        f"Keuren: YES <bedrag> {prebuy_id}\n"
+        f"Afwijzen: NO {prebuy_id}"
+    )
+
+
+def fmt_prebuy_row(p: Dict[str, Any]) -> str:
+    prebuy_id = str(p.get("id") or "-")
+    symbol = str(p.get("symbol") or "-")
+    status = str((p.get("status") or "PENDING")).upper()
+    chance = safe_int(p.get("chance"), 0)
+    score = safe_int(p.get("score"), 0)
+    tf = str(p.get("timeframe") or "-")
+    setup = str(p.get("setup_type") or "-")
+
+    # ✅ kort, maar met coin + kans tekst
+    return f"{prebuy_id} | {symbol} | {kans_tekst(chance)} | chance={chance} score={score} | {setup} | tf={tf}"
+
+
+# ---------------- DB: fetch ----------------
+def _select_cols(conn) -> List[str]:
+    cols = [
+        "id", "symbol", "setup_type", "regime",
+        "score", "chance", "confidence",
+        "entry", "stop", "target",
+        "status", "created_at", "expires_at",
+    ]
+    # ✅ alleen toevoegen als kolom echt bestaat
+    if table_has_column(conn, "pending_approvals", "timeframe"):
+        cols.insert(3, "timeframe")
+    if table_has_column(conn, "pending_approvals", "raw_score"):
+        # raw_score mag netjes mee
+        cols.insert(cols.index("score") + 1, "raw_score")
+    return cols
 
 
 def fetch_prebuys(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
     extra_expired = "" if include_expired else "AND (expires_at IS NULL OR expires_at > NOW())"
     cols = _select_cols(conn)
+    col_sql = ", ".join(cols)
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"""
-            SELECT {cols}
+            SELECT {col_sql}
             FROM public.pending_approvals
             WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
               {extra_expired}
             ORDER BY
+              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
               COALESCE(chance,0) DESC,
-              created_at DESC
+              created_at ASC
             LIMIT %s
             """,
             (limit,),
@@ -177,12 +228,15 @@ def stats(conn) -> Dict[str, int]:
 
 def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
     cols = _select_cols(conn)
+    col_sql = ", ".join(cols)
+
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
             f"""
-            SELECT {cols}
+            SELECT {col_sql}
             FROM public.pending_approvals
             WHERE id = %s
+            LIMIT 1
             """,
             (prebuy_id,),
         )
@@ -320,54 +374,23 @@ def parse_command(text: str) -> Tuple[str, List[str]]:
     if not t:
         return "HELP", []
     parts = t.split()
+
+    # ✅ als user alleen een PB-ID typt: toon details
+    if len(parts) == 1 and parts[0].upper().startswith("PB-"):
+        return "SHOW", [parts[0]]
+
     return parts[0].upper(), parts[1:]
-
-
-def fmt_prebuy_row(p: Dict[str, Any]) -> str:
-    st = (p.get("status") or "PENDING").upper()
-    ch = p.get("chance")
-    return (
-        f"{p.get('id')} | {p.get('symbol')} | {chance_text(ch)} | chance={ch} | score={p.get('score')} | "
-        f"{p.get('setup_type')} | entry={fmt_price(p.get('entry'))}"
-    )
-
-
-def fmt_prebuy_full(p: Dict[str, Any]) -> str:
-    st = (p.get("status") or "PENDING").upper()
-    exp = as_aware_utc(p.get("expires_at"))
-    exp_s = exp.strftime("%Y-%m-%d %H:%M UTC") if exp else "-"
-    raw = p.get("raw_score", None)
-    raw_s = str(raw) if raw is not None else "-"
-
-    return (
-        f"📌 PRE-BUY DETAIL\n"
-        f"ID: {p.get('id')}\n"
-        f"COIN: {p.get('symbol')}\n"
-        f"status: {st}\n"
-        f"timeframe: {p.get('timeframe')}\n"
-        f"setup: {p.get('setup_type')}\n"
-        f"regime: {p.get('regime')}\n"
-        f"score: {p.get('score')} (raw={raw_s})\n"
-        f"{chance_text(p.get('chance'))} (chance={p.get('chance')})\n"
-        f"entry:  {fmt_price(p.get('entry'))}\n"
-        f"stop:   {fmt_price(p.get('stop'))}\n"
-        f"target: {fmt_price(p.get('target'))}\n"
-        f"expires: {exp_s}\n\n"
-        f"Kopen: YES <bedrag> {p.get('id')}\n"
-        f"Bedragen: 5/10/15/20/30/40/50"
-    )
 
 
 HELP_TEXT = (
     "Commands:\n"
     "HELP\n"
-    "LIST (laat max 10 ACTIVE zien)\n"
-    "LISTALL (ook EXPIRED)\n"
-    "TOP (top 10 hoogste chance - ACTIVE)\n"
+    "LIST (max 10 ACTIVE)\n"
+    "TOP (top 10 ACTIVE op chance)\n"
     "STATS\n"
+    "SHOW <ID>  (of typ alleen ID)\n"
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
-    "NO <ID>\n"
-    "Of stuur gewoon een ID (PB-...) voor volledige details\n\n"
+    "NO <ID>\n\n"
     "Bedragen: 5/10/15/20/30/40/50\n"
     "TRADER_MODE=paper|live|auto"
 )
@@ -383,13 +406,6 @@ def whatsapp():
             return twiml("DATABASE_URL ontbreekt in Render Environment.")
 
         with db_connect() as conn:
-            # ✅ Als user direct een PB-ID stuurt: details terug
-            if body.startswith("PB-") and len(body) > 8:
-                p = get_pending_by_id(conn, body.strip())
-                if not p:
-                    return twiml("ID niet gevonden.")
-                return twiml(fmt_prebuy_full(p))
-
             if cmd in ("HELP", "?"):
                 return twiml(HELP_TEXT)
 
@@ -399,33 +415,25 @@ def whatsapp():
                     "STATS:\n"
                     f"pending_or_approved = {s['pending_or_approved']}\n"
                     f"active_now = {s['active_now']}\n"
-                    f"expired_now = {s['expired_now']}"
+                    f"expired_now = {s['expired_now']}\n\n"
+                    "Als active_now=0 dan zijn er nu geen nieuwe PENDING Pre-BUY’s gemaakt."
                 )
 
             if cmd == "LIST":
-                pending = fetch_prebuys(conn, limit=LIST_LIMIT, include_expired=False)
+                pending = fetch_prebuys(conn, limit=10, include_expired=False)
                 s = stats(conn)
                 if not pending:
                     return twiml(
                         "Geen ACTIVE pending/approved Pre-BUYs.\n"
                         f"(expired_now={s['expired_now']})\n\n"
-                        "Tip: STATS of LISTALL"
+                        "Tip: STATS (en check multi_coin_score logs of hij nieuwe PENDING maakt)"
                     )
-                lines = [f"Pre-BUYs (ACTIVE) – max {LIST_LIMIT}:"]
-                lines += [fmt_prebuy_row(p) for p in pending]
-                lines.append("\nTip: stuur een ID (PB-...) voor alle details.")
-                return twiml("\n".join(lines))
-
-            if cmd == "LISTALL":
-                pending = fetch_prebuys(conn, limit=LIST_LIMIT, include_expired=True)
-                if not pending:
-                    return twiml("Geen pending/approved records gevonden.")
-                lines = [f"Pre-BUYs (PENDING/APPROVED incl EXPIRED) – max {LIST_LIMIT}:"]
+                lines = ["Pre-BUYs (ACTIVE) — typ ID voor details:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 return twiml("\n".join(lines))
 
             if cmd == "TOP":
-                pending = fetch_prebuys(conn, limit=TOP_LIMIT, include_expired=False)
+                pending = fetch_prebuys(conn, limit=10, include_expired=False)
                 if not pending:
                     s = stats(conn)
                     return twiml(
@@ -433,10 +441,18 @@ def whatsapp():
                         f"(expired_now={s['expired_now']})\n\n"
                         "Tip: STATS"
                     )
-                lines = [f"TOP {TOP_LIMIT} (beste kansen) – ACTIVE:"]
+                lines = ["TOP 10 (chance) — typ ID voor details:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
-                lines.append("\nTip: stuur een ID (PB-...) voor alle details.")
                 return twiml("\n".join(lines))
+
+            if cmd == "SHOW":
+                if not args:
+                    return twiml("Gebruik: SHOW <ID> (of typ alleen het ID)")
+                prebuy_id = args[0].strip()
+                p = get_pending_by_id(conn, prebuy_id)
+                if not p:
+                    return twiml("ID niet gevonden.")
+                return twiml(fmt_trade_card(p))
 
             if cmd == "NO":
                 if not args:
@@ -476,12 +492,12 @@ def whatsapp():
                     return twiml(
                         "Deze Pre-BUY is verlopen.\n"
                         f"ID: {prebuy_id}\n\n"
-                        "Wacht op nieuwe TOP/LIST."
+                        "Wacht op nieuwe Pre-BUY’s of check multi_coin_score logs."
                     )
 
                 mark_approved(conn, prebuy_id)
-
                 ok, msg = execute_buy(p, amount)
+
                 if ok:
                     mark_consumed(conn, prebuy_id)
                     return twiml(f"GOEDGEKEURD ✅\n{msg}\nID: {prebuy_id}")
