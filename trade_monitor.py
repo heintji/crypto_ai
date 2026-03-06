@@ -23,6 +23,14 @@
 # 5) ✅ EXTRA DEBUG:
 #    - Print duidelijk welke prijsbron gebruikt wordt + market mapping
 #
+# 6) ✅ LEERLAAG UITGEBREID:
+#    - MFE / MAE tracking
+#    - max/min price seen
+#    - holding time
+#    - close reason
+#    - richer experience logging
+#    - update van prebuy_experience waar mogelijk
+#
 # Jouw exit-regels blijven EXACT hetzelfde.
 # ==========================================================
 
@@ -56,6 +64,7 @@ def _get_data_dir() -> str:
         return d
     return "/data" if os.path.isdir("/data") else "/tmp/data"
 
+
 DATA_DIR = _get_data_dir()
 LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
 
@@ -73,14 +82,14 @@ TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 PAPER_STATE_PATH = (os.getenv("PAPER_STATE_PATH") or os.path.join(DATA_DIR, "paper_state.json")).strip()
 LIVE_STATE_PATH = (os.getenv("LIVE_STATE_PATH") or os.path.join(DATA_DIR, "live_state.json")).strip()
 
+
 def _choose_state_path() -> str:
-    # Jij zit in live fase -> in auto willen we live als default
     if TRADER_MODE == "paper":
         return PAPER_STATE_PATH
     if TRADER_MODE == "live":
         return LIVE_STATE_PATH
-    # auto: default live, tenzij jij expres paper wil testen
     return LIVE_STATE_PATH
+
 
 STATE_PATH = _choose_state_path()
 
@@ -96,15 +105,15 @@ BINANCE_KLINES_URL = "https://api.binance.com/api/v3/klines"
 # Bitvavo endpoints (prijs/structuur)
 # =========================
 BITVAVO_BASE_URL = "https://api.bitvavo.com"
-BITVAVO_TICKER_URL = BITVAVO_BASE_URL + "/v2/ticker/price"     # GET ?market=BTC-EUR
-BITVAVO_CANDLES_URL = BITVAVO_BASE_URL + "/v2/candles"         # GET /v2/candles/{market}?interval=...&limit=...
+BITVAVO_TICKER_URL = BITVAVO_BASE_URL + "/v2/ticker/price"
+BITVAVO_CANDLES_URL = BITVAVO_BASE_URL + "/v2/candles"
 
 HTTP_TIMEOUT = 15
 
 STRUCT_INTERVAL = "1h"
 STRUCT_LIMIT = 50
 
-DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))  # 30 min
+DEFAULT_SLEEP_SECONDS = int(os.getenv("MONITOR_SLEEP_SECONDS", str(30 * 60)))
 FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1", "true", "yes", "on"}
 
 # =========================
@@ -112,17 +121,22 @@ FORCE_TEST_EXIT = str(os.getenv("FORCE_TEST_EXIT", "0")).strip().lower() in {"1"
 # =========================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
+
 def db_ready() -> bool:
     return bool(DATABASE_URL)
+
 
 def db_connect():
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
+
 def now_utc_dt() -> datetime:
     return datetime.now(timezone.utc)
 
+
 def _print(msg: str):
     print(msg, flush=True)
+
 
 def _table_exists(conn, fq_table: str) -> bool:
     try:
@@ -135,6 +149,7 @@ def _table_exists(conn, fq_table: str) -> bool:
         except Exception:
             pass
         return False
+
 
 def _has_column(conn, table: str, col: str, schema: str = "public") -> bool:
     try:
@@ -157,11 +172,13 @@ def _has_column(conn, table: str, col: str, schema: str = "public") -> bool:
             pass
         return False
 
+
 def _safe_float(x: Any, default: float = 0.0) -> float:
     try:
         return float(x)
     except Exception:
         return default
+
 
 def _safe_int(x: Any, default: int = 0) -> int:
     try:
@@ -169,10 +186,22 @@ def _safe_int(x: Any, default: int = 0) -> int:
     except Exception:
         return default
 
+
+def _safe_str(x: Any, default: str = "") -> str:
+    if x is None:
+        return default
+    try:
+        s = str(x).strip()
+        return s if s else default
+    except Exception:
+        return default
+
+
 def _infer_outcome(result_r: float) -> str:
     if abs(result_r) < 0.05:
         return "BREAKEVEN"
     return "WIN" if result_r > 0 else "LOSS"
+
 
 def _infer_label(trade: Dict[str, Any]) -> str:
     if isinstance(trade.get("label"), str) and trade["label"].strip():
@@ -184,6 +213,66 @@ def _infer_label(trade: Dict[str, Any]) -> str:
         return "WATCH"
     return "SKIP"
 
+
+def _holding_minutes(trade: Dict[str, Any]) -> int:
+    started = _safe_int(trade.get("monitor_started_at") or trade.get("opened_at") or trade.get("created_at_ts"), 0)
+    if started <= 0:
+        return 0
+    return max(0, int((now_ts() - started) / 60))
+
+
+def _update_prebuy_experience_outcome(
+    conn,
+    trade: Dict[str, Any],
+    *,
+    close_price: float,
+    result_r: float,
+    outcome: str,
+) -> None:
+    if not _table_exists(conn, "public.prebuy_experience"):
+        return
+
+    prebuy_id = _safe_str(trade.get("prebuy_id"))
+    if not prebuy_id:
+        return
+
+    updates: List[str] = []
+    vals: List[Any] = []
+
+    possible = {
+        "outcome": outcome,
+        "close_reason": _safe_str(trade.get("closed_reason")),
+        "exit_price": close_price,
+        "result_r": result_r,
+        "mfe_r": _safe_float(trade.get("mfe_r"), 0.0),
+        "mae_r": _safe_float(trade.get("mae_r"), 0.0),
+        "max_price_seen": _safe_float(trade.get("max_price_seen"), 0.0),
+        "min_price_seen": _safe_float(trade.get("min_price_seen"), 0.0),
+        "time_to_outcome_minutes": _holding_minutes(trade),
+        "updated_at": now_utc_dt(),
+    }
+
+    for col, val in possible.items():
+        if _has_column(conn, "prebuy_experience", col):
+            updates.append(f"{col}=%s")
+            vals.append(val)
+
+    if not updates:
+        return
+
+    vals.append(prebuy_id)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            UPDATE public.prebuy_experience
+            SET {", ".join(updates)}
+            WHERE prebuy_id=%s
+            """,
+            tuple(vals),
+        )
+
+
 def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float, result_r: float, outcome: str) -> None:
     if not _table_exists(conn, "public.experience_trades"):
         return
@@ -192,15 +281,21 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
     vals: List[Any] = []
 
     candidates = [
+        ("prebuy_id", trade.get("prebuy_id")),
         ("symbol", trade.get("symbol")),
         ("setup_type", trade.get("setup_type") or "TREND_PULLBACK"),
         ("timeframe", trade.get("timeframe") or trade.get("tf") or "4h"),
-        ("regime", (trade.get("regime") or "UNKNOWN")),
+        ("regime", trade.get("regime") or "UNKNOWN"),
         ("label", _infer_label(trade)),
+        ("bot_decision", _infer_label(trade)),
+        ("user_decision", trade.get("user_decision") or "YES"),
         ("score", _safe_int(trade.get("score"), 0)),
         ("raw_score", trade.get("raw_score")),
         ("chance", _safe_int(trade.get("chance"), 0)),
         ("confidence", _safe_int(trade.get("confidence"), trade.get("chance") or 0)),
+        ("why_tag", trade.get("why_tag")),
+        ("market_condition", trade.get("market_condition")),
+        ("overextended_pct", _safe_float(trade.get("overextended_pct"), 0.0)),
         ("entry", _safe_float(trade.get("entry"), 0.0)),
         ("stop", _safe_float(trade.get("stop") or trade.get("stop_loss"), 0.0)),
         ("stop_loss", _safe_float(trade.get("stop_loss"), 0.0)),
@@ -209,6 +304,12 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
         ("exit_price", close_price),
         ("result_r", result_r),
         ("outcome", outcome),
+        ("close_reason", trade.get("closed_reason")),
+        ("mfe_r", _safe_float(trade.get("mfe_r"), 0.0)),
+        ("mae_r", _safe_float(trade.get("mae_r"), 0.0)),
+        ("max_price_seen", _safe_float(trade.get("max_price_seen"), 0.0)),
+        ("min_price_seen", _safe_float(trade.get("min_price_seen"), 0.0)),
+        ("holding_minutes", _holding_minutes(trade)),
         ("is_shadow", False),
         ("created_at", now_utc_dt()),
     ]
@@ -230,6 +331,7 @@ def _experience_insert_trade(conn, trade: Dict[str, Any], *, close_price: float,
             tuple(vals),
         )
 
+
 def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
     if not _table_exists(conn, "public.experience_scoreboard"):
         return
@@ -238,9 +340,9 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
     if not _has_column(conn, "experience_trades", "result_r") or not _has_column(conn, "experience_trades", "outcome"):
         return
 
-    setup_type = (trade.get("setup_type") or "TREND_PULLBACK")
-    regime = (trade.get("regime") or "UNKNOWN")
-    timeframe = (trade.get("timeframe") or trade.get("tf") or "4h")
+    setup_type = trade.get("setup_type") or "TREND_PULLBACK"
+    regime = trade.get("regime") or "UNKNOWN"
+    timeframe = trade.get("timeframe") or trade.get("tf") or "4h"
 
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
         cur.execute(
@@ -274,6 +376,7 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
 
     cols: List[str] = []
     vals: List[Any] = []
+
     for k, v in payload.items():
         if _has_column(conn, "experience_scoreboard", k):
             cols.append(k)
@@ -301,21 +404,25 @@ def _experience_upsert_scoreboard(conn, trade: Dict[str, Any]) -> None:
             tuple(vals),
         )
 
+
 def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: float) -> None:
     if not db_ready():
         return
+
     try:
         outcome = _infer_outcome(result_r)
         with db_connect() as conn:
             try:
                 _experience_insert_trade(conn, trade, close_price=close_price, result_r=result_r, outcome=outcome)
                 _experience_upsert_scoreboard(conn, trade)
+                _update_prebuy_experience_outcome(conn, trade, close_price=close_price, result_r=result_r, outcome=outcome)
                 conn.commit()
             except Exception:
                 conn.rollback()
                 raise
     except Exception as e:
         _print(f"⚠️ Experience update skipped: {type(e).__name__}: {e}")
+
 
 # =========================
 # WhatsApp (Twilio) - alleen voor meldingen
@@ -327,6 +434,7 @@ def twilio_ready() -> bool:
         os.getenv("TWILIO_WHATSAPP_FROM"),
         os.getenv("TWILIO_WHATSAPP_TO"),
     ])
+
 
 def send_whatsapp(message: str) -> bool:
     if not twilio_ready():
@@ -351,6 +459,7 @@ def send_whatsapp(message: str) -> bool:
         _print(f"⚠️ Twilio send exception: {e}")
         return False
 
+
 # =========================
 # State helpers
 # =========================
@@ -358,16 +467,18 @@ def ensure_dir(path: str) -> None:
     if path and not os.path.exists(path):
         os.makedirs(path, exist_ok=True)
 
+
 def ensure_parent_dir(path: str) -> None:
     parent = os.path.dirname(path)
     if parent:
         ensure_dir(parent)
 
+
 def load_state() -> Dict[str, Any]:
     ensure_parent_dir(STATE_PATH)
     if not os.path.isfile(STATE_PATH):
-        # default state
         return {"positions": {}, "open_trades": []}
+
     try:
         with open(STATE_PATH, "r", encoding="utf-8") as f:
             s = json.load(f)
@@ -378,6 +489,7 @@ def load_state() -> Dict[str, Any]:
     s.setdefault("open_trades", [])
     return s
 
+
 def save_state(state: Dict[str, Any]) -> None:
     ensure_parent_dir(STATE_PATH)
     tmp = STATE_PATH + ".tmp"
@@ -385,8 +497,10 @@ def save_state(state: Dict[str, Any]) -> None:
         json.dump(state, f, indent=2, ensure_ascii=False)
     os.replace(tmp, STATE_PATH)
 
+
 def now_ts() -> int:
     return int(time.time())
+
 
 # =========================
 # ✅ Symbol mapping helpers
@@ -395,12 +509,8 @@ def is_bitvavo_market(symbol: str) -> bool:
     s = (symbol or "").strip()
     return "-" in s and s.upper().endswith(("-EUR", "-USDT"))
 
+
 def binance_to_bitvavo_market(symbol: str) -> str:
-    """
-    BTCUSDT -> BTC-EUR (we traden EUR bij Bitvavo)
-    ETHUSDT -> ETH-EUR
-    Als al market -> return as-is
-    """
     s = (symbol or "").strip().upper()
     if not s:
         return ""
@@ -409,10 +519,8 @@ def binance_to_bitvavo_market(symbol: str) -> str:
     base = s.replace("USDT", "").replace("EUR", "")
     return f"{base}-EUR"
 
+
 def bitvavo_to_binance_symbol(market: str) -> str:
-    """
-    BTC-EUR -> BTCUSDT (fallback)
-    """
     m = (market or "").strip().upper()
     if not m:
         return ""
@@ -421,13 +529,14 @@ def bitvavo_to_binance_symbol(market: str) -> str:
     base = m.split("-")[0]
     return f"{base}USDT"
 
+
 def is_live_trade(trade: Dict[str, Any]) -> bool:
     if TRADER_MODE == "live":
         return True
     if TRADER_MODE == "paper":
         return False
-    # auto
     return bool(trade.get("live", False))
+
 
 # =========================
 # Market data (live=Bitvavo, paper=Binance)
@@ -437,45 +546,49 @@ def get_price_binance(symbol: str) -> float:
     r.raise_for_status()
     return float(r.json()["price"])
 
+
 def get_price_bitvavo(market: str) -> float:
     r = requests.get(BITVAVO_TICKER_URL, params={"market": market}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
-    # data = {"market":"BTC-EUR","price":"...."}  (meestal dict)
+
     if isinstance(data, dict) and "price" in data:
         return float(data["price"])
-    # soms list response (afhankelijk endpoint)
+
     if isinstance(data, list) and data:
         return float(data[0].get("price"))
+
     raise RuntimeError(f"Unexpected bitvavo ticker response: {data}")
 
+
 def get_price(symbol: str, trade: Optional[Dict[str, Any]] = None) -> Tuple[float, str]:
-    """
-    Return (price, source_text)
-    """
     if trade and is_live_trade(trade):
         market = binance_to_bitvavo_market(symbol)
         price = get_price_bitvavo(market)
         return price, f"bitvavo({market})"
-    # paper/binance
+
     sym = symbol if symbol.endswith("USDT") else bitvavo_to_binance_symbol(symbol)
     price = get_price_binance(sym)
     return price, f"binance({sym})"
 
+
 def get_klines_lows_binance(symbol: str, interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> List[float]:
-    r = requests.get(BINANCE_KLINES_URL, params={"symbol": symbol, "interval": interval, "limit": limit}, timeout=HTTP_TIMEOUT)
+    r = requests.get(
+        BINANCE_KLINES_URL,
+        params={"symbol": symbol, "interval": interval, "limit": limit},
+        timeout=HTTP_TIMEOUT,
+    )
     r.raise_for_status()
     data = r.json()
     return [float(k[3]) for k in data]
 
+
 def get_klines_lows_bitvavo(market: str, interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> List[float]:
-    # Bitvavo expects intervals like "1h" and returns array rows
-    # /v2/candles/{market}?interval=1h&limit=50
     url = BITVAVO_CANDLES_URL + f"/{market}"
     r = requests.get(url, params={"interval": interval, "limit": str(limit)}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     data = r.json()
-    # Each candle row typically: [timestamp, open, high, low, close, volume]
+
     lows: List[float] = []
     if isinstance(data, list):
         for row in data:
@@ -485,10 +598,8 @@ def get_klines_lows_bitvavo(market: str, interval: str = STRUCT_INTERVAL, limit:
                 pass
     return lows
 
+
 def get_klines_lows(symbol: str, trade: Dict[str, Any], interval: str = STRUCT_INTERVAL, limit: int = STRUCT_LIMIT) -> Tuple[List[float], str]:
-    """
-    Return (lows, source_text)
-    """
     if is_live_trade(trade):
         market = binance_to_bitvavo_market(symbol)
         try:
@@ -498,22 +609,51 @@ def get_klines_lows(symbol: str, trade: Dict[str, Any], interval: str = STRUCT_I
         except Exception as e:
             _print(f"⚠️ Bitvavo candles fail {market}: {type(e).__name__}: {e} -> fallback Binance")
 
-    # fallback binance
     sym = symbol if symbol.endswith("USDT") else bitvavo_to_binance_symbol(symbol)
     lows = get_klines_lows_binance(sym, interval=interval, limit=limit)
     return lows, f"binance_klines({sym},{interval})"
 
+
 def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
-    risk = (entry - stop_loss)
+    risk = entry - stop_loss
     if risk <= 0:
         return 0.0
     return (price - entry) / risk
+
 
 # =========================
 # ✅ SELL ROUTER
 # =========================
 _SELL_PAPER = None
 _SELL_LIVE = None
+
+
+def _resolve_sell_callable(module_path: str):
+    mod = __import__(module_path, fromlist=["sell", "sell_base", "place_market_sell_base"])
+
+    for name in ("sell", "sell_base", "place_market_sell_base"):
+        fn = getattr(mod, name, None)
+        if callable(fn):
+            return fn, name
+
+    raise AttributeError(f"{module_path}.sell / sell_base / place_market_sell_base ontbreekt")
+
+
+def _call_sell_compat(sell_fn, sell_name: str, trade: Dict[str, Any], fraction: float):
+    symbol = trade.get("symbol")
+    position = trade.get("position_size") or trade.get("amount") or trade.get("base_amount")
+
+    # live_trader.place_market_sell_base verwacht market + base amount
+    if sell_name in ("sell_base", "place_market_sell_base"):
+        market = binance_to_bitvavo_market(symbol)
+        if not position:
+            raise ValueError("Trade mist base amount / position_size voor live sell_base.")
+        amount_base = float(position) * float(fraction)
+        return sell_fn(market, amount_base)
+
+    # paper/live sell(symbol, fraction)
+    return sell_fn(symbol, fraction)
+
 
 def _get_sell_fn(trade: Dict[str, Any]):
     global _SELL_PAPER, _SELL_LIVE
@@ -525,18 +665,22 @@ def _get_sell_fn(trade: Dict[str, Any]):
     if prefer == "live":
         if _SELL_LIVE is None:
             try:
-                from trading.live_trader import sell as _s  # type: ignore
-                _SELL_LIVE = _s
+                _SELL_LIVE = _resolve_sell_callable("trading.live_trader")
             except Exception as e:
-                _print(f"⚠️ live_trader.sell niet beschikbaar -> fallback paper ({type(e).__name__}: {e})")
+                _print(f"⚠️ live_trader sell niet beschikbaar -> fallback paper ({type(e).__name__}: {e})")
                 prefer = "paper"
 
     if prefer == "paper":
         if _SELL_PAPER is None:
-            from trading.paper_trader import sell as _s  # type: ignore
-            _SELL_PAPER = _s
+            _SELL_PAPER = _resolve_sell_callable("trading.paper_trader")
 
     return _SELL_LIVE if prefer == "live" else _SELL_PAPER
+
+
+def _execute_sell(trade: Dict[str, Any], fraction: float):
+    sell_fn, sell_name = _get_sell_fn(trade)
+    return _call_sell_compat(sell_fn, sell_name, trade, fraction)
+
 
 def _send_sell_close_message(symbol: str, reason: str, entry: float, stop_loss: float, target: float, r_now: float, sell_result: Dict[str, Any]):
     if not isinstance(sell_result, dict) or not sell_result.get("ok"):
@@ -557,6 +701,7 @@ def _send_sell_close_message(symbol: str, reason: str, entry: float, stop_loss: 
         f"PnL: {pnl:.2f}"
     )
     send_whatsapp(msg)
+
 
 # =========================
 # ✅ FORCE EXIT (1x)
@@ -600,8 +745,7 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
     r_now = calc_r_multiple(price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
 
     _print(f"🚨 FORCE_TEST_EXIT: SELL 100% for {symbol} (test) | price={price:.6f} src={src}")
-    sell_fn = _get_sell_fn(trade)
-    sell_res = sell_fn(symbol, 1.0)
+    sell_res = _execute_sell(trade, 1.0)
 
     trade["status"] = "CLOSED"
     trade["closed_reason"] = "FORCE_TEST_EXIT"
@@ -622,6 +766,31 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 
     _print(f"✅ FORCE_TEST_EXIT uitgevoerd en gelocked. (lock: {FORCE_EXIT_LOCK_PATH})")
     return True
+
+
+# =========================
+# Trade learning helpers
+# =========================
+def _ensure_learning_fields(trade: Dict[str, Any], entry: float) -> None:
+    trade.setdefault("monitor_started_at", now_ts())
+    trade.setdefault("max_price_seen", entry)
+    trade.setdefault("min_price_seen", entry)
+    trade.setdefault("mfe_r", 0.0)
+    trade.setdefault("mae_r", 0.0)
+    trade.setdefault("user_decision", "YES")
+    trade.setdefault("bot_decision", _infer_label(trade))
+
+
+def _update_learning_snapshot(trade: Dict[str, Any], price: float, entry: float, stop_loss: float) -> None:
+    _ensure_learning_fields(trade, entry)
+
+    trade["max_price_seen"] = max(_safe_float(trade.get("max_price_seen"), entry), price)
+    trade["min_price_seen"] = min(_safe_float(trade.get("min_price_seen"), entry), price)
+
+    r_now = calc_r_multiple(price, entry, stop_loss)
+    trade["mfe_r"] = max(_safe_float(trade.get("mfe_r"), 0.0), r_now)
+    trade["mae_r"] = min(_safe_float(trade.get("mae_r"), 0.0), r_now)
+
 
 # =========================
 # Core rules (jouw set) — ongewijzigd
@@ -653,18 +822,19 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     trade.setdefault("target_reached_notified", False)
     trade.setdefault("last_check", now_ts())
 
+    # leerlaag
+    _update_learning_snapshot(trade, price, entry, stop_loss)
+
     trade["max_r"] = max(float(trade.get("max_r", 0.0)), r)
     if r >= 1.0:
         trade["had_over_1r"] = True
 
     _print(f"📊 {symbol} | price={price:.6f} ({src}) | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
-    sell_fn = _get_sell_fn(trade)
-
     # 1) Stop-loss vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
-        sell_res = sell_fn(symbol, 1.0)
+        sell_res = _execute_sell(trade, 1.0)
 
         trade["status"] = "CLOSED"
         trade["closed_reason"] = "STOP_LOSS_BEFORE_1R"
@@ -711,7 +881,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         _print(f"🧱 {symbol} STRUCTUUR higher-low -> trailing_low={last_closed_low:.6f} ({lows_src})")
                     elif last_closed_low < trailing:
                         _print(f"🔻 {symbol} STRUCTUUR lower-low DETECTED -> SELL 100% ({lows_src})")
-                        sell_res = sell_fn(symbol, 1.0)
+                        sell_res = _execute_sell(trade, 1.0)
 
                         trade["status"] = "CLOSED"
                         trade["closed_reason"] = "STRUCTURE_LOWER_LOW"
@@ -740,7 +910,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     # 5) Was >1R en nu <1R => SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
-        sell_fn(symbol, 0.40)
+        _execute_sell(trade, 0.40)
         trade["partial_sold_40"] = True
         trade["below_1r_count"] = 1
         trade["last_check"] = now_ts()
@@ -752,7 +922,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
         if trade["below_1r_count"] >= 3:
             _print(f"🔚 {symbol} 3x onder 1R gebleven -> SELL 100% (rest sluiten)")
-            sell_res = sell_fn(symbol, 1.0)
+            sell_res = _execute_sell(trade, 1.0)
 
             trade["status"] = "CLOSED"
             trade["closed_reason"] = "UNDER_1R_3X_CLOSE_REST"
@@ -771,6 +941,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
     trade["last_check"] = now_ts()
     return False
+
 
 # =========================
 # Main loop
@@ -812,8 +983,10 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
     else:
         save_state(state)
 
+
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="Crypto_AI trade monitor (exit checks).")
     parser.add_argument("--once", action="store_true", help="Run 1 check and exit.")
     parser.add_argument("--sleep", type=int, default=DEFAULT_SLEEP_SECONDS, help="Seconds between cycles.")
@@ -842,6 +1015,7 @@ def main():
         except Exception as e:
             _print(f"⚠️ Monitor error: {type(e).__name__}: {e}")
         time.sleep(int(args.sleep))
+
 
 if __name__ == "__main__":
     main()
