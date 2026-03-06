@@ -97,7 +97,6 @@ def healthz():
 
 # ---------------- label helpers ----------------
 def kans_tekst(chance: int) -> str:
-    # ✅ jouw woorden
     if chance >= 85:
         return "Kans heel groot"
     if chance >= 75:
@@ -159,28 +158,63 @@ def fmt_prebuy_row(p: Dict[str, Any]) -> str:
     tf = str(p.get("timeframe") or "-")
     setup = str(p.get("setup_type") or "-")
 
-    # ✅ kort, maar met coin + kans tekst
-    return f"{prebuy_id} | {symbol} | {kans_tekst(chance)} | chance={chance} score={score} | {setup} | tf={tf}"
+    return (
+        f"{prebuy_id} | {symbol} | status={status} | "
+        f"{kans_tekst(chance)} | chance={chance} score={score} | {setup} | tf={tf}"
+    )
 
 
 # ---------------- DB: fetch ----------------
 def _select_cols(conn) -> List[str]:
     cols = [
-        "id", "symbol", "setup_type", "regime",
-        "score", "chance", "confidence",
-        "entry", "stop", "target",
-        "status", "created_at", "expires_at",
+        "id",
+        "symbol",
+        "setup_type",
+        "regime",
+        "score",
+        "chance",
+        "confidence",
+        "entry",
+        "stop",
+        "target",
+        "status",
+        "created_at",
+        "expires_at",
     ]
-    # ✅ alleen toevoegen als kolom echt bestaat
+
     if table_has_column(conn, "pending_approvals", "timeframe"):
         cols.insert(3, "timeframe")
+
     if table_has_column(conn, "pending_approvals", "raw_score"):
-        # raw_score mag netjes mee
         cols.insert(cols.index("score") + 1, "raw_score")
+
     return cols
 
 
-def fetch_prebuys(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
+def fetch_prebuys_list(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
+    extra_expired = "" if include_expired else "AND (expires_at IS NULL OR expires_at > NOW())"
+    cols = _select_cols(conn)
+    col_sql = ", ".join(cols)
+
+    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        cur.execute(
+            f"""
+            SELECT {col_sql}
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              {extra_expired}
+            ORDER BY
+              CASE WHEN COALESCE(status,'PENDING')='PENDING' THEN 0 ELSE 1 END,
+              created_at ASC
+            LIMIT %s
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    return [dict(r) for r in rows]
+
+
+def fetch_prebuys_top(conn, *, limit: int = 10, include_expired: bool = False) -> List[Dict[str, Any]]:
     extra_expired = "" if include_expired else "AND (expires_at IS NULL OR expires_at > NOW())"
     cols = _select_cols(conn)
     col_sql = ", ".join(cols)
@@ -223,7 +257,12 @@ def stats(conn) -> Dict[str, int]:
             """
         )
         row = cur.fetchone() or (0, 0, 0)
-    return {"pending_or_approved": row[0], "active_now": row[1], "expired_now": row[2]}
+
+    return {
+        "pending_or_approved": row[0],
+        "active_now": row[1],
+        "expired_now": row[2],
+    }
 
 
 def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
@@ -245,7 +284,7 @@ def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_top_pending(conn) -> Optional[Dict[str, Any]]:
-    rows = fetch_prebuys(conn, limit=1, include_expired=False)
+    rows = fetch_prebuys_top(conn, limit=1, include_expired=False)
     return rows[0] if rows else None
 
 
@@ -333,7 +372,12 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
     if not symbol:
         return False, "BUY faalde: symbol ontbreekt."
 
-    meta = {"prebuy_id": prebuy_id, "entry": entry, "stop": stop, "target": target}
+    meta = {
+        "prebuy_id": prebuy_id,
+        "entry": entry,
+        "stop": stop,
+        "target": target,
+    }
 
     def try_one(mode: str) -> Tuple[bool, str]:
         module_path = "trading.paper_trader" if mode == "paper" else "trading.live_trader"
@@ -354,6 +398,7 @@ def execute_buy(prebuy: Dict[str, Any], amount_eur: int) -> Tuple[bool, str]:
 
     if TRADER_MODE == "paper":
         return try_one("paper")
+
     if TRADER_MODE == "live":
         return try_one("live")
 
@@ -373,9 +418,9 @@ def parse_command(text: str) -> Tuple[str, List[str]]:
     t = (text or "").strip()
     if not t:
         return "HELP", []
+
     parts = t.split()
 
-    # ✅ als user alleen een PB-ID typt: toon details
     if len(parts) == 1 and parts[0].upper().startswith("PB-"):
         return "SHOW", [parts[0]]
 
@@ -392,7 +437,10 @@ HELP_TEXT = (
     "YES <bedrag> [ID]  (zonder ID = pakt TOP 1)\n"
     "NO <ID>\n\n"
     "Bedragen: 5/10/15/20/30/40/50\n"
-    "TRADER_MODE=paper|live|auto"
+    "TRADER_MODE=paper|live|auto\n\n"
+    "Let op:\n"
+    "- Auto-push limiet blokkeert geen LIST/TOP\n"
+    "- Dus ook na 50 automatische meldingen kun je nog YES doen op actieve Pre-BUY's"
 )
 
 
@@ -416,31 +464,36 @@ def whatsapp():
                     f"pending_or_approved = {s['pending_or_approved']}\n"
                     f"active_now = {s['active_now']}\n"
                     f"expired_now = {s['expired_now']}\n\n"
-                    "Als active_now=0 dan zijn er nu geen nieuwe PENDING Pre-BUY’s gemaakt."
+                    "Auto-push limiet stopt alleen nieuwe automatische meldingen.\n"
+                    "LIST/TOP en handmatig YES kunnen nog steeds werken zolang er actieve Pre-BUY's zijn."
                 )
 
             if cmd == "LIST":
-                pending = fetch_prebuys(conn, limit=10, include_expired=False)
+                pending = fetch_prebuys_list(conn, limit=10, include_expired=False)
                 s = stats(conn)
+
                 if not pending:
                     return twiml(
                         "Geen ACTIVE pending/approved Pre-BUYs.\n"
                         f"(expired_now={s['expired_now']})\n\n"
-                        "Tip: STATS (en check multi_coin_score logs of hij nieuwe PENDING maakt)"
+                        "Tip: STATS of check multi_coin_score logs."
                     )
+
                 lines = ["Pre-BUYs (ACTIVE) — typ ID voor details:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 return twiml("\n".join(lines))
 
             if cmd == "TOP":
-                pending = fetch_prebuys(conn, limit=10, include_expired=False)
+                pending = fetch_prebuys_top(conn, limit=10, include_expired=False)
+                s = stats(conn)
+
                 if not pending:
-                    s = stats(conn)
                     return twiml(
                         "Geen ACTIVE pending/approved Pre-BUYs.\n"
                         f"(expired_now={s['expired_now']})\n\n"
-                        "Tip: STATS"
+                        "Tip: STATS of check multi_coin_score logs."
                     )
+
                 lines = ["TOP 10 (chance) — typ ID voor details:"]
                 lines += [fmt_prebuy_row(p) for p in pending]
                 return twiml("\n".join(lines))
@@ -448,6 +501,7 @@ def whatsapp():
             if cmd == "SHOW":
                 if not args:
                     return twiml("Gebruik: SHOW <ID> (of typ alleen het ID)")
+
                 prebuy_id = args[0].strip()
                 p = get_pending_by_id(conn, prebuy_id)
                 if not p:
@@ -457,10 +511,12 @@ def whatsapp():
             if cmd == "NO":
                 if not args:
                     return twiml("Gebruik: NO <ID>")
+
                 prebuy_id = args[0].strip()
                 p = get_pending_by_id(conn, prebuy_id)
                 if not p:
                     return twiml("ID niet gevonden.")
+
                 mark_rejected(conn, prebuy_id)
                 return twiml(f"Afgewezen: {prebuy_id}")
 
@@ -492,7 +548,7 @@ def whatsapp():
                     return twiml(
                         "Deze Pre-BUY is verlopen.\n"
                         f"ID: {prebuy_id}\n\n"
-                        "Wacht op nieuwe Pre-BUY’s of check multi_coin_score logs."
+                        "Wacht op nieuwe Pre-BUY's of check LIST/TOP later opnieuw."
                     )
 
                 mark_approved(conn, prebuy_id)
