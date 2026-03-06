@@ -484,6 +484,8 @@ st.markdown("""
         padding-bottom: 6rem;
         max-width: 1100px;
     }
+
+    /* Metrics */
     div[data-testid="stMetric"] {
         background: #0d1118;
         border: 1px solid #1f2937;
@@ -496,6 +498,19 @@ st.markdown("""
     div[data-testid="stMetricValue"] {
         color: #ffffff !important;
     }
+
+    /* Bovenste navigatieknoppen zichtbaar maken */
+    div[data-testid="stHorizontalBlock"] button {
+        color: #000000 !important;
+        font-weight: 700 !important;
+    }
+
+    /* Tabs tekst beter leesbaar */
+    button[role="tab"] {
+        color: #e5e7eb !important;
+        font-weight: 600 !important;
+    }
+
     .terminal-card {
         background: #06080d;
         border: 1px solid #111827;
@@ -654,7 +669,9 @@ with top_tabs[0]:
         st.markdown('<div class="warn-box">Geen open positions gevonden.</div>', unsafe_allow_html=True)
     else:
         positions_show = positions_df.copy()
-        positions_show["opened_at"] = positions_show["opened_at"].apply(lambda x: datetime.utcfromtimestamp(int(x)).strftime("%Y.%m.%d %H:%M:%S") if safe_int(x, 0) > 0 else "-")
+        positions_show["opened_at"] = positions_show["opened_at"].apply(
+            lambda x: datetime.utcfromtimestamp(int(x)).strftime("%Y.%m.%d %H:%M:%S") if safe_int(x, 0) > 0 else "-"
+        )
         st.dataframe(
             positions_show[[
                 "symbol", "source", "qty", "entry", "stop_loss", "target",
