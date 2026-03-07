@@ -4,7 +4,7 @@ import time
 import hmac
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import requests
 import pandas as pd
@@ -152,6 +152,8 @@ def outcome_color(outcome: str) -> str:
         return "#2ecc71"
     if o == "LOSS":
         return "#ff8c42"
+    if o == "UNKNOWN":
+        return "#b0b7c3"
     return "#cbd5e1"
 
 
@@ -187,6 +189,10 @@ def table_exists(table_name: str, schema: str = "public") -> bool:
             )
             return bool(cur.fetchone()[0])
     except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return False
 
 
@@ -207,6 +213,10 @@ def get_table_columns(table_name: str, schema: str = "public") -> List[str]:
             )
             return [row[0] for row in cur.fetchall()]
     except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return []
 
 
@@ -221,7 +231,20 @@ def read_sql_df(sql: str) -> pd.DataFrame:
             cols = [desc[0] for desc in cur.description]
         return pd.DataFrame(rows, columns=cols)
     except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return pd.DataFrame([])
+
+
+def table_count(table_name: str, schema: str = "public") -> int:
+    if not table_exists(table_name, schema):
+        return 0
+    df = read_sql_df(f"SELECT COUNT(*) AS n FROM {schema}.{table_name}")
+    if df.empty or "n" not in df.columns:
+        return 0
+    return safe_int(df.iloc[0]["n"], 0)
 
 
 # ==========================================================
@@ -422,7 +445,15 @@ def load_pending_orders_db() -> pd.DataFrame:
         ORDER BY COALESCE(chance, 0) DESC, COALESCE(score, 0) DESC, created_at DESC NULLS LAST
         LIMIT 100
     """
-    return read_sql_df(sql)
+    df = read_sql_df(sql)
+    if df.empty:
+        return df
+
+    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
 
 
 def load_real_trades_db() -> pd.DataFrame:
@@ -431,10 +462,10 @@ def load_real_trades_db() -> pd.DataFrame:
 
     cols = set(get_table_columns("experience_trades"))
     wanted = [
-        "symbol", "setup_type", "timeframe", "regime", "label",
+        "id", "symbol", "setup_type", "timeframe", "regime", "label",
         "score", "raw_score", "chance", "confidence",
-        "entry", "stop", "target", "exit", "exit_price",
-        "result_r", "outcome", "is_shadow", "created_at"
+        "entry", "stop", "target", "result_r", "outcome",
+        "is_shadow", "created_at", "closed_at"
     ]
     selected = [c for c in wanted if c in cols]
     if not selected:
@@ -453,26 +484,30 @@ def load_real_trades_db() -> pd.DataFrame:
     if df.empty:
         return df
 
+    for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
     if "entry" not in df.columns:
         df["entry"] = 0.0
-    df["entry"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
+    df["entry"] = df["entry"].fillna(0.0)
 
-    if "exit_price" in df.columns:
-        df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
-    elif "exit" in df.columns:
-        df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
+    # experience_trades heeft bij jou geen echte exit_price kolom nodig voor dashboard basis
+    # daarom gebruiken we target als visuele exit fallback als closed_at bestaat
+    if "target" in df.columns:
+        df["exit_price"] = df["target"].fillna(0.0)
     else:
         df["exit_price"] = 0.0
 
     if "result_r" in df.columns:
-        df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
+        df["pnl"] = df["result_r"].fillna(0.0)
     else:
         df["pnl"] = 0.0
 
     if "outcome" not in df.columns:
         df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
     else:
-        df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
+        df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
 
     if "created_at" in df.columns:
         df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
@@ -488,100 +523,65 @@ def load_real_trades_db() -> pd.DataFrame:
 
 
 def load_shadow_trades_db() -> pd.DataFrame:
-    if table_exists("experience_trades"):
-        cols = set(get_table_columns("experience_trades"))
-        wanted = [
-            "symbol", "setup_type", "timeframe", "regime", "label",
-            "score", "raw_score", "chance", "confidence",
-            "entry", "stop", "target", "exit", "exit_price",
-            "result_r", "outcome", "is_shadow", "created_at"
-        ]
-        selected = [c for c in wanted if c in cols]
-        if selected:
-            where_shadow = "AND COALESCE(is_shadow, false) = true" if "is_shadow" in cols else ""
-            sql = f"""
-                SELECT {", ".join(selected)}
-                FROM public.experience_trades
-                WHERE 1=1
-                {where_shadow}
-                ORDER BY created_at DESC NULLS LAST
-                LIMIT 500
-            """
-            df = read_sql_df(sql)
-            if not df.empty:
-                if "entry" not in df.columns:
-                    df["entry"] = 0.0
-                df["entry"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
+    if not table_exists("experience_trades"):
+        return pd.DataFrame([])
 
-                if "exit_price" in df.columns:
-                    df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
-                elif "exit" in df.columns:
-                    df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
-                else:
-                    df["exit_price"] = 0.0
+    cols = set(get_table_columns("experience_trades"))
+    wanted = [
+        "id", "symbol", "setup_type", "timeframe", "regime", "label",
+        "score", "raw_score", "chance", "confidence",
+        "entry", "stop", "target", "result_r", "outcome",
+        "is_shadow", "created_at", "closed_at"
+    ]
+    selected = [c for c in wanted if c in cols]
+    if not selected:
+        return pd.DataFrame([])
 
-                if "result_r" in df.columns:
-                    df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
-                else:
-                    df["pnl"] = 0.0
+    where_shadow = "AND COALESCE(is_shadow, false) = true" if "is_shadow" in cols else ""
+    sql = f"""
+        SELECT {", ".join(selected)}
+        FROM public.experience_trades
+        WHERE 1=1
+        {where_shadow}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 500
+    """
+    df = read_sql_df(sql)
+    if df.empty:
+        return df
 
-                if "outcome" not in df.columns:
-                    df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
-                else:
-                    df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
+    for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
 
-                if "created_at" in df.columns:
-                    df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-                else:
-                    df["datetime_raw"] = pd.NaT
+    if "entry" not in df.columns:
+        df["entry"] = 0.0
+    df["entry"] = df["entry"].fillna(0.0)
 
-                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-                df["trade_type"] = "SHADOW"
-                df["entry_price"] = df["entry"]
-                return df
+    if "target" in df.columns:
+        df["exit_price"] = df["target"].fillna(0.0)
+    else:
+        df["exit_price"] = 0.0
 
-    if table_exists("shadow_trades"):
-        cols = get_table_columns("shadow_trades")
-        if cols:
-            sql = f"SELECT {', '.join(cols)} FROM public.shadow_trades ORDER BY created_at DESC NULLS LAST LIMIT 500"
-            df = read_sql_df(sql)
-            if not df.empty:
-                if "entry" in df.columns:
-                    df["entry_price"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
-                elif "entry_price" in df.columns:
-                    df["entry_price"] = pd.to_numeric(df["entry_price"], errors="coerce").fillna(0.0)
-                else:
-                    df["entry_price"] = 0.0
+    if "result_r" in df.columns:
+        df["pnl"] = df["result_r"].fillna(0.0)
+    else:
+        df["pnl"] = 0.0
 
-                if "exit_price" in df.columns:
-                    df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
-                elif "exit" in df.columns:
-                    df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
-                else:
-                    df["exit_price"] = 0.0
+    if "outcome" not in df.columns:
+        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+    else:
+        df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
 
-                if "result_r" in df.columns:
-                    df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
-                elif "pnl" in df.columns:
-                    df["pnl"] = pd.to_numeric(df["pnl"], errors="coerce").fillna(0.0)
-                else:
-                    df["pnl"] = 0.0
+    if "created_at" in df.columns:
+        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    else:
+        df["datetime_raw"] = pd.NaT
 
-                if "outcome" not in df.columns:
-                    df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
-                else:
-                    df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
-
-                if "created_at" in df.columns:
-                    df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-                else:
-                    df["datetime_raw"] = pd.NaT
-
-                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-                df["trade_type"] = "SHADOW"
-                return df
-
-    return pd.DataFrame([])
+    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+    df["trade_type"] = "SHADOW"
+    df["entry_price"] = df["entry"]
+    return df
 
 
 def load_positions_db() -> pd.DataFrame:
@@ -604,22 +604,42 @@ def load_positions_db() -> pd.DataFrame:
 
 
 def load_scoreboard_db() -> pd.DataFrame:
+    # jouw shell liet zien: experience_scoreboard bestaat
+    # met kolommen:
+    # exchange, timeframe, setup_type, regime,
+    # n_total, n_win, n_loss, winrate, avg_r, expectancy, updated_at
     if not table_exists("experience_scoreboard"):
         return pd.DataFrame([])
 
     cols = set(get_table_columns("experience_scoreboard"))
-    wanted = ["setup_type", "regime", "timeframe", "n", "avg_r", "win_rate", "avg_win_r", "avg_loss_r", "updated_at"]
+    wanted = [
+        "exchange", "timeframe", "setup_type", "regime",
+        "n_total", "n_win", "n_loss", "winrate", "avg_r",
+        "expectancy", "updated_at"
+    ]
     selected = [c for c in wanted if c in cols]
     if not selected:
         return pd.DataFrame([])
 
+    order_col = "n_total" if "n_total" in selected else selected[0]
     sql = f"""
         SELECT {", ".join(selected)}
         FROM public.experience_scoreboard
-        ORDER BY n DESC NULLS LAST
+        ORDER BY {order_col} DESC NULLS LAST
         LIMIT 100
     """
-    return read_sql_df(sql)
+    df = read_sql_df(sql)
+    if df.empty:
+        return df
+
+    for col in ["n_total", "n_win", "n_loss", "winrate", "avg_r", "expectancy"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "updated_at" in df.columns:
+        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True).dt.strftime("%Y.%m.%d %H:%M:%S")
+
+    return df
 
 
 def build_activity_feed(
@@ -858,7 +878,6 @@ except Exception as e:
     refresh_state = f"auto-refresh faalde: {e}"
 
 snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
-portfolio_hist, portfolio_hist_err = safe_read_csv(PORTFOLIO_HISTORY_CSV)
 
 positions_df = load_positions_db()
 orders_df = load_pending_orders_db()
@@ -1081,9 +1100,9 @@ with col_right:
 
     health_rows = [
         ("DATABASE_URL", "OK" if db_ready() else "MIST"),
-        ("pending_approvals", "OK" if table_exists("pending_approvals") else "MIST"),
-        ("experience_trades", "OK" if table_exists("experience_trades") else "MIST"),
-        ("experience_scoreboard", "OK" if table_exists("experience_scoreboard") else "MIST"),
+        ("pending_approvals", f"OK ({table_count('pending_approvals')})" if table_exists("pending_approvals") else "MIST"),
+        ("experience_trades", f"OK ({table_count('experience_trades')})" if table_exists("experience_trades") else "MIST"),
+        ("experience_scoreboard", f"OK ({table_count('experience_scoreboard')})" if table_exists("experience_scoreboard") else "MIST"),
         ("snapshot file", "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"),
     ]
     for left_label, right_val in health_rows:
@@ -1212,9 +1231,9 @@ with tabs[5]:
     st.subheader("Settings / Controle")
     rows = [
         {"item": "DATABASE_URL", "status": "OK" if db_ready() else "MIST"},
-        {"item": "pending_approvals", "status": "OK" if table_exists("pending_approvals") else "MIST"},
-        {"item": "experience_trades", "status": "OK" if table_exists("experience_trades") else "MIST"},
-        {"item": "experience_scoreboard", "status": "OK" if table_exists("experience_scoreboard") else "MIST"},
+        {"item": "pending_approvals", "status": f"OK ({table_count('pending_approvals')})" if table_exists("pending_approvals") else "MIST"},
+        {"item": "experience_trades", "status": f"OK ({table_count('experience_trades')})" if table_exists("experience_trades") else "MIST"},
+        {"item": "experience_scoreboard", "status": f"OK ({table_count('experience_scoreboard')})" if table_exists("experience_scoreboard") else "MIST"},
         {"item": "snapshot file", "status": "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"},
         {"item": "portfolio_history.csv", "status": "OK" if file_meta(PORTFOLIO_HISTORY_CSV).get("exists") else "MIST"},
     ]
