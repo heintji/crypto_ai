@@ -32,9 +32,10 @@
 #    - update van prebuy_experience waar mogelijk
 #
 # 7) ✅ SHADOW TRADES:
-#    - open shadow trades worden nu ook geëvalueerd
+#    - open shadow trades worden nu ook automatisch geëvalueerd
 #    - target geraakt => WIN
 #    - stop geraakt => LOSS
+#    - ook zónder open_trades in state
 #
 # Jouw exit-regels blijven EXACT hetzelfde.
 # ==========================================================
@@ -46,10 +47,9 @@ import sys
 import json
 import time
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Set
 
 import requests
-
 import psycopg2
 import psycopg2.extras
 
@@ -64,9 +64,10 @@ if PROJECT_ROOT not in sys.path:
 # ✅ Shadow trades import
 # =========================
 try:
-    from trading.shadow_trades import evaluate_open_shadows_for_symbol
+    from trading.shadow_trades import evaluate_open_shadows_for_symbol, load_shadows
 except Exception:
     evaluate_open_shadows_for_symbol = None
+    load_shadows = None
 
 # =========================
 # ✅ DATA PATH RESOLVER
@@ -84,9 +85,6 @@ LOGS_DIR = (os.getenv("LOGS_DIR") or os.path.join(DATA_DIR, "logs")).strip()
 # =========================
 # ✅ TRADER MODE
 # =========================
-# "paper" -> altijd paper_trader
-# "live"  -> altijd live_trader
-# "auto"  -> per trade: als trade["live"]=True => live, anders paper
 TRADER_MODE = (os.getenv("TRADER_MODE") or "auto").strip().lower()
 
 # =========================
@@ -105,7 +103,6 @@ def _choose_state_path() -> str:
 
 
 STATE_PATH = _choose_state_path()
-
 FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
 
 # =========================
@@ -122,7 +119,6 @@ BITVAVO_TICKER_URL = BITVAVO_BASE_URL + "/v2/ticker/price"
 BITVAVO_CANDLES_URL = BITVAVO_BASE_URL + "/v2/candles"
 
 HTTP_TIMEOUT = 15
-
 STRUCT_INTERVAL = "1h"
 STRUCT_LIMIT = 50
 
@@ -657,6 +653,52 @@ def evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
         _print(f"⚠️ Shadow evaluation failed for {symbol}: {type(e).__name__}: {e}")
 
 
+def get_open_shadow_symbols() -> List[str]:
+    """
+    Haalt alle open shadow symbols op uit trading/shadow_trades.py opslag.
+    """
+    if load_shadows is None:
+        return []
+
+    try:
+        shadows = load_shadows()
+        symbols: Set[str] = set()
+
+        for sh in shadows:
+            if not isinstance(sh, dict):
+                continue
+            status = _safe_str(sh.get("status"), "OPEN").upper()
+            symbol = _safe_str(sh.get("symbol"))
+            if status == "OPEN" and symbol:
+                symbols.add(symbol)
+
+        return sorted(symbols)
+    except Exception as e:
+        _print(f"⚠️ Open shadow symbols ophalen mislukt: {type(e).__name__}: {e}")
+        return []
+
+
+def evaluate_all_open_shadows() -> None:
+    """
+    Evalueert automatisch alle open shadow trades, ook zonder echte open_trades.
+    """
+    symbols = get_open_shadow_symbols()
+    if not symbols:
+        _print("👻 Geen open shadow symbols gevonden.")
+        return
+
+    _print(f"👻 Open shadow symbols gevonden: {len(symbols)}")
+
+    for symbol in symbols:
+        try:
+            dummy_trade = {"symbol": symbol, "live": (TRADER_MODE == "live")}
+            price, src = get_price(symbol, dummy_trade)
+            _print(f"👻 Auto shadow check for {symbol} | price={price:.6f} ({src})")
+            evaluate_shadow_for_symbol(symbol, price)
+        except Exception as e:
+            _print(f"⚠️ Auto shadow check failed for {symbol}: {type(e).__name__}: {e}")
+
+
 # =========================
 # ✅ SELL ROUTER
 # =========================
@@ -679,7 +721,6 @@ def _call_sell_compat(sell_fn, sell_name: str, trade: Dict[str, Any], fraction: 
     symbol = trade.get("symbol")
     position = trade.get("position_size") or trade.get("amount") or trade.get("base_amount")
 
-    # live_trader.place_market_sell_base verwacht market + base amount
     if sell_name in ("sell_base", "place_market_sell_base"):
         market = binance_to_bitvavo_market(symbol)
         if not position:
@@ -687,7 +728,6 @@ def _call_sell_compat(sell_fn, sell_name: str, trade: Dict[str, Any], fraction: 
         amount_base = float(position) * float(fraction)
         return sell_fn(market, amount_base)
 
-    # paper/live sell(symbol, fraction)
     return sell_fn(symbol, fraction)
 
 
@@ -847,7 +887,7 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     else:
         price, src = get_price(symbol, trade)
 
-    # ✅ shadow trades ook evalueren met dezelfde actuele prijs
+    # shadow trades voor dit symbool ook evalueren
     evaluate_shadow_for_symbol(symbol, price)
 
     r = calc_r_multiple(price, entry, stop_loss)
@@ -861,7 +901,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     trade.setdefault("target_reached_notified", False)
     trade.setdefault("last_check", now_ts())
 
-    # leerlaag
     _update_learning_snapshot(trade, price, entry, stop_loss)
 
     trade["max_r"] = max(float(trade.get("max_r", 0.0)), r)
@@ -870,7 +909,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
     _print(f"📊 {symbol} | price={price:.6f} ({src}) | entry={entry:.6f} | SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}")
 
-    # 1) Stop-loss vóór 1R => SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
         sell_res = _execute_sell(trade, 1.0)
@@ -888,7 +926,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
 
         return True
 
-    # 2) Target reached -> STRUCTUUR mode
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -903,7 +940,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             f"Mode: STRUCTUUR-MODE"
         )
 
-    # 3) STRUCTUUR mode: higher lows volgen, eerste lower low => close 100%
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows, lows_src = get_klines_lows(symbol, trade)
@@ -940,13 +976,11 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # 4) Als R >= 1 => wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
         return False
 
-    # 5) Was >1R en nu <1R => SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
         _execute_sell(trade, 0.40)
@@ -955,7 +989,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # 6) Na partial: 3 checks onder 1R => close rest
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
@@ -992,14 +1025,9 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         return
 
     open_trades = state.get("open_trades", []) or []
-
-    # ook als er geen echte open trades zijn, willen we shadow trades nog steeds kunnen evalueren
-    if not open_trades and not only_symbol:
-        _print("ℹ️ Geen open_trades gevonden. Alleen shadow monitoring mogelijk als symbol handmatig is meegegeven.")
-        return
-
     closed_symbols: List[str] = []
 
+    # 1) echte trades monitoren
     for trade in list(open_trades):
         symbol = trade.get("symbol")
         if only_symbol and symbol != only_symbol:
@@ -1017,7 +1045,7 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         if closed:
             closed_symbols.append(symbol)
 
-    # extra: als user 1 symbol meegeeft en er is geen echte open trade, dan toch shadow evalueren
+    # 2) shadow-only handmatige check
     if only_symbol and not open_trades:
         try:
             if test_price is not None:
@@ -1031,6 +1059,10 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
             evaluate_shadow_for_symbol(only_symbol, price)
         except Exception as e:
             _print(f"⚠️ Shadow-only symbol check failed for {only_symbol}: {type(e).__name__}: {e}")
+
+    # 3) automatische shadow scan als er géén handmatig symbol is opgegeven
+    if not only_symbol:
+        evaluate_all_open_shadows()
 
     if closed_symbols:
         state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") not in closed_symbols]
