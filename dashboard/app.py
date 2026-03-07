@@ -4,7 +4,7 @@ import time
 import hmac
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 import pandas as pd
@@ -27,11 +27,16 @@ SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
 PORTFOLIO_HISTORY_CSV = os.getenv("PORTFOLIO_HISTORY_CSV", "/data/portfolio_history.csv")
 
 AUTO_REFRESH_MINUTES = int(os.getenv("AUTO_REFRESH_MINUTES", "15"))
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
+HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "12"))
+DB_CONNECT_TIMEOUT = int(os.getenv("DB_CONNECT_TIMEOUT", "5"))
+
+# BELANGRIJK:
+# om blank screen te voorkomen refreshen we snapshot NIET automatisch bij page load
+AUTO_REFRESH_SNAPSHOT_ON_LOAD = (os.getenv("AUTO_REFRESH_SNAPSHOT_ON_LOAD", "0").strip() == "1")
 
 
 # ==========================================================
-# HELPERS
+# BASIC HELPERS
 # ==========================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -113,7 +118,7 @@ def file_meta(path: str) -> Dict[str, Any]:
     }
 
 
-def safe_read_json(path: str):
+def safe_read_json(path: str) -> Tuple[Optional[dict], Optional[str]]:
     try:
         if not os.path.exists(path):
             return None, f"Bestand niet gevonden: {path}"
@@ -123,21 +128,30 @@ def safe_read_json(path: str):
         return None, f"JSON leesfout ({path}): {e}"
 
 
+def safe_read_csv(path: str) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
+    try:
+        if not os.path.exists(path):
+            return None, f"CSV niet gevonden: {path}"
+        df = pd.read_csv(path)
+        return df, None
+    except Exception as e:
+        return None, f"CSV leesfout ({path}): {e}"
+
+
 def pnl_color(pnl: float, trade_type: str = "REAL") -> str:
     trade_type = safe_str(trade_type).upper()
-
     if trade_type == "SHADOW":
         if pnl > 0:
-            return "#2ecc71"   # groen = gemiste trade goed
+            return "#2ecc71"   # groen
         if pnl < 0:
-            return "#ff8c42"   # oranje = gemiste trade slecht
-        return "#b0b7c3"       # grijs = unknown/flat
-
-    if pnl > 0:
-        return "#5aa2ff"       # blauw = echte winst
-    if pnl < 0:
-        return "#ff5a5f"       # rood = echte verlies
-    return "#b0b7c3"
+            return "#ff8c42"   # oranje
+        return "#b0b7c3"       # grijs
+    else:
+        if pnl > 0:
+            return "#5aa2ff"   # blauw
+        if pnl < 0:
+            return "#ff5a5f"   # rood
+        return "#b0b7c3"
 
 
 def outcome_color(outcome: str, trade_type: str = "REAL") -> str:
@@ -158,134 +172,79 @@ def outcome_color(outcome: str, trade_type: str = "REAL") -> str:
     return "#b0b7c3"
 
 
-def render_perf_card(title: str, value: str, color: str):
-    st.markdown(
-        f"""
-        <div style="
-            background:#111827;
-            border:1px solid #1f2937;
-            border-left:6px solid {color};
-            border-radius:18px;
-            padding:18px 18px 14px 18px;
-            min-height:110px;
-        ">
-            <div style="
-                color:#94a3b8;
-                font-size:14px;
-                font-weight:600;
-                margin-bottom:10px;
-            ">{title}</div>
-            <div style="
-                color:{color};
-                font-size:28px;
-                font-weight:800;
-                line-height:1.1;
-            ">{value}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def render_status_card(title: str, value: str, ok: bool = True):
-    color = "#2ecc71" if ok else "#ff5a5f"
-    bg = "#0f172a"
-    st.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            border:1px solid #1e293b;
-            border-left:6px solid {color};
-            border-radius:16px;
-            padding:14px 16px;
-            margin-bottom:10px;
-        ">
-            <div style="color:#94a3b8;font-size:13px;font-weight:600;">{title}</div>
-            <div style="color:{color};font-size:20px;font-weight:800;margin-top:6px;">{value}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def run_safe(fn, default=None):
+    try:
+        return fn()
+    except Exception:
+        return default
 
 
 # ==========================================================
-# POSTGRES
+# DB HELPERS
 # ==========================================================
-@st.cache_resource(show_spinner=False)
-def get_db_conn():
-    if not DATABASE_URL:
-        return None
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
-
-
 def db_ready() -> bool:
     return bool(DATABASE_URL)
 
 
+def get_db_conn():
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=DB_CONNECT_TIMEOUT)
+
+
 def table_exists(table_name: str, schema: str = "public") -> bool:
-    conn = get_db_conn()
-    if conn is None:
+    if not db_ready():
         return False
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT EXISTS(
-                    SELECT 1
-                    FROM information_schema.tables
-                    WHERE table_schema=%s AND table_name=%s
+        with get_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS(
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema=%s AND table_name=%s
+                    )
+                    """,
+                    (schema, table_name),
                 )
-                """,
-                (schema, table_name),
-            )
-            return bool(cur.fetchone()[0])
+                row = cur.fetchone()
+                return bool(row[0]) if row else False
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         return False
 
 
 def get_table_columns(table_name: str, schema: str = "public") -> List[str]:
-    conn = get_db_conn()
-    if conn is None:
+    if not db_ready():
         return []
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema=%s AND table_name=%s
-                ORDER BY ordinal_position
-                """,
-                (schema, table_name),
-            )
-            return [row[0] for row in cur.fetchall()]
+        with get_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema=%s AND table_name=%s
+                    ORDER BY ordinal_position
+                    """,
+                    (schema, table_name),
+                )
+                return [row[0] for row in cur.fetchall()]
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         return []
 
 
-def read_sql_df(sql: str) -> pd.DataFrame:
-    conn = get_db_conn()
-    if conn is None:
+def read_sql_df(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
+    if not db_ready():
         return pd.DataFrame([])
     try:
-        with conn.cursor() as cur:
-            cur.execute(sql)
-            rows = cur.fetchall()
-            cols = [desc[0] for desc in cur.description]
+        with get_db_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params or ())
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
         return pd.DataFrame(rows, columns=cols)
     except Exception:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
         return pd.DataFrame([])
 
 
@@ -299,7 +258,7 @@ def table_count(table_name: str, schema: str = "public") -> int:
 
 
 # ==========================================================
-# BITVAVO PRIVATE REQUEST
+# BITVAVO
 # ==========================================================
 def bitvavo_request(method: str, path: str, body: str = ""):
     if not API_KEY or not API_SECRET:
@@ -343,9 +302,6 @@ def bitvavo_request(method: str, path: str, body: str = ""):
     return r.json()
 
 
-# ==========================================================
-# PUBLIC PRICES
-# ==========================================================
 @st.cache_data(ttl=30, show_spinner=False)
 def fetch_all_market_prices():
     url = f"{BASE_URL}/v2/ticker/price"
@@ -386,9 +342,6 @@ def price_in_eur(symbol: str, prices: dict):
     return None, "NO_ROUTE"
 
 
-# ==========================================================
-# SNAPSHOT
-# ==========================================================
 def build_snapshot_with_eur_values():
     balances = bitvavo_request("GET", "/v2/balance")
     prices = fetch_all_market_prices()
@@ -441,39 +394,27 @@ def build_snapshot_with_eur_values():
     with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
-    ensure_parent_dir(PORTFOLIO_HISTORY_CSV)
-    row = {
-        "ts": snapshot["ts"],
-        "eur_available": snapshot["eur_available"],
-        "crypto_assets_eur": snapshot["crypto_assets_eur"],
-        "total_portfolio_eur": snapshot["total_portfolio_eur"],
-    }
-
-    if os.path.exists(PORTFOLIO_HISTORY_CSV):
-        hist = pd.read_csv(PORTFOLIO_HISTORY_CSV)
-        hist = pd.concat([hist, pd.DataFrame([row])], ignore_index=True)
-    else:
-        hist = pd.DataFrame([row])
-
-    hist = hist.drop_duplicates(subset=["ts"], keep="last")
-    hist.to_csv(PORTFOLIO_HISTORY_CSV, index=False)
-
     return snapshot
 
 
 def maybe_auto_refresh_snapshot():
     meta = file_meta(SNAPSHOT_PATH)
     if not meta["exists"]:
-        return build_snapshot_with_eur_values(), "created"
+        return None, "snapshot ontbreekt"
 
     mins = age_minutes(meta["modified_epoch"])
-    if mins >= AUTO_REFRESH_MINUTES:
-        return build_snapshot_with_eur_values(), f"refreshed ({mins:.0f} min old)"
+    if AUTO_REFRESH_SNAPSHOT_ON_LOAD and mins >= AUTO_REFRESH_MINUTES:
+        try:
+            snap = build_snapshot_with_eur_values()
+            return snap, f"refreshed ({mins:.0f} min old)"
+        except Exception as e:
+            return None, f"refresh mislukt: {e}"
+
     return None, f"kept (age {mins:.0f} min)"
 
 
 # ==========================================================
-# LOADERS UIT POSTGRES
+# POSTGRES LOADERS
 # ==========================================================
 def load_pending_orders_db() -> pd.DataFrame:
     if not table_exists("pending_approvals"):
@@ -502,7 +443,7 @@ def load_pending_orders_db() -> pd.DataFrame:
 
     for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     return df
 
@@ -522,12 +463,10 @@ def load_real_trades_db() -> pd.DataFrame:
     if not selected:
         return pd.DataFrame([])
 
-    where_shadow = "AND COALESCE(is_shadow, false) = false" if "is_shadow" in cols else ""
     sql = f"""
         SELECT {", ".join(selected)}
         FROM public.experience_trades
-        WHERE 1=1
-        {where_shadow}
+        WHERE COALESCE(is_shadow, false) = false
         ORDER BY created_at DESC NULLS LAST
         LIMIT 500
     """
@@ -537,31 +476,22 @@ def load_real_trades_db() -> pd.DataFrame:
 
     for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
     df["entry"] = pd.to_numeric(df.get("entry", 0.0), errors="coerce").fillna(0.0)
     df["result_r"] = pd.to_numeric(df.get("result_r", 0.0), errors="coerce").fillna(0.0)
-
-    if "target" in df.columns:
-        df["exit_price"] = pd.to_numeric(df["target"], errors="coerce").fillna(0.0)
-    else:
-        df["exit_price"] = 0.0
-
-    df["pnl"] = df["result_r"]
+    df["exit_price"] = pd.to_numeric(df.get("target", 0.0), errors="coerce").fillna(0.0)
 
     if "outcome" not in df.columns:
-        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+        df["outcome"] = df["result_r"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
     else:
         df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
 
-    if "created_at" in df.columns:
-        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-    else:
-        df["datetime_raw"] = pd.NaT
-
+    df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
     df["datetime"] = df["datetime_raw"].apply(format_dt_short)
     df["trade_type"] = "REAL"
     df["entry_price"] = df["entry"]
+    df["pnl"] = df["result_r"]
     return df
 
 
@@ -580,12 +510,10 @@ def load_shadow_trades_db() -> pd.DataFrame:
     if not selected:
         return pd.DataFrame([])
 
-    where_shadow = "AND COALESCE(is_shadow, false) = true" if "is_shadow" in cols else ""
     sql = f"""
         SELECT {", ".join(selected)}
         FROM public.experience_trades
-        WHERE 1=1
-        {where_shadow}
+        WHERE COALESCE(is_shadow, false) = true
         ORDER BY created_at DESC NULLS LAST
         LIMIT 500
     """
@@ -595,47 +523,31 @@ def load_shadow_trades_db() -> pd.DataFrame:
 
     for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
     df["entry"] = pd.to_numeric(df.get("entry", 0.0), errors="coerce").fillna(0.0)
     df["result_r"] = pd.to_numeric(df.get("result_r", 0.0), errors="coerce").fillna(0.0)
-
-    if "target" in df.columns:
-        df["exit_price"] = pd.to_numeric(df["target"], errors="coerce").fillna(0.0)
-    else:
-        df["exit_price"] = 0.0
-
-    df["pnl"] = df["result_r"]
+    df["exit_price"] = pd.to_numeric(df.get("target", 0.0), errors="coerce").fillna(0.0)
 
     if "outcome" not in df.columns:
-        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+        df["outcome"] = df["result_r"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
     else:
         df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
 
-    if "created_at" in df.columns:
-        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-    else:
-        df["datetime_raw"] = pd.NaT
-
+    df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
     df["datetime"] = df["datetime_raw"].apply(format_dt_short)
     df["trade_type"] = "SHADOW"
     df["entry_price"] = df["entry"]
+    df["pnl"] = df["result_r"]
     return df
 
 
 def load_positions_db() -> pd.DataFrame:
-    candidate_tables = [
-        "open_positions",
-        "positions",
-        "open_trades",
-        "live_positions",
-        "paper_positions",
-    ]
-    for table_name in candidate_tables:
+    for table_name in ["open_positions", "positions", "open_trades", "live_positions", "paper_positions"]:
         if table_exists(table_name):
             cols = get_table_columns(table_name)
             if cols:
-                sql = f"SELECT {', '.join(cols)} FROM public.{table_name} ORDER BY created_at DESC NULLS LAST LIMIT 200"
+                sql = f"SELECT {', '.join(cols)} FROM public.{table_name} LIMIT 200"
                 df = read_sql_df(sql)
                 if not df.empty:
                     return df
@@ -669,7 +581,7 @@ def load_scoreboard_db() -> pd.DataFrame:
 
     for col in ["n_total", "n_win", "n_loss", "winrate", "avg_r", "expectancy"]:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
     if "updated_at" in df.columns:
         df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True).dt.strftime("%Y.%m.%d %H:%M:%S")
@@ -677,11 +589,10 @@ def load_scoreboard_db() -> pd.DataFrame:
     return df
 
 
-def build_activity_feed(
-    orders_df: pd.DataFrame,
-    real_df: pd.DataFrame,
-    shadow_df: pd.DataFrame,
-) -> List[Dict[str, Any]]:
+# ==========================================================
+# BUILDERS
+# ==========================================================
+def build_activity_feed(orders_df: pd.DataFrame, real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> List[Dict[str, Any]]:
     feed: List[Dict[str, Any]] = []
 
     if not orders_df.empty:
@@ -746,20 +657,10 @@ def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.Da
                 "ts": ts,
                 "real_profit": 0.0,
                 "real_loss": 0.0,
-                "shadow_profit": 0.0,
+                "shadow_profit": pnl,
                 "missed_good": max(pnl, 0.0),
                 "missed_bad": min(pnl, 0.0),
             })
-
-            if pnl != 0:
-                rows.append({
-                    "ts": ts,
-                    "real_profit": 0.0,
-                    "real_loss": 0.0,
-                    "shadow_profit": pnl,
-                    "missed_good": 0.0,
-                    "missed_bad": 0.0,
-                })
 
     df = pd.DataFrame(rows)
     if df.empty:
@@ -776,182 +677,156 @@ def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.Da
     return df
 
 
+def render_perf_card(title: str, value: str, color: str):
+    st.markdown(
+        f"""
+        <div style="
+            background:#111827;
+            border:1px solid #1f2937;
+            border-left:6px solid {color};
+            border-radius:18px;
+            padding:18px 18px 14px 18px;
+            min-height:110px;
+        ">
+            <div style="color:#94a3b8;font-size:14px;font-weight:600;margin-bottom:10px;">{title}</div>
+            <div style="color:{color};font-size:28px;font-weight:800;line-height:1.1;">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_status_card(title: str, value: str, ok: bool = True):
+    color = "#2ecc71" if ok else "#ff5a5f"
+    st.markdown(
+        f"""
+        <div style="
+            background:#0f172a;
+            border:1px solid #1e293b;
+            border-left:6px solid {color};
+            border-radius:16px;
+            padding:14px 16px;
+            margin-bottom:10px;
+        ">
+            <div style="color:#94a3b8;font-size:13px;font-weight:600;">{title}</div>
+            <div style="color:{color};font-size:20px;font-weight:800;margin-top:6px;">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ==========================================================
-# UI STYLE
+# PAGE CONFIG + CSS
 # ==========================================================
 st.set_page_config(page_title="Crypto AI Terminal", layout="wide")
 
 st.markdown("""
 <style>
-    .stApp {
-        background: #0a0f18;
-        color: #f8fafc;
-    }
-    .block-container {
-        max-width: 1800px;
-        padding-top: 1rem;
-        padding-bottom: 2rem;
-    }
+    .stApp { background:#0a0f18; color:#f8fafc; }
+    .block-container { max-width:1800px; padding-top:1rem; padding-bottom:2rem; }
     div[data-testid="stMetric"] {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 18px;
-        padding: 10px 14px;
+        background:#111827;
+        border:1px solid #1f2937;
+        border-radius:18px;
+        padding:10px 14px;
     }
-    div[data-testid="stMetric"] label {
-        color: #94a3b8 !important;
-    }
-    div[data-testid="stMetricValue"] {
-        color: #ffffff !important;
-    }
-    button[role="tab"] {
-        color: #e5e7eb !important;
-        font-weight: 700 !important;
-    }
+    div[data-testid="stMetric"] label { color:#94a3b8 !important; }
+    div[data-testid="stMetricValue"] { color:#ffffff !important; }
+    button[role="tab"] { color:#e5e7eb !important; font-weight:700 !important; }
     .terminal-box {
-        background: #0f172a;
-        border: 1px solid #1e293b;
-        border-radius: 22px;
-        padding: 16px;
-        height: 100%;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+        background:#0f172a;
+        border:1px solid #1e293b;
+        border-radius:22px;
+        padding:16px;
+        height:100%;
+        box-shadow:0 10px 30px rgba(0,0,0,0.25);
     }
     .section-title {
-        font-size: 20px;
-        font-weight: 800;
-        color: #f8fafc;
-        margin-bottom: 14px;
+        font-size:20px;
+        font-weight:800;
+        color:#f8fafc;
+        margin-bottom:14px;
     }
-    .subtle {
-        color: #94a3b8;
-        font-size: 13px;
-    }
+    .subtle { color:#94a3b8; font-size:13px; }
     .info-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 8px 0;
-        border-bottom: 1px solid rgba(255,255,255,0.06);
-        font-size: 14px;
+        display:flex;
+        justify-content:space-between;
+        padding:8px 0;
+        border-bottom:1px solid rgba(255,255,255,0.06);
+        font-size:14px;
     }
-    .info-left {
-        color: #cbd5e1;
-        font-weight: 600;
-    }
-    .info-right {
-        color: #ffffff;
-        font-weight: 700;
-        text-align: right;
-    }
+    .info-left { color:#cbd5e1; font-weight:600; }
+    .info-right { color:#ffffff; font-weight:700; text-align:right; }
     .legend-item {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        color: #e5e7eb;
-        font-size: 13px;
-        font-weight: 600;
+        display:flex; align-items:center; gap:10px;
+        color:#e5e7eb; font-size:13px; font-weight:600;
     }
     .dot {
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        display: inline-block;
+        width:14px; height:14px; border-radius:50%; display:inline-block;
     }
     .deal-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        border-bottom: 1px solid rgba(255,255,255,0.05);
-        padding: 14px 4px;
+        display:flex; justify-content:space-between; align-items:flex-start;
+        border-bottom:1px solid rgba(255,255,255,0.05); padding:14px 4px;
     }
-    .deal-left {
-        width: 68%;
-    }
-    .deal-main {
-        font-size: 20px;
-        font-weight: 800;
-        color: #f8fafc;
-        line-height: 1.2;
-    }
-    .deal-sub {
-        color: #cbd5e1;
-        margin-top: 4px;
-        font-size: 14px;
-    }
-    .deal-right {
-        width: 32%;
-        text-align: right;
-    }
-    .deal-dt {
-        color: #94a3b8;
-        font-size: 12px;
-        margin-bottom: 8px;
-    }
-    .deal-pnl {
-        font-size: 28px;
-        font-weight: 800;
-        line-height: 1;
-    }
+    .deal-left { width:68%; }
+    .deal-main { font-size:20px; font-weight:800; color:#f8fafc; line-height:1.2; }
+    .deal-sub { color:#cbd5e1; margin-top:4px; font-size:14px; }
+    .deal-right { width:32%; text-align:right; }
+    .deal-dt { color:#94a3b8; font-size:12px; margin-bottom:8px; }
+    .deal-pnl { font-size:28px; font-weight:800; line-height:1; }
     .activity-item {
-        border-bottom: 1px solid rgba(255,255,255,0.05);
-        padding: 10px 0;
+        border-bottom:1px solid rgba(255,255,255,0.05);
+        padding:10px 0;
     }
-    .activity-title {
-        color: #f8fafc;
-        font-weight: 700;
-        font-size: 14px;
-    }
-    .activity-sub {
-        color: #94a3b8;
-        font-size: 13px;
-        margin-top: 3px;
-    }
-    .small-box {
-        background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
-        border: 1px solid #1f2937;
-        border-radius: 16px;
-        padding: 14px;
-        box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-    }
-    .panel-highlight {
-        background: linear-gradient(180deg, #111827 0%, #0f172a 100%);
-        border: 1px solid #1f2937;
-        border-left: 6px solid #5aa2ff;
-        border-radius: 18px;
-        padding: 16px;
-        margin-bottom: 12px;
-    }
+    .activity-title { color:#f8fafc; font-weight:700; font-size:14px; }
+    .activity-sub { color:#94a3b8; font-size:13px; margin-top:3px; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ==========================================================
-# DATA LOAD
+# UI FIRST
 # ==========================================================
-try:
-    _, refresh_state = maybe_auto_refresh_snapshot()
-except Exception as e:
-    refresh_state = f"auto-refresh faalde: {e}"
+st.markdown("## Crypto AI Terminal")
+status_placeholder = st.empty()
+loading_box = st.empty()
 
-snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
+status_placeholder.caption("Dashboard wordt veilig geladen...")
 
-positions_df = load_positions_db()
-orders_df = load_pending_orders_db()
-real_df = load_real_trades_db()
-shadow_df = load_shadow_trades_db()
-scoreboard_df = load_scoreboard_db()
+with loading_box.container():
+    st.info("Bezig met laden van snapshot, Postgres en grafieken...")
 
-feed = build_activity_feed(orders_df, real_df, shadow_df)
-chart_df = build_main_chart_df(real_df, shadow_df)
+
+# ==========================================================
+# SAFE DATA LOAD
+# ==========================================================
+refresh_state = "unknown"
+
+_ = run_safe(maybe_auto_refresh_snapshot, (None, "snapshot check skipped"))
+if _:
+    _, refresh_state = _
+
+snapshot, snapshot_err = run_safe(lambda: safe_read_json(SNAPSHOT_PATH), (None, "snapshot read failed"))
+
+positions_df = run_safe(load_positions_db, pd.DataFrame([]))
+orders_df = run_safe(load_pending_orders_db, pd.DataFrame([]))
+real_df = run_safe(load_real_trades_db, pd.DataFrame([]))
+shadow_df = run_safe(load_shadow_trades_db, pd.DataFrame([]))
+scoreboard_df = run_safe(load_scoreboard_db, pd.DataFrame([]))
+
+feed = run_safe(lambda: build_activity_feed(orders_df, real_df, shadow_df), [])
+chart_df = run_safe(lambda: build_main_chart_df(real_df, shadow_df), pd.DataFrame([]))
 
 eur_available = safe_float((snapshot or {}).get("eur_available"), 0.0)
 crypto_assets_eur = safe_float((snapshot or {}).get("crypto_assets_eur"), 0.0)
 total_portfolio_eur = safe_float((snapshot or {}).get("total_portfolio_eur"), 0.0)
 
-real_profit = float(pd.to_numeric(real_df["pnl"], errors="coerce").fillna(0).sum()) if not real_df.empty else 0.0
-shadow_profit = float(pd.to_numeric(shadow_df["pnl"], errors="coerce").fillna(0).sum()) if not shadow_df.empty else 0.0
+real_profit = float(pd.to_numeric(real_df["pnl"], errors="coerce").fillna(0).sum()) if not real_df.empty and "pnl" in real_df.columns else 0.0
+shadow_profit = float(pd.to_numeric(shadow_df["pnl"], errors="coerce").fillna(0).sum()) if not shadow_df.empty and "pnl" in shadow_df.columns else 0.0
 
 today_pnl = 0.0
-if not real_df.empty:
+if not real_df.empty and "datetime_raw" in real_df.columns:
     tmp_real = real_df.copy()
     tmp_real["date_only"] = tmp_real["datetime_raw"].dt.date
     if not tmp_real["date_only"].isna().all():
@@ -965,7 +840,7 @@ missed_count = len(shadow_df) if not shadow_df.empty else 0
 missed_good_count = 0
 missed_bad_count = 0
 shadow_winrate = 0.0
-if not shadow_df.empty:
+if not shadow_df.empty and "pnl" in shadow_df.columns:
     pnl_series_shadow = pd.to_numeric(shadow_df["pnl"], errors="coerce").fillna(0.0)
     missed_good_count = int((pnl_series_shadow > 0).sum())
     missed_bad_count = int((pnl_series_shadow < 0).sum())
@@ -973,19 +848,21 @@ if not shadow_df.empty:
     shadow_winrate = (missed_good_count / total_shadow_decisions * 100.0) if total_shadow_decisions else 0.0
 
 real_winrate = 0.0
-if not real_df.empty:
+if not real_df.empty and "pnl" in real_df.columns:
     pnl_series_real = pd.to_numeric(real_df["pnl"], errors="coerce").fillna(0.0)
     wins_real = int((pnl_series_real > 0).sum())
     valid_real = int((pnl_series_real != 0).sum())
     real_winrate = (wins_real / valid_real * 100.0) if valid_real else 0.0
 
 
-# ==========================================================
-# HEADER
-# ==========================================================
-st.markdown("## Crypto AI Terminal")
-st.caption(f"Snapshot status: {refresh_state} | Data source: {'Postgres' if db_ready() else 'Geen DATABASE_URL'}")
+# klaar met laden
+loading_box.empty()
+status_placeholder.caption(f"Snapshot status: {refresh_state} | Data source: {'Postgres' if db_ready() else 'Geen DATABASE_URL'}")
 
+
+# ==========================================================
+# METRICS
+# ==========================================================
 top_metrics_1 = st.columns(4)
 top_metrics_1[0].metric("Balance", format_money(eur_available))
 top_metrics_1[1].metric("Crypto", format_money(crypto_assets_eur))
@@ -1014,12 +891,16 @@ with col_left:
         st.markdown('<div class="subtle">Geen pending Pre-BUY gevonden in Postgres.</div>', unsafe_allow_html=True)
     else:
         best = orders_df.iloc[0]
-        chance_val = safe_int(best.get("chance"), 0)
-        panel_color = "#5aa2ff" if chance_val >= 85 else "#f59e0b"
-
         st.markdown(
             f"""
-            <div class="panel-highlight" style="border-left-color:{panel_color};">
+            <div style="
+                background:#111827;
+                border:1px solid #1f2937;
+                border-left:6px solid #5aa2ff;
+                border-radius:18px;
+                padding:16px;
+                margin-bottom:12px;
+            ">
                 <div style="font-size:26px;font-weight:900;color:#f8fafc;">{safe_str(best.get('symbol'), '-')}</div>
                 <div style="margin-top:6px;color:#94a3b8;font-size:13px;font-weight:600;">
                     {safe_str(best.get('setup_type'), '-')} • {safe_str(best.get('regime'), '-')}
@@ -1071,38 +952,28 @@ with col_center:
         fig = go.Figure()
 
         fig.add_trace(go.Scatter(
-            x=chart_df["ts"],
-            y=chart_df["real_profit"],
-            mode="lines",
-            name="Echte winst",
+            x=chart_df["ts"], y=chart_df["real_profit"],
+            mode="lines", name="Echte winst",
             line=dict(color="#5aa2ff", width=4),
         ))
         fig.add_trace(go.Scatter(
-            x=chart_df["ts"],
-            y=chart_df["real_loss"],
-            mode="lines",
-            name="Echte verlies",
+            x=chart_df["ts"], y=chart_df["real_loss"],
+            mode="lines", name="Echte verlies",
             line=dict(color="#ff5a5f", width=4),
         ))
         fig.add_trace(go.Scatter(
-            x=chart_df["ts"],
-            y=chart_df["shadow_profit"],
-            mode="lines",
-            name="Mogelijke winst shadow trades",
+            x=chart_df["ts"], y=chart_df["shadow_profit"],
+            mode="lines", name="Shadow profit",
             line=dict(color="#b0b7c3", width=4),
         ))
         fig.add_trace(go.Scatter(
-            x=chart_df["ts"],
-            y=chart_df["missed_good"],
-            mode="lines",
-            name="Gemiste trade was goed",
+            x=chart_df["ts"], y=chart_df["missed_good"],
+            mode="lines", name="Gemiste trade goed",
             line=dict(color="#2ecc71", width=4),
         ))
         fig.add_trace(go.Scatter(
-            x=chart_df["ts"],
-            y=chart_df["missed_bad"],
-            mode="lines",
-            name="Gemiste trade was slecht",
+            x=chart_df["ts"], y=chart_df["missed_bad"],
+            mode="lines", name="Gemiste trade slecht",
             line=dict(color="#ff8c42", width=4),
         ))
 
@@ -1120,16 +991,12 @@ with col_center:
         st.plotly_chart(fig, use_container_width=True)
 
     perf1, perf2, perf3, perf4 = st.columns(4)
-
     with perf1:
         render_perf_card("Real Profit", format_pnl(real_profit), pnl_color(real_profit, "REAL"))
-
     with perf2:
         render_perf_card("Shadow Profit", format_pnl(shadow_profit), pnl_color(shadow_profit, "SHADOW"))
-
     with perf3:
         render_perf_card("Real Winrate", f"{real_winrate:.1f}%", "#5aa2ff")
-
     with perf4:
         render_perf_card("Shadow Winrate", f"{shadow_winrate:.1f}%", "#2ecc71" if shadow_winrate >= 50 else "#ff8c42")
 
@@ -1144,18 +1011,17 @@ with col_right:
     else:
         for item in feed:
             kind = item.get("kind", "")
+            color = "#f59e0b"
             if kind == "real":
                 color = "#5aa2ff"
             elif kind == "shadow":
                 sub_txt = safe_str(item.get("sub"), "").upper()
-                if "LOSS" in sub_txt:
-                    color = "#ff8c42"
-                elif "WIN" in sub_txt:
+                if "WIN" in sub_txt:
                     color = "#2ecc71"
+                elif "LOSS" in sub_txt:
+                    color = "#ff8c42"
                 else:
                     color = "#b0b7c3"
-            else:
-                color = "#f59e0b"
 
             st.markdown(
                 f"""
@@ -1170,16 +1036,11 @@ with col_right:
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="section-title">Bot Health</div>', unsafe_allow_html=True)
 
-    health_items = [
-        ("DATABASE_URL", f"OK", db_ready()),
-        ("pending_approvals", f"{table_count('pending_approvals')}", table_exists("pending_approvals")),
-        ("experience_trades", f"{table_count('experience_trades')}", table_exists("experience_trades")),
-        ("experience_scoreboard", f"{table_count('experience_scoreboard')}", table_exists("experience_scoreboard")),
-        ("snapshot file", "OK", file_meta(SNAPSHOT_PATH).get("exists")),
-    ]
-
-    for title, value, ok in health_items:
-        render_status_card(title, value if ok else "MIST", bool(ok))
+    render_status_card("DATABASE_URL", "OK" if db_ready() else "MIST", db_ready())
+    render_status_card("pending_approvals", str(table_count("pending_approvals")) if table_exists("pending_approvals") else "MIST", table_exists("pending_approvals"))
+    render_status_card("experience_trades", str(table_count("experience_trades")) if table_exists("experience_trades") else "MIST", table_exists("experience_trades"))
+    render_status_card("experience_scoreboard", str(table_count("experience_scoreboard")) if table_exists("experience_scoreboard") else "MIST", table_exists("experience_scoreboard"))
+    render_status_card("snapshot file", "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST", file_meta(SNAPSHOT_PATH).get("exists"))
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1194,7 +1055,7 @@ tabs = st.tabs(["Positions", "Orders", "Deals", "Shadow Trades", "Performance", 
 with tabs[0]:
     st.subheader("Open Positions")
     if positions_df.empty:
-        st.info("Geen open positions gevonden in Postgres. Grote kans dat open trades nog niet in een aparte positie-tabel worden opgeslagen.")
+        st.info("Geen open positions gevonden in Postgres.")
     else:
         st.dataframe(positions_df, use_container_width=True, hide_index=True)
 
@@ -1222,8 +1083,6 @@ with tabs[2]:
             exit_price = safe_float(row.get("exit_price"), 0.0)
             pnl = safe_float(row.get("pnl"), 0.0)
             dt_txt = safe_str(row.get("datetime"), "-")
-            sc = outcome_color(outcome, "REAL")
-            pc = pnl_color(pnl, "REAL")
 
             st.markdown(
                 f"""
@@ -1231,13 +1090,13 @@ with tabs[2]:
                     <div class="deal-left">
                         <div class="deal-main">
                             {sym}
-                            <span style="color:{sc};font-weight:800;"> {outcome}</span>
+                            <span style="color:{outcome_color(outcome, 'REAL')};font-weight:800;"> {outcome}</span>
                         </div>
                         <div class="deal-sub">{entry_price:.6f} → {exit_price:.6f}</div>
                     </div>
                     <div class="deal-right">
                         <div class="deal-dt">{dt_txt}</div>
-                        <div class="deal-pnl" style="color:{pc};">{format_pnl(pnl)}</div>
+                        <div class="deal-pnl" style="color:{pnl_color(pnl, 'REAL')};">{format_pnl(pnl)}</div>
                     </div>
                 </div>
                 """,
@@ -1256,8 +1115,6 @@ with tabs[3]:
             exit_price = safe_float(row.get("exit_price"), 0.0)
             pnl = safe_float(row.get("pnl"), 0.0)
             dt_txt = safe_str(row.get("datetime"), "-")
-            oc = outcome_color(outcome, "SHADOW")
-            pc = pnl_color(pnl, "SHADOW")
 
             st.markdown(
                 f"""
@@ -1265,13 +1122,13 @@ with tabs[3]:
                     <div class="deal-left">
                         <div class="deal-main">
                             {sym}
-                            <span style="color:{oc};font-weight:800;"> {outcome}</span>
+                            <span style="color:{outcome_color(outcome, 'SHADOW')};font-weight:800;"> {outcome}</span>
                         </div>
                         <div class="deal-sub">{entry_price:.6f} → {exit_price:.6f}</div>
                     </div>
                     <div class="deal-right">
                         <div class="deal-dt">{dt_txt}</div>
-                        <div class="deal-pnl" style="color:{pc};">{format_pnl(pnl)}</div>
+                        <div class="deal-pnl" style="color:{pnl_color(pnl, 'SHADOW')};">{format_pnl(pnl)}</div>
                     </div>
                 </div>
                 """,
