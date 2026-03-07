@@ -15,8 +15,10 @@ import psycopg2.extras
 # ==========================================================
 DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
 
-# Alleen als noodbak/fallback als DB ontbreekt
-DATA_DIR = (os.getenv("DATA_DIR") or "data").strip()
+# Belangrijk:
+# standaard naar /data i.p.v. "data"
+# zodat alle Render services dezelfde persistente disk gebruiken
+DATA_DIR = (os.getenv("DATA_DIR") or "/data").strip()
 SHADOW_PATH = os.path.join(DATA_DIR, "shadow_trades.json")
 
 
@@ -88,6 +90,12 @@ def save_shadows_file(shadows: List[Dict[str, Any]]) -> None:
         json.dump(shadows, f, indent=2, ensure_ascii=False)
 
 
+# Belangrijk:
+# alias zodat trade_monitor.py gewoon load_shadows kan importeren
+def load_shadows() -> List[Dict[str, Any]]:
+    return load_shadows_file()
+
+
 def calc_r_result(entry: float, stop: float, exit_price: float) -> float:
     risk = entry - stop
     if risk <= 0:
@@ -134,7 +142,6 @@ def ensure_schema() -> None:
                 );
             """)
 
-            # add missing columns if needed
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS exchange TEXT;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS symbol TEXT;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS timeframe TEXT;")
@@ -200,7 +207,7 @@ def create_shadow(
         "stop": safe_float(stop),
         "target": safe_float(target),
         "result_r": None,
-        "outcome": None,
+        "outcome": "UNKNOWN",
         "is_shadow": True,
         "created_at": now_utc(),
         "closed_at": None,
@@ -261,7 +268,7 @@ def create_shadow(
         "confidence": safe_float(confidence),
         "status": "OPEN",
         "result_r": None,
-        "outcome": None,
+        "outcome": "UNKNOWN",
         "opened_at": now_ts(),
         "closed_at": None,
     })
@@ -275,12 +282,12 @@ def create_shadow(
 def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Haalt open shadow trades op.
-    Open = is_shadow=true en outcome/result nog niet ingevuld.
+    Open = is_shadow=true en nog niet gesloten.
     """
 
     if db_ready():
         ensure_schema()
-        where = "WHERE is_shadow = TRUE AND (outcome IS NULL OR closed_at IS NULL)"
+        where = "WHERE is_shadow = TRUE AND closed_at IS NULL"
         params: List[Any] = []
 
         if symbol:
@@ -307,12 +314,18 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
     # fallback file
     out = []
     for s in load_shadows_file():
-        if s.get("status") != "OPEN":
+        if _is_file_shadow_open(s) is False:
             continue
         if symbol and s.get("symbol") != symbol:
             continue
         out.append(s)
     return out
+
+
+def _is_file_shadow_open(shadow: Dict[str, Any]) -> bool:
+    status = safe_str(shadow.get("status"), "OPEN").upper()
+    closed_at = shadow.get("closed_at")
+    return status == "OPEN" and not closed_at
 
 
 # ==========================================================
@@ -355,13 +368,11 @@ def close_shadow(
                     UPDATE public.experience_trades
                     SET result_r = %s,
                         outcome = %s,
-                        closed_at = NOW(),
-                        target = COALESCE(target, %s)
+                        closed_at = NOW()
                     WHERE id = %s
                 """, (
                     result_r,
                     final_outcome,
-                    exit_price,
                     shadow_id,
                 ))
             conn.commit()
@@ -460,7 +471,7 @@ def list_recent_shadows(limit: int = 100, include_open: bool = True) -> List[Dic
         ensure_schema()
         where = "WHERE is_shadow = TRUE"
         if not include_open:
-            where += " AND outcome IS NOT NULL AND closed_at IS NOT NULL"
+            where += " AND closed_at IS NOT NULL"
 
         sql = f"""
             SELECT
@@ -480,7 +491,7 @@ def list_recent_shadows(limit: int = 100, include_open: bool = True) -> List[Dic
 
     shadows = load_shadows_file()
     if not include_open:
-        shadows = [s for s in shadows if s.get("status") == "CLOSED"]
+        shadows = [s for s in shadows if safe_str(s.get("status")).upper() == "CLOSED"]
     return list(reversed(shadows))[:limit]
 
 
@@ -493,13 +504,14 @@ def shadow_stats() -> Dict[str, Any]:
     wins = 0
     losses = 0
     flats = 0
+    unknown = 0
     sum_r = 0.0
 
     for r in rows:
         outcome = safe_str(r.get("outcome"), "").upper()
         closed_at = r.get("closed_at")
 
-        if not closed_at or not outcome:
+        if not closed_at:
             open_count += 1
             continue
 
@@ -511,8 +523,10 @@ def shadow_stats() -> Dict[str, Any]:
             wins += 1
         elif outcome == "LOSS":
             losses += 1
-        else:
+        elif outcome == "FLAT":
             flats += 1
+        else:
+            unknown += 1
 
     winrate = (wins / closed_count * 100.0) if closed_count else 0.0
     avg_r = (sum_r / closed_count) if closed_count else 0.0
@@ -524,8 +538,10 @@ def shadow_stats() -> Dict[str, Any]:
         "wins": wins,
         "losses": losses,
         "flats": flats,
+        "unknown": unknown,
         "winrate": round(winrate, 2),
         "avg_r": round(avg_r, 4),
+        "storage_path": SHADOW_PATH,
     }
 
 
@@ -535,4 +551,6 @@ def shadow_stats() -> Dict[str, Any]:
 if __name__ == "__main__":
     ensure_schema()
     print("DB ready:", db_ready())
+    print("DATA_DIR:", DATA_DIR)
+    print("SHADOW_PATH:", SHADOW_PATH)
     print("Shadow stats:", shadow_stats())
