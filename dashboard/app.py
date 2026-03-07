@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 import requests
 import pandas as pd
+import psycopg2
+import psycopg2.extras
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -17,26 +19,13 @@ import plotly.graph_objects as go
 # ==========================================================
 API_KEY = (os.getenv("BITVAVO_API_KEY", "") or "").strip().strip('"').strip("'")
 API_SECRET = (os.getenv("BITVAVO_API_SECRET", "") or "").strip().strip('"').strip("'")
+DATABASE_URL = (os.getenv("DATABASE_URL", "") or "").strip()
 
 BASE_URL = "https://api.bitvavo.com"
 ACCESS_WINDOW_MS = os.getenv("BITVAVO_ACCESS_WINDOW_MS", "10000")
 
 SNAPSHOT_PATH = os.getenv("SNAPSHOT_PATH", "/data/account_snapshot.json")
 PORTFOLIO_HISTORY_CSV = os.getenv("PORTFOLIO_HISTORY_CSV", "/data/portfolio_history.csv")
-
-PENDING_PATH = os.getenv("PENDING_PATH", "/data/pending_approvals.json")
-PAPER_STATE_PATH = os.getenv("PAPER_STATE_PATH", "/data/paper_state.json")
-LIVE_STATE_PATH = os.getenv("LIVE_STATE_PATH", "/data/live_state.json")
-
-PAPER_TRADES_CSV = os.getenv("PAPER_TRADES_CSV", "/data/paper_trades.csv")
-LIVE_TRADES_CSV = os.getenv("LIVE_TRADES_CSV", "/data/live_trades.csv")
-
-SHADOW_TRADES_CSV = os.getenv("SHADOW_TRADES_CSV", "/data/shadow_trades.csv")
-SHADOW_TRADES_JSON = os.getenv("SHADOW_TRADES_JSON", "/data/shadow_trades.json")
-
-AI_USAGE_PATH = os.getenv("AI_USAGE_PATH", "/data/ai_usage.json")
-PREBUY_STATE_PATH = os.getenv("PREBUY_STATE_PATH", "/data/prebuy_state.json")
-PREBUY_PAYLOAD_PATH = os.getenv("PREBUY_PAYLOAD_PATH", "/data/prebuy_payload.json")
 
 AUTO_REFRESH_MINUTES = int(os.getenv("AUTO_REFRESH_MINUTES", "15"))
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "20"))
@@ -145,20 +134,6 @@ def safe_read_csv(path: str):
         return None, f"CSV leesfout ({path}): {e}"
 
 
-def read_json_meta_field(meta_value: Any, field_name: str, default=None):
-    if meta_value is None:
-        return default
-    try:
-        if isinstance(meta_value, dict):
-            return meta_value.get(field_name, default)
-        parsed = json.loads(str(meta_value))
-        if isinstance(parsed, dict):
-            return parsed.get(field_name, default)
-    except Exception:
-        pass
-    return default
-
-
 def side_color(side: str) -> str:
     s = safe_str(side).lower()
     if s == "buy":
@@ -182,11 +157,76 @@ def outcome_color(outcome: str) -> str:
 
 
 # ==========================================================
+# POSTGRES
+# ==========================================================
+@st.cache_resource(show_spinner=False)
+def get_db_conn():
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
+
+
+def db_ready() -> bool:
+    return bool(DATABASE_URL)
+
+
+def table_exists(table_name: str, schema: str = "public") -> bool:
+    conn = get_db_conn()
+    if conn is None:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT EXISTS(
+                    SELECT 1
+                    FROM information_schema.tables
+                    WHERE table_schema=%s AND table_name=%s
+                )
+                """,
+                (schema, table_name),
+            )
+            return bool(cur.fetchone()[0])
+    except Exception:
+        return False
+
+
+def get_table_columns(table_name: str, schema: str = "public") -> List[str]:
+    conn = get_db_conn()
+    if conn is None:
+        return []
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema=%s AND table_name=%s
+                ORDER BY ordinal_position
+                """,
+                (schema, table_name),
+            )
+            return [row[0] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def read_sql_df(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
+    conn = get_db_conn()
+    if conn is None:
+        return pd.DataFrame([])
+    try:
+        return pd.read_sql_query(sql, conn, params=params)
+    except Exception:
+        return pd.DataFrame([])
+
+
+# ==========================================================
 # BITVAVO PRIVATE REQUEST
 # ==========================================================
 def bitvavo_request(method: str, path: str, body: str = ""):
     if not API_KEY or not API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreekt in Render Environment Variables.")
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
 
     method_u = method.upper()
     timestamp = str(int(time.time() * 1000))
@@ -229,7 +269,7 @@ def bitvavo_request(method: str, path: str, body: str = ""):
 # ==========================================================
 # PUBLIC PRICES
 # ==========================================================
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=30, show_spinner=False)
 def fetch_all_market_prices():
     url = f"{BASE_URL}/v2/ticker/price"
     r = requests.get(url, timeout=HTTP_TIMEOUT)
@@ -270,7 +310,7 @@ def price_in_eur(symbol: str, prices: dict):
 
 
 # ==========================================================
-# SNAPSHOT BUILDER
+# SNAPSHOT (mag nog via file)
 # ==========================================================
 def build_snapshot_with_eur_values():
     balances = bitvavo_request("GET", "/v2/balance")
@@ -356,212 +396,183 @@ def maybe_auto_refresh_snapshot():
 
 
 # ==========================================================
-# DATA LOADERS
+# LOADERS UIT POSTGRES
 # ==========================================================
-def load_state_positions() -> pd.DataFrame:
-    items = []
-
-    for source_name, path in [("paper", PAPER_STATE_PATH), ("live", LIVE_STATE_PATH)]:
-        data, err = safe_read_json(path)
-        if err or not data:
-            continue
-
-        positions = data.get("positions", {}) or {}
-        for symbol, pos in positions.items():
-            items.append({
-                "source": source_name,
-                "symbol": symbol,
-                "qty": safe_float(pos.get("qty") or pos.get("base_amount") or pos.get("position_size"), 0.0),
-                "entry": safe_float(pos.get("entry"), 0.0),
-                "stop_loss": safe_float(pos.get("stop_loss"), 0.0),
-                "target": safe_float(pos.get("target"), 0.0),
-                "opened_at": pos.get("opened_at"),
-                "prebuy_id": pos.get("prebuy_id"),
-                "setup_type": pos.get("setup_type"),
-                "regime": pos.get("regime"),
-                "label": pos.get("label"),
-                "chance": pos.get("chance"),
-                "score": pos.get("score"),
-                "live": bool(pos.get("live", source_name == "live")),
-            })
-
-    return pd.DataFrame(items)
-
-
-def load_pending_orders() -> pd.DataFrame:
-    data, err = safe_read_json(PENDING_PATH)
-    if err or not data:
+def load_pending_orders_db() -> pd.DataFrame:
+    if not table_exists("pending_approvals"):
         return pd.DataFrame([])
 
-    rows = []
-    if isinstance(data, list):
-        iterable = data
-    elif isinstance(data, dict):
-        iterable = list(data.values()) if all(isinstance(v, dict) for v in data.values()) else [data]
-    else:
-        iterable = []
+    cols = set(get_table_columns("pending_approvals"))
 
-    for row in iterable:
-        rows.append({
-            "id": row.get("id"),
-            "symbol": row.get("symbol"),
-            "status": row.get("status", "PENDING"),
-            "setup_type": row.get("setup_type"),
-            "regime": row.get("regime"),
-            "score": row.get("score"),
-            "chance": row.get("chance"),
-            "entry": safe_float(row.get("entry"), 0.0),
-            "stop": safe_float(row.get("stop"), 0.0),
-            "target": safe_float(row.get("target"), 0.0),
-            "expires_at": row.get("expires_at"),
-        })
+    wanted = [
+        "id", "symbol", "status", "setup_type", "regime",
+        "score", "chance", "confidence", "entry", "stop", "target",
+        "timeframe", "created_at", "expires_at"
+    ]
+    selected = [c for c in wanted if c in cols]
+    if not selected:
+        return pd.DataFrame([])
 
-    df = pd.DataFrame(rows)
-    if not df.empty and "chance" in df.columns:
-        df = df.sort_values(["chance", "score"], ascending=[False, False], na_position="last").reset_index(drop=True)
+    sql = f"""
+        SELECT {", ".join(selected)}
+        FROM public.pending_approvals
+        WHERE COALESCE(status, 'PENDING') IN ('PENDING', 'APPROVED')
+        ORDER BY COALESCE(chance, 0) DESC, COALESCE(score, 0) DESC, created_at DESC NULLS LAST
+        LIMIT 100
+    """
+    return read_sql_df(sql)
+
+
+def load_real_trades_db() -> pd.DataFrame:
+    if not table_exists("experience_trades"):
+        return pd.DataFrame([])
+
+    cols = set(get_table_columns("experience_trades"))
+
+    wanted = [
+        "symbol", "setup_type", "timeframe", "regime", "label",
+        "score", "raw_score", "chance", "confidence",
+        "entry", "stop", "target", "exit", "exit_price",
+        "result_r", "outcome", "is_shadow",
+        "created_at"
+    ]
+    selected = [c for c in wanted if c in cols]
+    if not selected:
+        return pd.DataFrame([])
+
+    where_shadow = "AND COALESCE(is_shadow, false) = false" if "is_shadow" in cols else ""
+    sql = f"""
+        SELECT {", ".join(selected)}
+        FROM public.experience_trades
+        WHERE 1=1
+        {where_shadow}
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 500
+    """
+    df = read_sql_df(sql)
+    if df.empty:
+        return df
+
+    if "exit_price" not in df.columns and "exit" in df.columns:
+        df["exit_price"] = df["exit"]
+    if "entry" not in df.columns:
+        df["entry"] = 0.0
+
+    df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
+    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+    df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
+
+    # omzetting van R naar euro-achtige lijn kan later preciezer
+    # voorlopig 1R = 1 eenheid in performancegrafiek, maar visueel wel bruikbaar
+    # als exit/entry en position size later beschikbaar zijn kan dat exact in € worden gemaakt
+    if "outcome" not in df.columns:
+        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+
+    df["trade_type"] = "REAL"
+    df["side"] = df["outcome"].apply(lambda x: "buy" if safe_str(x).upper() == "WIN" else "sell")
+    df["qty"] = 1.0
+    df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
+    df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
     return df
 
 
-def load_real_trade_history() -> pd.DataFrame:
-    all_rows = []
+def load_shadow_trades_db() -> pd.DataFrame:
+    if table_exists("experience_trades"):
+        cols = set(get_table_columns("experience_trades"))
+        wanted = [
+            "symbol", "setup_type", "timeframe", "regime", "label",
+            "score", "raw_score", "chance", "confidence",
+            "entry", "stop", "target", "exit", "exit_price",
+            "result_r", "outcome", "is_shadow",
+            "created_at"
+        ]
+        selected = [c for c in wanted if c in cols]
+        if selected:
+            where_shadow = "AND COALESCE(is_shadow, false) = true" if "is_shadow" in cols else ""
+            sql = f"""
+                SELECT {", ".join(selected)}
+                FROM public.experience_trades
+                WHERE 1=1
+                {where_shadow}
+                ORDER BY created_at DESC NULLS LAST
+                LIMIT 500
+            """
+            df = read_sql_df(sql)
+            if not df.empty:
+                if "exit_price" not in df.columns and "exit" in df.columns:
+                    df["exit_price"] = df["exit"]
+                if "entry" not in df.columns:
+                    df["entry"] = 0.0
 
-    for source_name, path in [("paper", PAPER_TRADES_CSV), ("live", LIVE_TRADES_CSV)]:
-        df, err = safe_read_csv(path)
-        if err or df is None or df.empty:
-            continue
+                df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
+                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+                df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
 
-        lower = {c.lower(): c for c in df.columns}
-        dt_col = lower.get("datetime") or lower.get("timestamp") or lower.get("time") or lower.get("ts")
-        symbol_col = lower.get("symbol")
-        side_col = lower.get("side")
-        price_col = lower.get("price")
-        qty_col = lower.get("qty")
-        pnl_col = lower.get("pnl")
-        meta_col = lower.get("meta")
+                if "outcome" not in df.columns:
+                    df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
 
-        for _, row in df.iterrows():
-            meta_val = row[meta_col] if meta_col else None
+                df["trade_type"] = "SHADOW"
+                df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
+                df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
+                return df
 
-            entry_from_meta = read_json_meta_field(meta_val, "entry")
-            exit_from_meta = read_json_meta_field(meta_val, "exit")
-            setup_from_meta = read_json_meta_field(meta_val, "setup_type")
-            regime_from_meta = read_json_meta_field(meta_val, "regime")
-            label_from_meta = read_json_meta_field(meta_val, "label")
-            prebuy_id_from_meta = read_json_meta_field(meta_val, "prebuy_id")
+    if table_exists("shadow_trades"):
+        cols = get_table_columns("shadow_trades")
+        sql = f"SELECT {', '.join(cols)} FROM public.shadow_trades ORDER BY created_at DESC NULLS LAST LIMIT 500"
+        df = read_sql_df(sql)
+        if not df.empty:
+            df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
+            df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+            df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
+            df["outcome"] = df.get("outcome", pd.Series(["FLAT"] * len(df)))
+            df["trade_type"] = "SHADOW"
+            df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
+            df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
+            return df
 
-            side = safe_str(row[side_col] if side_col else "").lower()
-            symbol = safe_str(row[symbol_col] if symbol_col else "")
-            price = safe_float(row[price_col] if price_col else 0.0, 0.0)
-            qty = safe_float(row[qty_col] if qty_col else 0.0, 0.0)
-            pnl = safe_float(row[pnl_col] if pnl_col else 0.0, 0.0)
-            dt_val = row[dt_col] if dt_col else None
-
-            entry_price = safe_float(entry_from_meta, 0.0)
-            exit_price = safe_float(exit_from_meta, 0.0)
-
-            if side == "buy":
-                if entry_price <= 0:
-                    entry_price = price
-                if exit_price <= 0:
-                    exit_price = price
-            else:
-                if exit_price <= 0:
-                    exit_price = price
-                if entry_price <= 0:
-                    entry_price = price
-
-            all_rows.append({
-                "trade_type": "REAL",
-                "source": source_name,
-                "datetime_raw": parse_dt(dt_val),
-                "datetime": format_dt_short(dt_val),
-                "symbol": symbol,
-                "side": side,
-                "qty": qty,
-                "entry_price": entry_price,
-                "exit_price": exit_price,
-                "price": price,
-                "pnl": pnl,
-                "setup_type": setup_from_meta,
-                "regime": regime_from_meta,
-                "label": label_from_meta,
-                "prebuy_id": prebuy_id_from_meta,
-            })
-
-    df_all = pd.DataFrame(all_rows)
-    if not df_all.empty:
-        df_all = df_all.sort_values("datetime_raw", ascending=False, na_position="last").reset_index(drop=True)
-    return df_all
+    return pd.DataFrame([])
 
 
-def load_shadow_trade_history() -> pd.DataFrame:
-    rows: List[Dict[str, Any]] = []
+def load_positions_db() -> pd.DataFrame:
+    # Robuuste poging; als positie-tabel niet bestaat blijft dit leeg
+    candidate_tables = [
+        "open_positions",
+        "positions",
+        "open_trades",
+        "live_positions",
+        "paper_positions",
+    ]
 
-    df_csv, _ = safe_read_csv(SHADOW_TRADES_CSV)
-    if df_csv is not None and not df_csv.empty:
-        lower = {c.lower(): c for c in df_csv.columns}
-        dt_col = lower.get("datetime") or lower.get("timestamp") or lower.get("time") or lower.get("ts")
-        symbol_col = lower.get("symbol")
-        entry_col = lower.get("entry") or lower.get("entry_price")
-        exit_col = lower.get("exit") or lower.get("exit_price")
-        pnl_col = lower.get("pnl") or lower.get("potential_pnl")
-        outcome_col = lower.get("outcome") or lower.get("result")
-        setup_col = lower.get("setup_type")
-        regime_col = lower.get("regime")
-        chance_col = lower.get("chance")
-        score_col = lower.get("score")
+    for table_name in candidate_tables:
+        if table_exists(table_name):
+            cols = get_table_columns(table_name)
+            if not cols:
+                continue
+            sql = f"SELECT {', '.join(cols)} FROM public.{table_name} ORDER BY created_at DESC NULLS LAST LIMIT 200"
+            df = read_sql_df(sql)
+            if not df.empty:
+                return df
 
-        for _, row in df_csv.iterrows():
-            outcome = safe_str(row[outcome_col] if outcome_col else "")
-            pnl = safe_float(row[pnl_col] if pnl_col else 0.0, 0.0)
+    return pd.DataFrame([])
 
-            if not outcome:
-                outcome = "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "FLAT"
 
-            rows.append({
-                "trade_type": "SHADOW",
-                "datetime_raw": parse_dt(row[dt_col] if dt_col else None),
-                "datetime": format_dt_short(row[dt_col] if dt_col else None),
-                "symbol": safe_str(row[symbol_col] if symbol_col else ""),
-                "entry_price": safe_float(row[entry_col] if entry_col else 0.0),
-                "exit_price": safe_float(row[exit_col] if exit_col else 0.0),
-                "pnl": pnl,
-                "outcome": outcome,
-                "setup_type": safe_str(row[setup_col] if setup_col else ""),
-                "regime": safe_str(row[regime_col] if regime_col else ""),
-                "chance": safe_int(row[chance_col] if chance_col else 0),
-                "score": safe_int(row[score_col] if score_col else 0),
-            })
+def load_scoreboard_db() -> pd.DataFrame:
+    if not table_exists("experience_scoreboard"):
+        return pd.DataFrame([])
 
-    if not rows:
-        data_json, _ = safe_read_json(SHADOW_TRADES_JSON)
-        if data_json:
-            iterable = data_json if isinstance(data_json, list) else list(data_json.values()) if isinstance(data_json, dict) else []
-            for row in iterable:
-                pnl = safe_float(row.get("pnl") or row.get("potential_pnl"), 0.0)
-                outcome = safe_str(row.get("outcome") or row.get("result"))
-                if not outcome:
-                    outcome = "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "FLAT"
+    cols = set(get_table_columns("experience_scoreboard"))
+    wanted = ["setup_type", "regime", "timeframe", "n", "avg_r", "win_rate", "avg_win_r", "avg_loss_r", "updated_at"]
+    selected = [c for c in wanted if c in cols]
+    if not selected:
+        return pd.DataFrame([])
 
-                rows.append({
-                    "trade_type": "SHADOW",
-                    "datetime_raw": parse_dt(row.get("datetime") or row.get("timestamp") or row.get("ts")),
-                    "datetime": format_dt_short(row.get("datetime") or row.get("timestamp") or row.get("ts")),
-                    "symbol": safe_str(row.get("symbol")),
-                    "entry_price": safe_float(row.get("entry") or row.get("entry_price"), 0.0),
-                    "exit_price": safe_float(row.get("exit") or row.get("exit_price"), 0.0),
-                    "pnl": pnl,
-                    "outcome": outcome,
-                    "setup_type": safe_str(row.get("setup_type")),
-                    "regime": safe_str(row.get("regime")),
-                    "chance": safe_int(row.get("chance"), 0),
-                    "score": safe_int(row.get("score"), 0),
-                })
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values("datetime_raw", ascending=False, na_position="last").reset_index(drop=True)
-    return df
+    sql = f"""
+        SELECT {", ".join(selected)}
+        FROM public.experience_scoreboard
+        ORDER BY n DESC NULLS LAST
+        LIMIT 100
+    """
+    return read_sql_df(sql)
 
 
 def build_activity_feed(
@@ -574,7 +585,7 @@ def build_activity_feed(
     if not orders_df.empty:
         for _, row in orders_df.head(5).iterrows():
             feed.append({
-                "ts": parse_dt(row.get("expires_at")),
+                "ts": parse_dt(row.get("created_at") or row.get("expires_at")),
                 "title": f"PRE-BUY {safe_str(row.get('symbol'), '-')}",
                 "sub": f"Chance {safe_int(row.get('chance'), 0)} | Score {safe_int(row.get('score'), 0)} | {safe_str(row.get('regime'), '-')}",
                 "kind": "prebuy",
@@ -585,19 +596,18 @@ def build_activity_feed(
             pnl = safe_float(row.get("pnl"), 0.0)
             feed.append({
                 "ts": row.get("datetime_raw"),
-                "title": f"{safe_str(row.get('symbol'), '-')} {safe_str(row.get('side'), '').upper()}",
-                "sub": f"Real trade | {format_pnl(pnl)}",
+                "title": f"{safe_str(row.get('symbol'), '-')} REAL",
+                "sub": f"Outcome {safe_str(row.get('outcome'), '-')} | {format_pnl(pnl)}",
                 "kind": "real",
             })
 
     if not shadow_df.empty:
         for _, row in shadow_df.head(8).iterrows():
             pnl = safe_float(row.get("pnl"), 0.0)
-            outcome = safe_str(row.get("outcome"), "-").upper()
             feed.append({
                 "ts": row.get("datetime_raw"),
                 "title": f"{safe_str(row.get('symbol'), '-')} SHADOW",
-                "sub": f"{outcome} | Potential {format_pnl(pnl)}",
+                "sub": f"Outcome {safe_str(row.get('outcome'), '-')} | Potential {format_pnl(pnl)}",
                 "kind": "shadow",
             })
 
@@ -607,8 +617,7 @@ def build_activity_feed(
             return pd.Timestamp.min.tz_localize("UTC")
         return ts
 
-    feed = sorted(feed, key=_sort_key, reverse=True)
-    return feed[:12]
+    return sorted(feed, key=_sort_key, reverse=True)[:15]
 
 
 def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.DataFrame:
@@ -646,7 +655,6 @@ def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.Da
 
     df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
     df = df.dropna(subset=["ts"]).sort_values("ts").reset_index(drop=True)
-
     if df.empty:
         return df
 
@@ -668,8 +676,8 @@ st.markdown("""
         color: #f8fafc;
     }
     .block-container {
-        max-width: 1500px;
-        padding-top: 1.2rem;
+        max-width: 1800px;
+        padding-top: 1rem;
         padding-bottom: 2rem;
     }
     div[data-testid="stMetric"] {
@@ -696,7 +704,7 @@ st.markdown("""
         height: 100%;
     }
     .section-title {
-        font-size: 17px;
+        font-size: 18px;
         font-weight: 800;
         color: #f8fafc;
         margin-bottom: 12px;
@@ -802,24 +810,21 @@ st.markdown("""
 
 
 # ==========================================================
-# REFRESH SNAPSHOT
+# DATA LOAD
 # ==========================================================
 try:
     _, refresh_state = maybe_auto_refresh_snapshot()
 except Exception as e:
     refresh_state = f"auto-refresh faalde: {e}"
 
-
-# ==========================================================
-# LOAD DATA
-# ==========================================================
 snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
 portfolio_hist, portfolio_hist_err = safe_read_csv(PORTFOLIO_HISTORY_CSV)
 
-positions_df = load_state_positions()
-orders_df = load_pending_orders()
-real_df = load_real_trade_history()
-shadow_df = load_shadow_trade_history()
+positions_df = load_positions_db()
+orders_df = load_pending_orders_db()
+real_df = load_real_trades_db()
+shadow_df = load_shadow_trades_db()
+scoreboard_df = load_scoreboard_db()
 
 feed = build_activity_feed(orders_df, real_df, shadow_df)
 chart_df = build_main_chart_df(real_df, shadow_df)
@@ -865,7 +870,7 @@ if not real_df.empty:
 # HEADER METRICS
 # ==========================================================
 st.markdown("## Crypto AI Terminal")
-st.caption(f"Snapshot status: {refresh_state}")
+st.caption(f"Snapshot status: {refresh_state} | Data source: {'Postgres' if db_ready() else 'Geen DATABASE_URL'}")
 
 top_metrics_1 = st.columns(4)
 top_metrics_1[0].metric("Balance", format_money(eur_available))
@@ -883,25 +888,23 @@ st.divider()
 
 
 # ==========================================================
-# TOP LAYOUT: LEFT / CENTER / RIGHT
+# TOP LAYOUT: SMALLER LEFT / BIGGER CENTER / SMALLER RIGHT
 # ==========================================================
-col_left, col_center, col_right = st.columns([1.05, 1.65, 1.0], gap="large")
+col_left, col_center, col_right = st.columns([0.8, 2.2, 0.8], gap="large")
 
-# --------------------------
-# LEFT: TRADE PANEL
-# --------------------------
 with col_left:
     st.markdown('<div class="terminal-box">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Trade Panel</div>', unsafe_allow_html=True)
 
     if orders_df.empty:
-        st.markdown('<div class="subtle">Geen pending Pre-BUY gevonden.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtle">Geen pending Pre-BUY gevonden in Postgres.</div>', unsafe_allow_html=True)
     else:
         best = orders_df.iloc[0]
+
         st.markdown(
             f"""
             <div class="small-box" style="margin-bottom:12px;">
-                <div style="font-size:22px;font-weight:800;color:#f8fafc;">{safe_str(best.get('symbol'), '-')}</div>
+                <div style="font-size:24px;font-weight:800;color:#f8fafc;">{safe_str(best.get('symbol'), '-')}</div>
                 <div style="margin-top:4px;color:#94a3b8;font-size:13px;">
                     {safe_str(best.get('setup_type'), '-')} • {safe_str(best.get('regime'), '-')}
                 </div>
@@ -913,9 +916,11 @@ with col_left:
         info_rows = [
             ("Chance", str(safe_int(best.get("chance"), 0))),
             ("Score", str(safe_int(best.get("score"), 0))),
+            ("Confidence", str(safe_int(best.get("confidence"), 0))),
             ("Entry", f"{safe_float(best.get('entry'), 0.0):.6f}"),
             ("Stop", f"{safe_float(best.get('stop'), 0.0):.6f}"),
             ("Target", f"{safe_float(best.get('target'), 0.0):.6f}"),
+            ("Timeframe", safe_str(best.get("timeframe"), "-")),
             ("Status", safe_str(best.get("status"), "PENDING")),
             ("Expires", format_dt_short(best.get("expires_at"))),
         ]
@@ -931,128 +936,88 @@ with col_left:
                 unsafe_allow_html=True,
             )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown('<div class="section-title">Snelle samenvatting</div>', unsafe_allow_html=True)
-
-        st.markdown(
-            f"""
-            <div class="small-box">
-                <div class="info-row"><div class="info-left">Open trades</div><div class="info-right">{open_trades_count}</div></div>
-                <div class="info-row"><div class="info-left">Pending orders</div><div class="info-right">{pending_count}</div></div>
-                <div class="info-row"><div class="info-left">Real winrate</div><div class="info-right">{real_winrate:.1f}%</div></div>
-                <div class="info-row"><div class="info-left">Shadow winrate</div><div class="info-right">{shadow_winrate:.1f}%</div></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --------------------------
-# CENTER: MAIN GRAPH + LEGEND
-# --------------------------
 with col_center:
     st.markdown('<div class="terminal-box">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Performance Overview</div>', unsafe_allow_html=True)
 
-    legend_col, chart_col = st.columns([0.38, 1.62], gap="medium")
+    # groter zoals Bitvavo: brede grafiek, kleine legenda erboven
+    lg1, lg2, lg3, lg4, lg5 = st.columns(5)
+    lg1.markdown('<div class="legend-item"><span class="dot" style="background:#5aa2ff;"></span> Blauw = echte winst</div>', unsafe_allow_html=True)
+    lg2.markdown('<div class="legend-item"><span class="dot" style="background:#ff5a5f;"></span> Rood = echte verlies</div>', unsafe_allow_html=True)
+    lg3.markdown('<div class="legend-item"><span class="dot" style="background:#b0b7c3;"></span> Grijs = shadow winst</div>', unsafe_allow_html=True)
+    lg4.markdown('<div class="legend-item"><span class="dot" style="background:#2ecc71;"></span> Groen = gemiste trade goed</div>', unsafe_allow_html=True)
+    lg5.markdown('<div class="legend-item"><span class="dot" style="background:#ff8c42;"></span> Oranje = gemiste trade slecht</div>', unsafe_allow_html=True)
 
-    with legend_col:
-        st.markdown('<div class="legend-box">', unsafe_allow_html=True)
-        st.markdown('<div class="legend-item"><span class="dot" style="background:#5aa2ff;"></span> Blauw = echte winst</div>', unsafe_allow_html=True)
-        st.markdown('<div class="legend-item"><span class="dot" style="background:#ff5a5f;"></span> Rood = echte verlies</div>', unsafe_allow_html=True)
-        st.markdown('<div class="legend-item"><span class="dot" style="background:#b0b7c3;"></span> Grijs = mogelijke winst shadow trades</div>', unsafe_allow_html=True)
-        st.markdown('<div class="legend-item"><span class="dot" style="background:#2ecc71;"></span> Groen = gemiste trade was goed</div>', unsafe_allow_html=True)
-        st.markdown('<div class="legend-item"><span class="dot" style="background:#ff8c42;"></span> Oranje = gemiste trade was slecht</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+    if chart_df.empty:
+        st.info("Nog niet genoeg data uit Postgres voor de 5-lijnen grafiek.")
+    else:
+        fig = go.Figure()
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        fig.add_trace(go.Scatter(
+            x=chart_df["ts"],
+            y=chart_df["real_profit"],
+            mode="lines",
+            name="Echte winst",
+            line=dict(color="#5aa2ff", width=4),
+        ))
+        fig.add_trace(go.Scatter(
+            x=chart_df["ts"],
+            y=chart_df["real_loss"],
+            mode="lines",
+            name="Echte verlies",
+            line=dict(color="#ff5a5f", width=4),
+        ))
+        fig.add_trace(go.Scatter(
+            x=chart_df["ts"],
+            y=chart_df["shadow_profit"],
+            mode="lines",
+            name="Mogelijke winst shadow trades",
+            line=dict(color="#b0b7c3", width=4),
+        ))
+        fig.add_trace(go.Scatter(
+            x=chart_df["ts"],
+            y=chart_df["missed_good"],
+            mode="lines",
+            name="Gemiste trade was goed",
+            line=dict(color="#2ecc71", width=4),
+        ))
+        fig.add_trace(go.Scatter(
+            x=chart_df["ts"],
+            y=chart_df["missed_bad"],
+            mode="lines",
+            name="Gemiste trade was slecht",
+            line=dict(color="#ff8c42", width=4),
+        ))
 
-        st.markdown(
-            f"""
-            <div class="small-box">
-                <div class="info-row"><div class="info-left">Real profit</div><div class="info-right">{format_pnl(real_profit)}</div></div>
-                <div class="info-row"><div class="info-left">Shadow profit</div><div class="info-right">{format_pnl(shadow_profit)}</div></div>
-                <div class="info-row"><div class="info-left">Missed wins</div><div class="info-right">{missed_good_count}</div></div>
-                <div class="info-row"><div class="info-left">Missed losses</div><div class="info-right">{missed_bad_count}</div></div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="#0f172a",
+            plot_bgcolor="#0f172a",
+            font=dict(color="#f8fafc"),
+            height=620,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=False,
+            xaxis=dict(title="Tijd", gridcolor="rgba(255,255,255,0.07)"),
+            yaxis=dict(title="Resultaat", gridcolor="rgba(255,255,255,0.07)"),
         )
+        st.plotly_chart(fig, use_container_width=True)
 
-    with chart_col:
-        if chart_df.empty:
-            st.info("Nog niet genoeg data voor de 5-lijnen grafiek.")
-        else:
-            fig = go.Figure()
-
-            fig.add_trace(go.Scatter(
-                x=chart_df["ts"],
-                y=chart_df["real_profit"],
-                mode="lines",
-                name="Echte winst",
-                line=dict(color="#5aa2ff", width=3),
-            ))
-            fig.add_trace(go.Scatter(
-                x=chart_df["ts"],
-                y=chart_df["real_loss"],
-                mode="lines",
-                name="Echte verlies",
-                line=dict(color="#ff5a5f", width=3),
-            ))
-            fig.add_trace(go.Scatter(
-                x=chart_df["ts"],
-                y=chart_df["shadow_profit"],
-                mode="lines",
-                name="Mogelijke winst shadow trades",
-                line=dict(color="#b0b7c3", width=3),
-            ))
-            fig.add_trace(go.Scatter(
-                x=chart_df["ts"],
-                y=chart_df["missed_good"],
-                mode="lines",
-                name="Gemiste trade was goed",
-                line=dict(color="#2ecc71", width=3),
-            ))
-            fig.add_trace(go.Scatter(
-                x=chart_df["ts"],
-                y=chart_df["missed_bad"],
-                mode="lines",
-                name="Gemiste trade was slecht",
-                line=dict(color="#ff8c42", width=3),
-            ))
-
-            fig.update_layout(
-                template="plotly_dark",
-                paper_bgcolor="#0f172a",
-                plot_bgcolor="#0f172a",
-                font=dict(color="#f8fafc"),
-                height=470,
-                margin=dict(l=10, r=10, t=10, b=10),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="left",
-                    x=0.0,
-                    font=dict(size=11),
-                ),
-                xaxis=dict(title="Tijd", gridcolor="rgba(255,255,255,0.07)"),
-                yaxis=dict(title="€ resultaat", gridcolor="rgba(255,255,255,0.07)"),
-            )
-            st.plotly_chart(fig, use_container_width=True)
+    perf1, perf2, perf3, perf4 = st.columns(4)
+    perf1.metric("Real Profit", format_pnl(real_profit))
+    perf2.metric("Shadow Profit", format_pnl(shadow_profit))
+    perf3.metric("Real Winrate", f"{real_winrate:.1f}%")
+    perf4.metric("Shadow Winrate", f"{shadow_winrate:.1f}%")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-# --------------------------
-# RIGHT: BOT ACTIVITY
-# --------------------------
 with col_right:
     st.markdown('<div class="terminal-box">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Bot Activity</div>', unsafe_allow_html=True)
 
     if not feed:
-        st.markdown('<div class="subtle">Nog geen activity gevonden.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="subtle">Nog geen activity gevonden in Postgres.</div>', unsafe_allow_html=True)
     else:
         for item in feed:
             kind = item.get("kind", "")
@@ -1074,16 +1039,16 @@ with col_right:
             )
 
     st.markdown("<br>", unsafe_allow_html=True)
-
     st.markdown('<div class="section-title">Bot Health</div>', unsafe_allow_html=True)
-    rows = [
-        ("Snapshot", "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"),
-        ("Paper state", "OK" if file_meta(PAPER_STATE_PATH).get("exists") else "MIST"),
-        ("Live state", "OK" if file_meta(LIVE_STATE_PATH).get("exists") else "MIST"),
-        ("Paper trades", "OK" if file_meta(PAPER_TRADES_CSV).get("exists") else "MIST"),
-        ("Shadow trades", "OK" if file_meta(SHADOW_TRADES_CSV).get("exists") or file_meta(SHADOW_TRADES_JSON).get("exists") else "MIST"),
+
+    health_rows = [
+        ("DATABASE_URL", "OK" if db_ready() else "MIST"),
+        ("pending_approvals", "OK" if table_exists("pending_approvals") else "MIST"),
+        ("experience_trades", "OK" if table_exists("experience_trades") else "MIST"),
+        ("experience_scoreboard", "OK" if table_exists("experience_scoreboard") else "MIST"),
+        ("snapshot file", "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"),
     ]
-    for left_label, right_val in rows:
+    for left_label, right_val in health_rows:
         st.markdown(
             f"""
             <div class="info-row">
@@ -1099,65 +1064,40 @@ with col_right:
 
 st.divider()
 
-
-# ==========================================================
-# BOTTOM TABS
-# ==========================================================
 tabs = st.tabs(["Positions", "Orders", "Deals", "Shadow Trades", "Performance", "Settings"])
 
-
-# --------------------------
-# TAB 1: POSITIONS
-# --------------------------
 with tabs[0]:
     st.subheader("Open Positions")
     if positions_df.empty:
-        st.info("Geen open positions gevonden.")
+        st.info("Geen open positions gevonden in Postgres. Dit betekent meestal dat open trades nog niet in een positie-tabel worden opgeslagen.")
     else:
-        show = positions_df.copy()
-        show["opened_at"] = show["opened_at"].apply(
-            lambda x: datetime.utcfromtimestamp(int(x)).strftime("%Y.%m.%d %H:%M:%S") if safe_int(x, 0) > 0 else "-"
-        )
-        st.dataframe(
-            show[[
-                "symbol", "source", "qty", "entry", "stop_loss", "target",
-                "chance", "score", "label", "regime", "opened_at"
-            ]],
-            use_container_width=True,
-            hide_index=True,
-        )
+        st.dataframe(positions_df, use_container_width=True, hide_index=True)
 
-
-# --------------------------
-# TAB 2: ORDERS
-# --------------------------
 with tabs[1]:
-    st.subheader("Pending Orders / Pre-BUY")
+    st.subheader("Orders / Pending Pre-BUY")
     if orders_df.empty:
-        st.info("Geen pending orders gevonden.")
+        st.info("Geen pending orders gevonden in Postgres.")
     else:
-        orders_show = orders_df.copy()
-        orders_show["expires_at"] = orders_show["expires_at"].apply(format_dt_short)
-        st.dataframe(orders_show, use_container_width=True, hide_index=True)
+        show = orders_df.copy()
+        if "expires_at" in show.columns:
+            show["expires_at"] = pd.to_datetime(show["expires_at"], errors="coerce", utc=True).dt.strftime("%Y.%m.%d %H:%M:%S")
+        if "created_at" in show.columns:
+            show["created_at"] = pd.to_datetime(show["created_at"], errors="coerce", utc=True).dt.strftime("%Y.%m.%d %H:%M:%S")
+        st.dataframe(show, use_container_width=True, hide_index=True)
 
-
-# --------------------------
-# TAB 3: DEALS
-# --------------------------
 with tabs[2]:
     st.subheader("Deals / Echte Trades")
     if real_df.empty:
-        st.info("Nog geen echte trades gevonden.")
+        st.info("Nog geen echte trades gevonden in Postgres.")
     else:
         for _, row in real_df.head(60).iterrows():
             sym = safe_str(row.get("symbol"), "-")
-            side = safe_str(row.get("side"), "").lower()
-            qty = safe_float(row.get("qty"), 0.0)
+            outcome = safe_str(row.get("outcome"), "-").upper()
             entry_price = safe_float(row.get("entry_price"), 0.0)
             exit_price = safe_float(row.get("exit_price"), 0.0)
             pnl = safe_float(row.get("pnl"), 0.0)
             dt_txt = safe_str(row.get("datetime"), "-")
-            sc = side_color(side)
+            sc = "#2ecc71" if outcome == "WIN" else "#ff5a5f" if outcome == "LOSS" else "#cbd5e1"
             pc = pnl_color(pnl)
 
             st.markdown(
@@ -1166,8 +1106,7 @@ with tabs[2]:
                     <div class="deal-left">
                         <div class="deal-main">
                             {sym}
-                            <span style="color:{sc};font-weight:800;"> {side}</span>
-                            <span style="color:{sc};font-weight:800;"> {qty:g}</span>
+                            <span style="color:{sc};font-weight:800;"> {outcome}</span>
                         </div>
                         <div class="deal-sub">{entry_price:.6f} → {exit_price:.6f}</div>
                     </div>
@@ -1180,14 +1119,10 @@ with tabs[2]:
                 unsafe_allow_html=True,
             )
 
-
-# --------------------------
-# TAB 4: SHADOW TRADES
-# --------------------------
 with tabs[3]:
     st.subheader("Shadow Trades / Niet genomen trades")
     if shadow_df.empty:
-        st.info("Nog geen shadow trades gevonden.")
+        st.info("Nog geen shadow trades gevonden in Postgres.")
     else:
         for _, row in shadow_df.head(60).iterrows():
             sym = safe_str(row.get("symbol"), "-")
@@ -1218,86 +1153,30 @@ with tabs[3]:
                 unsafe_allow_html=True,
             )
 
-
-# --------------------------
-# TAB 5: PERFORMANCE
-# --------------------------
 with tabs[4]:
-    st.subheader("Performance vergelijking")
-
+    st.subheader("Performance")
     p1, p2, p3, p4 = st.columns(4)
     p1.metric("Real Profit", format_pnl(real_profit))
     p2.metric("Shadow Profit", format_pnl(shadow_profit))
-    p3.metric("Real Winrate", f"{real_winrate:.1f}%")
-    p4.metric("Shadow Winrate", f"{shadow_winrate:.1f}%")
+    p3.metric("Missed Wins", str(missed_good_count))
+    p4.metric("Missed Losses", str(missed_bad_count))
 
-    left_perf, right_perf = st.columns(2)
+    if scoreboard_df.empty:
+        st.info("Geen experience_scoreboard data gevonden in Postgres.")
+    else:
+        st.markdown("#### Setup / Regime Scoreboard")
+        st.dataframe(scoreboard_df, use_container_width=True, hide_index=True)
 
-    with left_perf:
-        st.markdown("#### Echte trades")
-        if real_df.empty:
-            st.info("Nog geen echte trades.")
-        else:
-            real_show = real_df.copy()
-            real_show["PnL"] = real_show["pnl"].apply(format_pnl)
-            real_show["Entry → Exit"] = real_show.apply(
-                lambda r: f"{safe_float(r.get('entry_price'), 0.0):.6f} → {safe_float(r.get('exit_price'), 0.0):.6f}",
-                axis=1,
-            )
-            st.dataframe(
-                real_show[["datetime", "symbol", "side", "qty", "Entry → Exit", "PnL", "source"]],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    with right_perf:
-        st.markdown("#### Shadow trades")
-        if shadow_df.empty:
-            st.info("Nog geen shadow trades.")
-        else:
-            shadow_show = shadow_df.copy()
-            shadow_show["Potential"] = shadow_show["pnl"].apply(format_pnl)
-            shadow_show["Entry → Exit"] = shadow_show.apply(
-                lambda r: f"{safe_float(r.get('entry_price'), 0.0):.6f} → {safe_float(r.get('exit_price'), 0.0):.6f}",
-                axis=1,
-            )
-            st.dataframe(
-                shadow_show[["datetime", "symbol", "outcome", "Entry → Exit", "Potential"]],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-
-# --------------------------
-# TAB 6: SETTINGS / FILES
-# --------------------------
 with tabs[5]:
     st.subheader("Settings / Controle")
-
-    rows = []
-    for name, path in [
-        ("Snapshot", SNAPSHOT_PATH),
-        ("Portfolio history", PORTFOLIO_HISTORY_CSV),
-        ("Pending", PENDING_PATH),
-        ("Paper state", PAPER_STATE_PATH),
-        ("Live state", LIVE_STATE_PATH),
-        ("Paper trades", PAPER_TRADES_CSV),
-        ("Live trades", LIVE_TRADES_CSV),
-        ("Shadow trades CSV", SHADOW_TRADES_CSV),
-        ("Shadow trades JSON", SHADOW_TRADES_JSON),
-        ("AI usage", AI_USAGE_PATH),
-        ("Prebuy state", PREBUY_STATE_PATH),
-        ("Prebuy payload", PREBUY_PAYLOAD_PATH),
-    ]:
-        meta = file_meta(path)
-        rows.append({
-            "item": name,
-            "exists": meta.get("exists", False),
-            "modified": meta.get("modified", ""),
-            "size_kb": meta.get("size_kb", ""),
-            "path": path,
-        })
-
+    rows = [
+        {"item": "DATABASE_URL", "status": "OK" if db_ready() else "MIST"},
+        {"item": "pending_approvals", "status": "OK" if table_exists("pending_approvals") else "MIST"},
+        {"item": "experience_trades", "status": "OK" if table_exists("experience_trades") else "MIST"},
+        {"item": "experience_scoreboard", "status": "OK" if table_exists("experience_scoreboard") else "MIST"},
+        {"item": "snapshot file", "status": "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"},
+        {"item": "portfolio_history.csv", "status": "OK" if file_meta(PORTFOLIO_HISTORY_CSV).get("exists") else "MIST"},
+    ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     st.markdown("#### Snapshot preview")
@@ -1305,10 +1184,3 @@ with tabs[5]:
         st.info(snapshot_err)
     else:
         st.json(snapshot)
-
-    st.markdown("#### AI usage preview")
-    ai_usage, ai_err = safe_read_json(AI_USAGE_PATH)
-    if ai_err:
-        st.info(ai_err)
-    else:
-        st.json(ai_usage)
