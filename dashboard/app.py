@@ -480,12 +480,11 @@ st.markdown("""
         color: #f5f7fb;
     }
     .block-container {
-        padding-top: 1rem;
+        padding-top: 5rem;
         padding-bottom: 6rem;
         max-width: 1100px;
     }
 
-    /* Metrics */
     div[data-testid="stMetric"] {
         background: #0d1118;
         border: 1px solid #1f2937;
@@ -499,13 +498,11 @@ st.markdown("""
         color: #ffffff !important;
     }
 
-    /* Bovenste navigatieknoppen zichtbaar maken */
     div[data-testid="stHorizontalBlock"] button {
         color: #000000 !important;
         font-weight: 700 !important;
     }
 
-    /* Tabs tekst beter leesbaar */
     button[role="tab"] {
         color: #e5e7eb !important;
         font-weight: 600 !important;
@@ -560,22 +557,6 @@ st.markdown("""
         font-weight: 800;
         line-height: 1;
     }
-    .pill-wrap {
-        display: flex;
-        gap: 8px;
-        margin-bottom: 12px;
-        flex-wrap: wrap;
-    }
-    .pill {
-        background: #161b23;
-        color: #ffffff;
-        border-radius: 999px;
-        padding: 8px 14px;
-        font-size: 14px;
-        font-weight: 600;
-        display: inline-block;
-        border: 1px solid #222938;
-    }
     .mini-row {
         display: flex;
         justify-content: space-between;
@@ -603,6 +584,7 @@ st.markdown("""
         font-size: 12px;
         text-align: center;
         margin-top: 4px;
+        margin-bottom: 14px;
     }
 </style>
 """, unsafe_allow_html=True)
