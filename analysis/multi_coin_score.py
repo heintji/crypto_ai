@@ -31,6 +31,12 @@ except Exception:
     get_tradable_markets_cached = None
     symbol_usdt_to_bitvavo_market = None
 
+# shadow trades
+try:
+    from trading.shadow_trades import create_shadow
+except Exception:
+    create_shadow = None
+
 
 # =========================
 # ENV
@@ -639,6 +645,44 @@ def filter_universe_by_bitvavo(universe: List[str]) -> List[str]:
 
 
 # =========================
+# SHADOW HELPER
+# =========================
+def create_shadow_safe(pre: Prebuy) -> Tuple[bool, str]:
+    """
+    Maakt een shadow trade aan voor deze unieke setup.
+    Faalt shadow aanmaak, dan mag de scan niet crashen.
+    """
+    if create_shadow is None:
+        return False, "SHADOW_MODULE_NOT_AVAILABLE"
+
+    try:
+        result = create_shadow(
+            prebuy_id=pre.prebuy_id,
+            symbol=pre.symbol,
+            entry=pre.entry,
+            stop=pre.stop,
+            target=pre.target,
+            timeframe=pre.timeframe,
+            setup_type=pre.setup_type,
+            regime=pre.regime,
+            label=pre.label,
+            score=pre.score,
+            raw_score=pre.raw_score,
+            chance=pre.chance,
+            confidence=pre.confidence,
+            exchange="BINANCE",
+        )
+
+        if isinstance(result, dict) and result.get("ok"):
+            return True, safe_str(result.get("storage"), "OK")
+
+        return False, "SHADOW_CREATE_RETURNED_NOT_OK"
+
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+# =========================
 # MAIN
 # =========================
 def main():
@@ -668,6 +712,8 @@ def main():
             skipped = 0
             candidates = 0
             experienced = 0
+            shadow_created = 0
+            shadow_failed = 0
 
             for sym in universe:
                 try:
@@ -727,8 +773,15 @@ def main():
                     # 2) fingerprint onthouden zodat exact dezelfde trade niet opnieuw binnenkomt
                     remember_fingerprint(cur, fp)
 
-                    # 3) altijd experience opslaan
-                    # notified/notification_reason bepalen we verderop
+                    # 3) shadow trade aanmaken voor iedere unieke setup
+                    shadow_ok, shadow_reason = create_shadow_safe(pre)
+                    if shadow_ok:
+                        shadow_created += 1
+                    else:
+                        shadow_failed += 1
+                        print(f"⚠️ {sym}: shadow create failed | reason={shadow_reason}")
+
+                    # 4) altijd experience opslaan
                     should_insert_pending = True
 
                     # WATCH niet in pending tenzij jij dit expliciet aanzet
@@ -736,12 +789,12 @@ def main():
                         should_insert_pending = False
                         notification_reason = "WATCH_ONLY_NOT_PENDING"
 
-                    # 4) pending maken = zichtbaar in LIST/TOP en dus BUY mogelijk
+                    # 5) pending maken = zichtbaar in LIST/TOP en dus BUY mogelijk
                     if should_insert_pending:
                         insert_pending(cur, pre)
                         created_pending += 1
 
-                        # 5) auto-push limiet geldt ALLEEN nog voor melding, niet voor pending
+                        # 6) auto-push limiet geldt ALLEEN nog voor melding, niet voor pending
                         if can_auto_push(cur):
                             inc_pushes_today(cur, 1)
                             pushed_count += 1
@@ -753,13 +806,13 @@ def main():
                         print(
                             f"🟢 {sym}: pending aangemaakt | label={pre.label} raw={pre.raw_score} "
                             f"norm={pre.score} chance={pre.chance} regime={pre.regime} "
-                            f"why={pre.why_tag} push={notification_reason} id={pre.prebuy_id}"
+                            f"why={pre.why_tag} push={notification_reason} shadow={shadow_reason} id={pre.prebuy_id}"
                         )
                     else:
                         print(
                             f"📘 {sym}: alleen leren | label={pre.label} score={pre.score} "
                             f"chance={pre.chance} regime={pre.regime} why={pre.why_tag} "
-                            f"reason={notification_reason}"
+                            f"reason={notification_reason} shadow={shadow_reason}"
                         )
 
                     insert_experience(cur, pre, fp, notified, notification_reason)
@@ -772,8 +825,8 @@ def main():
             dur = time.time() - start
             print(
                 f"DONE pending_created={created_pending} auto_push_sent={pushed_count} "
-                f"experienced={experienced} candidates={candidates} scanned={len(universe)} "
-                f"seconds={dur:.1f}"
+                f"experienced={experienced} shadow_created={shadow_created} shadow_failed={shadow_failed} "
+                f"candidates={candidates} scanned={len(universe)} seconds={dur:.1f}"
             )
 
 
