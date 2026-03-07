@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional
 import requests
 import pandas as pd
 import psycopg2
-import psycopg2.extras
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -211,12 +210,16 @@ def get_table_columns(table_name: str, schema: str = "public") -> List[str]:
         return []
 
 
-def read_sql_df(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
+def read_sql_df(sql: str) -> pd.DataFrame:
     conn = get_db_conn()
     if conn is None:
         return pd.DataFrame([])
     try:
-        return pd.read_sql_query(sql, conn, params=params)
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            rows = cur.fetchall()
+            cols = [desc[0] for desc in cur.description]
+        return pd.DataFrame(rows, columns=cols)
     except Exception:
         return pd.DataFrame([])
 
@@ -310,7 +313,7 @@ def price_in_eur(symbol: str, prices: dict):
 
 
 # ==========================================================
-# SNAPSHOT (mag nog via file)
+# SNAPSHOT
 # ==========================================================
 def build_snapshot_with_eur_values():
     balances = bitvavo_request("GET", "/v2/balance")
@@ -403,7 +406,6 @@ def load_pending_orders_db() -> pd.DataFrame:
         return pd.DataFrame([])
 
     cols = set(get_table_columns("pending_approvals"))
-
     wanted = [
         "id", "symbol", "status", "setup_type", "regime",
         "score", "chance", "confidence", "entry", "stop", "target",
@@ -428,13 +430,11 @@ def load_real_trades_db() -> pd.DataFrame:
         return pd.DataFrame([])
 
     cols = set(get_table_columns("experience_trades"))
-
     wanted = [
         "symbol", "setup_type", "timeframe", "regime", "label",
         "score", "raw_score", "chance", "confidence",
         "entry", "stop", "target", "exit", "exit_price",
-        "result_r", "outcome", "is_shadow",
-        "created_at"
+        "result_r", "outcome", "is_shadow", "created_at"
     ]
     selected = [c for c in wanted if c in cols]
     if not selected:
@@ -453,26 +453,37 @@ def load_real_trades_db() -> pd.DataFrame:
     if df.empty:
         return df
 
-    if "exit_price" not in df.columns and "exit" in df.columns:
-        df["exit_price"] = df["exit"]
     if "entry" not in df.columns:
         df["entry"] = 0.0
+    df["entry"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
 
-    df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
-    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-    df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
+    if "exit_price" in df.columns:
+        df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
+    elif "exit" in df.columns:
+        df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
+    else:
+        df["exit_price"] = 0.0
 
-    # omzetting van R naar euro-achtige lijn kan later preciezer
-    # voorlopig 1R = 1 eenheid in performancegrafiek, maar visueel wel bruikbaar
-    # als exit/entry en position size later beschikbaar zijn kan dat exact in € worden gemaakt
+    if "result_r" in df.columns:
+        df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
+    else:
+        df["pnl"] = 0.0
+
     if "outcome" not in df.columns:
         df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+    else:
+        df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
 
+    if "created_at" in df.columns:
+        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    else:
+        df["datetime_raw"] = pd.NaT
+
+    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
     df["trade_type"] = "REAL"
     df["side"] = df["outcome"].apply(lambda x: "buy" if safe_str(x).upper() == "WIN" else "sell")
     df["qty"] = 1.0
-    df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
-    df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
+    df["entry_price"] = df["entry"]
     return df
 
 
@@ -483,8 +494,7 @@ def load_shadow_trades_db() -> pd.DataFrame:
             "symbol", "setup_type", "timeframe", "regime", "label",
             "score", "raw_score", "chance", "confidence",
             "entry", "stop", "target", "exit", "exit_price",
-            "result_r", "outcome", "is_shadow",
-            "created_at"
+            "result_r", "outcome", "is_shadow", "created_at"
         ]
         selected = [c for c in wanted if c in cols]
         if selected:
@@ -499,42 +509,82 @@ def load_shadow_trades_db() -> pd.DataFrame:
             """
             df = read_sql_df(sql)
             if not df.empty:
-                if "exit_price" not in df.columns and "exit" in df.columns:
-                    df["exit_price"] = df["exit"]
                 if "entry" not in df.columns:
                     df["entry"] = 0.0
+                df["entry"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
 
-                df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
-                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-                df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
+                if "exit_price" in df.columns:
+                    df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
+                elif "exit" in df.columns:
+                    df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
+                else:
+                    df["exit_price"] = 0.0
+
+                if "result_r" in df.columns:
+                    df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
+                else:
+                    df["pnl"] = 0.0
 
                 if "outcome" not in df.columns:
                     df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+                else:
+                    df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
 
+                if "created_at" in df.columns:
+                    df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+                else:
+                    df["datetime_raw"] = pd.NaT
+
+                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
                 df["trade_type"] = "SHADOW"
-                df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
-                df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
+                df["entry_price"] = df["entry"]
                 return df
 
     if table_exists("shadow_trades"):
         cols = get_table_columns("shadow_trades")
-        sql = f"SELECT {', '.join(cols)} FROM public.shadow_trades ORDER BY created_at DESC NULLS LAST LIMIT 500"
-        df = read_sql_df(sql)
-        if not df.empty:
-            df["datetime_raw"] = pd.to_datetime(df.get("created_at"), errors="coerce", utc=True)
-            df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-            df["pnl"] = pd.to_numeric(df.get("result_r"), errors="coerce").fillna(0.0)
-            df["outcome"] = df.get("outcome", pd.Series(["FLAT"] * len(df)))
-            df["trade_type"] = "SHADOW"
-            df["entry_price"] = pd.to_numeric(df.get("entry"), errors="coerce").fillna(0.0)
-            df["exit_price"] = pd.to_numeric(df.get("exit_price"), errors="coerce").fillna(0.0)
-            return df
+        if cols:
+            sql = f"SELECT {', '.join(cols)} FROM public.shadow_trades ORDER BY created_at DESC NULLS LAST LIMIT 500"
+            df = read_sql_df(sql)
+            if not df.empty:
+                if "entry" in df.columns:
+                    df["entry_price"] = pd.to_numeric(df["entry"], errors="coerce").fillna(0.0)
+                elif "entry_price" in df.columns:
+                    df["entry_price"] = pd.to_numeric(df["entry_price"], errors="coerce").fillna(0.0)
+                else:
+                    df["entry_price"] = 0.0
+
+                if "exit_price" in df.columns:
+                    df["exit_price"] = pd.to_numeric(df["exit_price"], errors="coerce").fillna(0.0)
+                elif "exit" in df.columns:
+                    df["exit_price"] = pd.to_numeric(df["exit"], errors="coerce").fillna(0.0)
+                else:
+                    df["exit_price"] = 0.0
+
+                if "result_r" in df.columns:
+                    df["pnl"] = pd.to_numeric(df["result_r"], errors="coerce").fillna(0.0)
+                elif "pnl" in df.columns:
+                    df["pnl"] = pd.to_numeric(df["pnl"], errors="coerce").fillna(0.0)
+                else:
+                    df["pnl"] = 0.0
+
+                if "outcome" not in df.columns:
+                    df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+                else:
+                    df["outcome"] = df["outcome"].fillna("FLAT").astype(str)
+
+                if "created_at" in df.columns:
+                    df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+                else:
+                    df["datetime_raw"] = pd.NaT
+
+                df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+                df["trade_type"] = "SHADOW"
+                return df
 
     return pd.DataFrame([])
 
 
 def load_positions_db() -> pd.DataFrame:
-    # Robuuste poging; als positie-tabel niet bestaat blijft dit leeg
     candidate_tables = [
         "open_positions",
         "positions",
@@ -542,17 +592,14 @@ def load_positions_db() -> pd.DataFrame:
         "live_positions",
         "paper_positions",
     ]
-
     for table_name in candidate_tables:
         if table_exists(table_name):
             cols = get_table_columns(table_name)
-            if not cols:
-                continue
-            sql = f"SELECT {', '.join(cols)} FROM public.{table_name} ORDER BY created_at DESC NULLS LAST LIMIT 200"
-            df = read_sql_df(sql)
-            if not df.empty:
-                return df
-
+            if cols:
+                sql = f"SELECT {', '.join(cols)} FROM public.{table_name} ORDER BY created_at DESC NULLS LAST LIMIT 200"
+                df = read_sql_df(sql)
+                if not df.empty:
+                    return df
     return pd.DataFrame([])
 
 
@@ -729,19 +776,12 @@ st.markdown("""
         font-weight: 700;
         text-align: right;
     }
-    .legend-box {
-        background: #111827;
-        border: 1px solid #1f2937;
-        border-radius: 18px;
-        padding: 12px 14px;
-    }
     .legend-item {
         display: flex;
         align-items: center;
         gap: 10px;
-        margin-bottom: 8px;
         color: #e5e7eb;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 600;
     }
     .dot {
@@ -867,7 +907,7 @@ if not real_df.empty:
 
 
 # ==========================================================
-# HEADER METRICS
+# HEADER
 # ==========================================================
 st.markdown("## Crypto AI Terminal")
 st.caption(f"Snapshot status: {refresh_state} | Data source: {'Postgres' if db_ready() else 'Geen DATABASE_URL'}")
@@ -888,7 +928,7 @@ st.divider()
 
 
 # ==========================================================
-# TOP LAYOUT: SMALLER LEFT / BIGGER CENTER / SMALLER RIGHT
+# TOP LAYOUT
 # ==========================================================
 col_left, col_center, col_right = st.columns([0.8, 2.2, 0.8], gap="large")
 
@@ -900,7 +940,6 @@ with col_left:
         st.markdown('<div class="subtle">Geen pending Pre-BUY gevonden in Postgres.</div>', unsafe_allow_html=True)
     else:
         best = orders_df.iloc[0]
-
         st.markdown(
             f"""
             <div class="small-box" style="margin-bottom:12px;">
@@ -942,7 +981,6 @@ with col_center:
     st.markdown('<div class="terminal-box">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Performance Overview</div>', unsafe_allow_html=True)
 
-    # groter zoals Bitvavo: brede grafiek, kleine legenda erboven
     lg1, lg2, lg3, lg4, lg5 = st.columns(5)
     lg1.markdown('<div class="legend-item"><span class="dot" style="background:#5aa2ff;"></span> Blauw = echte winst</div>', unsafe_allow_html=True)
     lg2.markdown('<div class="legend-item"><span class="dot" style="background:#ff5a5f;"></span> Rood = echte verlies</div>', unsafe_allow_html=True)
@@ -1061,15 +1099,18 @@ with col_right:
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-
 st.divider()
 
+
+# ==========================================================
+# TABS
+# ==========================================================
 tabs = st.tabs(["Positions", "Orders", "Deals", "Shadow Trades", "Performance", "Settings"])
 
 with tabs[0]:
     st.subheader("Open Positions")
     if positions_df.empty:
-        st.info("Geen open positions gevonden in Postgres. Dit betekent meestal dat open trades nog niet in een positie-tabel worden opgeslagen.")
+        st.info("Geen open positions gevonden in Postgres. Grote kans dat open trades nog niet in een aparte positie-tabel worden opgeslagen.")
     else:
         st.dataframe(positions_df, use_container_width=True, hide_index=True)
 
