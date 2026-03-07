@@ -31,6 +31,11 @@
 #    - richer experience logging
 #    - update van prebuy_experience waar mogelijk
 #
+# 7) ✅ SHADOW TRADES:
+#    - open shadow trades worden nu ook geëvalueerd
+#    - target geraakt => WIN
+#    - stop geraakt => LOSS
+#
 # Jouw exit-regels blijven EXACT hetzelfde.
 # ==========================================================
 
@@ -54,6 +59,14 @@ import psycopg2.extras
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# =========================
+# ✅ Shadow trades import
+# =========================
+try:
+    from trading.shadow_trades import evaluate_open_shadows_for_symbol
+except Exception:
+    evaluate_open_shadows_for_symbol = None
 
 # =========================
 # ✅ DATA PATH RESOLVER
@@ -622,6 +635,29 @@ def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
 
 
 # =========================
+# ✅ SHADOW EVALUATION
+# =========================
+def evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
+    """
+    Checkt open shadow trades voor dit symbool.
+    """
+    if evaluate_open_shadows_for_symbol is None:
+        return
+
+    try:
+        results = evaluate_open_shadows_for_symbol(symbol, price)
+        if results:
+            for res in results:
+                if isinstance(res, dict) and res.get("ok"):
+                    _print(
+                        f"👻 Shadow closed | id={res.get('id')} "
+                        f"outcome={res.get('outcome')} result_r={res.get('result_r')}"
+                    )
+    except Exception as e:
+        _print(f"⚠️ Shadow evaluation failed for {symbol}: {type(e).__name__}: {e}")
+
+
+# =========================
 # ✅ SELL ROUTER
 # =========================
 _SELL_PAPER = None
@@ -811,6 +847,9 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     else:
         price, src = get_price(symbol, trade)
 
+    # ✅ shadow trades ook evalueren met dezelfde actuele prijs
+    evaluate_shadow_for_symbol(symbol, price)
+
     r = calc_r_multiple(price, entry, stop_loss)
 
     trade.setdefault("mode", "NORMAL")
@@ -953,8 +992,10 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         return
 
     open_trades = state.get("open_trades", []) or []
-    if not open_trades:
-        _print("ℹ️ Geen open_trades gevonden. Niets te monitoren.")
+
+    # ook als er geen echte open trades zijn, willen we shadow trades nog steeds kunnen evalueren
+    if not open_trades and not only_symbol:
+        _print("ℹ️ Geen open_trades gevonden. Alleen shadow monitoring mogelijk als symbol handmatig is meegegeven.")
         return
 
     closed_symbols: List[str] = []
@@ -975,6 +1016,21 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         closed = process_trade(state, trade, test_price=test_price)
         if closed:
             closed_symbols.append(symbol)
+
+    # extra: als user 1 symbol meegeeft en er is geen echte open trade, dan toch shadow evalueren
+    if only_symbol and not open_trades:
+        try:
+            if test_price is not None:
+                price = float(test_price)
+                src = "test_price"
+            else:
+                dummy_trade = {"symbol": only_symbol, "live": (TRADER_MODE == "live")}
+                price, src = get_price(only_symbol, dummy_trade)
+
+            _print(f"👻 Shadow-only check for {only_symbol} | price={price:.6f} ({src})")
+            evaluate_shadow_for_symbol(only_symbol, price)
+        except Exception as e:
+            _print(f"⚠️ Shadow-only symbol check failed for {only_symbol}: {type(e).__name__}: {e}")
 
     if closed_symbols:
         state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") not in closed_symbols]
@@ -1002,6 +1058,7 @@ def main():
     _print(f"State path: {STATE_PATH}")
     _print(f"FORCE_TEST_EXIT: {'ON' if FORCE_TEST_EXIT else 'OFF'}")
     _print(f"DB experience: {'ON' if db_ready() else 'OFF (DATABASE_URL ontbreekt)'}")
+    _print(f"Shadow monitoring: {'ON' if evaluate_open_shadows_for_symbol is not None else 'OFF'}")
 
     ensure_dir(LOGS_DIR)
 
