@@ -133,15 +133,6 @@ def safe_read_csv(path: str):
         return None, f"CSV leesfout ({path}): {e}"
 
 
-def side_color(side: str) -> str:
-    s = safe_str(side).lower()
-    if s == "buy":
-        return "#2ecc71"
-    if s == "sell":
-        return "#ff5a5f"
-    return "#e5e7eb"
-
-
 def pnl_color(pnl: float) -> str:
     return "#5aa2ff" if pnl >= 0 else "#ff5a5f"
 
@@ -152,9 +143,17 @@ def outcome_color(outcome: str) -> str:
         return "#2ecc71"
     if o == "LOSS":
         return "#ff8c42"
+    if o == "FLAT":
+        return "#facc15"
     if o == "UNKNOWN":
         return "#b0b7c3"
     return "#cbd5e1"
+
+
+def is_closed_trade(row: pd.Series) -> bool:
+    outcome = safe_str(row.get("outcome"), "").upper()
+    closed_at = row.get("closed_at")
+    return bool(closed_at) and outcome in {"WIN", "LOSS", "FLAT"}
 
 
 # ==========================================================
@@ -456,6 +455,53 @@ def load_pending_orders_db() -> pd.DataFrame:
     return df
 
 
+def _prepare_trade_df(df: pd.DataFrame, trade_type: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "entry" not in df.columns:
+        df["entry"] = 0.0
+    df["entry"] = df["entry"].fillna(0.0)
+
+    if "result_r" in df.columns:
+        df["pnl"] = df["result_r"].fillna(0.0)
+    else:
+        df["pnl"] = 0.0
+
+    if "outcome" not in df.columns:
+        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
+    else:
+        df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
+
+    if "created_at" in df.columns:
+        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    else:
+        df["datetime_raw"] = pd.NaT
+
+    if "closed_at" in df.columns:
+        df["closed_at_raw"] = pd.to_datetime(df["closed_at"], errors="coerce", utc=True)
+    else:
+        df["closed_at_raw"] = pd.NaT
+
+    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
+    df["closed_txt"] = df["closed_at_raw"].apply(format_dt_short)
+    df["entry_price"] = df["entry"]
+
+    if "target" in df.columns:
+        df["exit_price"] = df["target"].fillna(0.0)
+    else:
+        df["exit_price"] = 0.0
+
+    df["trade_type"] = trade_type
+    df["is_closed"] = df.apply(is_closed_trade, axis=1)
+
+    return df
+
+
 def load_real_trades_db() -> pd.DataFrame:
     if not table_exists("experience_trades"):
         return pd.DataFrame([])
@@ -478,48 +524,10 @@ def load_real_trades_db() -> pd.DataFrame:
         WHERE 1=1
         {where_shadow}
         ORDER BY created_at DESC NULLS LAST
-        LIMIT 500
+        LIMIT 1000
     """
     df = read_sql_df(sql)
-    if df.empty:
-        return df
-
-    for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if "entry" not in df.columns:
-        df["entry"] = 0.0
-    df["entry"] = df["entry"].fillna(0.0)
-
-    # experience_trades heeft bij jou geen echte exit_price kolom nodig voor dashboard basis
-    # daarom gebruiken we target als visuele exit fallback als closed_at bestaat
-    if "target" in df.columns:
-        df["exit_price"] = df["target"].fillna(0.0)
-    else:
-        df["exit_price"] = 0.0
-
-    if "result_r" in df.columns:
-        df["pnl"] = df["result_r"].fillna(0.0)
-    else:
-        df["pnl"] = 0.0
-
-    if "outcome" not in df.columns:
-        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
-    else:
-        df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
-
-    if "created_at" in df.columns:
-        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-    else:
-        df["datetime_raw"] = pd.NaT
-
-    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-    df["trade_type"] = "REAL"
-    df["side"] = df["outcome"].apply(lambda x: "buy" if safe_str(x).upper() == "WIN" else "sell")
-    df["qty"] = 1.0
-    df["entry_price"] = df["entry"]
-    return df
+    return _prepare_trade_df(df, "REAL")
 
 
 def load_shadow_trades_db() -> pd.DataFrame:
@@ -544,44 +552,10 @@ def load_shadow_trades_db() -> pd.DataFrame:
         WHERE 1=1
         {where_shadow}
         ORDER BY created_at DESC NULLS LAST
-        LIMIT 500
+        LIMIT 1000
     """
     df = read_sql_df(sql)
-    if df.empty:
-        return df
-
-    for col in ["entry", "stop", "target", "result_r", "score", "raw_score", "chance", "confidence"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    if "entry" not in df.columns:
-        df["entry"] = 0.0
-    df["entry"] = df["entry"].fillna(0.0)
-
-    if "target" in df.columns:
-        df["exit_price"] = df["target"].fillna(0.0)
-    else:
-        df["exit_price"] = 0.0
-
-    if "result_r" in df.columns:
-        df["pnl"] = df["result_r"].fillna(0.0)
-    else:
-        df["pnl"] = 0.0
-
-    if "outcome" not in df.columns:
-        df["outcome"] = df["pnl"].apply(lambda x: "WIN" if x > 0 else "LOSS" if x < 0 else "FLAT")
-    else:
-        df["outcome"] = df["outcome"].fillna("UNKNOWN").astype(str)
-
-    if "created_at" in df.columns:
-        df["datetime_raw"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-    else:
-        df["datetime_raw"] = pd.NaT
-
-    df["datetime"] = df["datetime_raw"].apply(format_dt_short)
-    df["trade_type"] = "SHADOW"
-    df["entry_price"] = df["entry"]
-    return df
+    return _prepare_trade_df(df, "SHADOW")
 
 
 def load_positions_db() -> pd.DataFrame:
@@ -604,10 +578,6 @@ def load_positions_db() -> pd.DataFrame:
 
 
 def load_scoreboard_db() -> pd.DataFrame:
-    # jouw shell liet zien: experience_scoreboard bestaat
-    # met kolommen:
-    # exchange, timeframe, setup_type, regime,
-    # n_total, n_win, n_loss, winrate, avg_r, expectancy, updated_at
     if not table_exists("experience_scoreboard"):
         return pd.DataFrame([])
 
@@ -674,7 +644,7 @@ def build_activity_feed(
             feed.append({
                 "ts": row.get("datetime_raw"),
                 "title": f"{safe_str(row.get('symbol'), '-')} SHADOW",
-                "sub": f"Outcome {safe_str(row.get('outcome'), '-')} | Potential {format_pnl(pnl)}",
+                "sub": f"Outcome {safe_str(row.get('outcome'), '-')} | {format_pnl(pnl)}",
                 "kind": "shadow",
             })
 
@@ -691,8 +661,9 @@ def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.Da
     rows = []
 
     if not real_df.empty:
-        for _, row in real_df.iterrows():
-            ts = row.get("datetime_raw")
+        closed_real = real_df[real_df["is_closed"] == True].copy()
+        for _, row in closed_real.iterrows():
+            ts = row.get("closed_at_raw") if pd.notna(row.get("closed_at_raw")) else row.get("datetime_raw")
             pnl = safe_float(row.get("pnl"), 0.0)
             rows.append({
                 "ts": ts,
@@ -704,9 +675,11 @@ def build_main_chart_df(real_df: pd.DataFrame, shadow_df: pd.DataFrame) -> pd.Da
             })
 
     if not shadow_df.empty:
-        for _, row in shadow_df.iterrows():
-            ts = row.get("datetime_raw")
+        closed_shadow = shadow_df[shadow_df["is_closed"] == True].copy()
+        for _, row in closed_shadow.iterrows():
+            ts = row.get("closed_at_raw") if pd.notna(row.get("closed_at_raw")) else row.get("datetime_raw")
             pnl = safe_float(row.get("pnl"), 0.0)
+
             rows.append({
                 "ts": ts,
                 "real_profit": 0.0,
@@ -892,13 +865,16 @@ eur_available = safe_float((snapshot or {}).get("eur_available"), 0.0)
 crypto_assets_eur = safe_float((snapshot or {}).get("crypto_assets_eur"), 0.0)
 total_portfolio_eur = safe_float((snapshot or {}).get("total_portfolio_eur"), 0.0)
 
-real_profit = float(pd.to_numeric(real_df["pnl"], errors="coerce").fillna(0).sum()) if not real_df.empty else 0.0
-shadow_profit = float(pd.to_numeric(shadow_df["pnl"], errors="coerce").fillna(0).sum()) if not shadow_df.empty else 0.0
+real_closed_df = real_df[real_df["is_closed"] == True].copy() if not real_df.empty else pd.DataFrame([])
+shadow_closed_df = shadow_df[shadow_df["is_closed"] == True].copy() if not shadow_df.empty else pd.DataFrame([])
+
+real_profit = float(pd.to_numeric(real_closed_df["pnl"], errors="coerce").fillna(0).sum()) if not real_closed_df.empty else 0.0
+shadow_profit = float(pd.to_numeric(shadow_closed_df["pnl"], errors="coerce").fillna(0).sum()) if not shadow_closed_df.empty else 0.0
 
 today_pnl = 0.0
-if not real_df.empty:
-    tmp_real = real_df.copy()
-    tmp_real["date_only"] = tmp_real["datetime_raw"].dt.date
+if not real_closed_df.empty:
+    tmp_real = real_closed_df.copy()
+    tmp_real["date_only"] = tmp_real["closed_at_raw"].dt.date
     if not tmp_real["date_only"].isna().all():
         last_day = tmp_real["date_only"].dropna().max()
         today_pnl = float(pd.to_numeric(tmp_real.loc[tmp_real["date_only"] == last_day, "pnl"], errors="coerce").fillna(0).sum())
@@ -907,21 +883,25 @@ open_trades_count = len(positions_df) if not positions_df.empty else 0
 pending_count = len(orders_df) if not orders_df.empty else 0
 missed_count = len(shadow_df) if not shadow_df.empty else 0
 
+shadow_open_count = int((shadow_df["is_closed"] == False).sum()) if not shadow_df.empty else 0
+shadow_closed_count = int((shadow_df["is_closed"] == True).sum()) if not shadow_df.empty else 0
+shadow_unknown_count = int((shadow_df["outcome"].astype(str).str.upper() == "UNKNOWN").sum()) if not shadow_df.empty else 0
+
 missed_good_count = 0
 missed_bad_count = 0
 shadow_winrate = 0.0
-if not shadow_df.empty:
-    pnl_series_shadow = pd.to_numeric(shadow_df["pnl"], errors="coerce").fillna(0.0)
+if not shadow_closed_df.empty:
+    pnl_series_shadow = pd.to_numeric(shadow_closed_df["pnl"], errors="coerce").fillna(0.0)
     missed_good_count = int((pnl_series_shadow > 0).sum())
     missed_bad_count = int((pnl_series_shadow < 0).sum())
-    total_shadow_decisions = int((pnl_series_shadow != 0).sum())
+    total_shadow_decisions = int(len(pnl_series_shadow))
     shadow_winrate = (missed_good_count / total_shadow_decisions * 100.0) if total_shadow_decisions else 0.0
 
 real_winrate = 0.0
-if not real_df.empty:
-    pnl_series_real = pd.to_numeric(real_df["pnl"], errors="coerce").fillna(0.0)
+if not real_closed_df.empty:
+    pnl_series_real = pd.to_numeric(real_closed_df["pnl"], errors="coerce").fillna(0.0)
     wins_real = int((pnl_series_real > 0).sum())
-    valid_real = int((pnl_series_real != 0).sum())
+    valid_real = int(len(pnl_series_real))
     real_winrate = (wins_real / valid_real * 100.0) if valid_real else 0.0
 
 
@@ -1008,7 +988,7 @@ with col_center:
     lg5.markdown('<div class="legend-item"><span class="dot" style="background:#ff8c42;"></span> Oranje = gemiste trade slecht</div>', unsafe_allow_html=True)
 
     if chart_df.empty:
-        st.info("Nog niet genoeg data uit Postgres voor de 5-lijnen grafiek.")
+        st.info("Nog niet genoeg gesloten trades uit Postgres voor de 5-lijnen grafiek.")
     else:
         fig = go.Figure()
 
@@ -1057,7 +1037,7 @@ with col_center:
             margin=dict(l=10, r=10, t=10, b=10),
             showlegend=False,
             xaxis=dict(title="Tijd", gridcolor="rgba(255,255,255,0.07)"),
-            yaxis=dict(title="Resultaat", gridcolor="rgba(255,255,255,0.07)"),
+            yaxis=dict(title="Resultaat (R)", gridcolor="rgba(255,255,255,0.07)"),
         )
         st.plotly_chart(fig, use_container_width=True)
 
@@ -1103,6 +1083,9 @@ with col_right:
         ("pending_approvals", f"OK ({table_count('pending_approvals')})" if table_exists("pending_approvals") else "MIST"),
         ("experience_trades", f"OK ({table_count('experience_trades')})" if table_exists("experience_trades") else "MIST"),
         ("experience_scoreboard", f"OK ({table_count('experience_scoreboard')})" if table_exists("experience_scoreboard") else "MIST"),
+        ("shadow open", str(shadow_open_count)),
+        ("shadow closed", str(shadow_closed_count)),
+        ("shadow unknown", str(shadow_unknown_count)),
         ("snapshot file", "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"),
     ]
     for left_label, right_val in health_rows:
@@ -1150,13 +1133,13 @@ with tabs[2]:
     if real_df.empty:
         st.info("Nog geen echte trades gevonden in Postgres.")
     else:
-        for _, row in real_df.head(60).iterrows():
+        for _, row in real_df.head(80).iterrows():
             sym = safe_str(row.get("symbol"), "-")
             outcome = safe_str(row.get("outcome"), "-").upper()
             entry_price = safe_float(row.get("entry_price"), 0.0)
-            exit_price = safe_float(row.get("exit_price"), 0.0)
             pnl = safe_float(row.get("pnl"), 0.0)
             dt_txt = safe_str(row.get("datetime"), "-")
+            close_txt = safe_str(row.get("closed_txt"), "-")
             sc = "#2ecc71" if outcome == "WIN" else "#ff5a5f" if outcome == "LOSS" else "#cbd5e1"
             pc = pnl_color(pnl)
 
@@ -1168,7 +1151,7 @@ with tabs[2]:
                             {sym}
                             <span style="color:{sc};font-weight:800;"> {outcome}</span>
                         </div>
-                        <div class="deal-sub">{entry_price:.6f} → {exit_price:.6f}</div>
+                        <div class="deal-sub">Entry {entry_price:.6f} | Closed {close_txt}</div>
                     </div>
                     <div class="deal-right">
                         <div class="deal-dt">{dt_txt}</div>
@@ -1184,13 +1167,13 @@ with tabs[3]:
     if shadow_df.empty:
         st.info("Nog geen shadow trades gevonden in Postgres.")
     else:
-        for _, row in shadow_df.head(60).iterrows():
+        for _, row in shadow_df.head(80).iterrows():
             sym = safe_str(row.get("symbol"), "-")
             outcome = safe_str(row.get("outcome"), "-").upper()
             entry_price = safe_float(row.get("entry_price"), 0.0)
-            exit_price = safe_float(row.get("exit_price"), 0.0)
             pnl = safe_float(row.get("pnl"), 0.0)
             dt_txt = safe_str(row.get("datetime"), "-")
+            close_txt = safe_str(row.get("closed_txt"), "-")
             oc = outcome_color(outcome)
             pc = pnl_color(pnl)
 
@@ -1202,7 +1185,7 @@ with tabs[3]:
                             {sym}
                             <span style="color:{oc};font-weight:800;"> {outcome}</span>
                         </div>
-                        <div class="deal-sub">{entry_price:.6f} → {exit_price:.6f}</div>
+                        <div class="deal-sub">Entry {entry_price:.6f} | Closed {close_txt}</div>
                     </div>
                     <div class="deal-right">
                         <div class="deal-dt">{dt_txt}</div>
@@ -1221,6 +1204,11 @@ with tabs[4]:
     p3.metric("Missed Wins", str(missed_good_count))
     p4.metric("Missed Losses", str(missed_bad_count))
 
+    shadow_health_1, shadow_health_2, shadow_health_3 = st.columns(3)
+    shadow_health_1.metric("Shadow Open", str(shadow_open_count))
+    shadow_health_2.metric("Shadow Closed", str(shadow_closed_count))
+    shadow_health_3.metric("Shadow Unknown", str(shadow_unknown_count))
+
     if scoreboard_df.empty:
         st.info("Geen experience_scoreboard data gevonden in Postgres.")
     else:
@@ -1236,6 +1224,9 @@ with tabs[5]:
         {"item": "experience_scoreboard", "status": f"OK ({table_count('experience_scoreboard')})" if table_exists("experience_scoreboard") else "MIST"},
         {"item": "snapshot file", "status": "OK" if file_meta(SNAPSHOT_PATH).get("exists") else "MIST"},
         {"item": "portfolio_history.csv", "status": "OK" if file_meta(PORTFOLIO_HISTORY_CSV).get("exists") else "MIST"},
+        {"item": "shadow open", "status": str(shadow_open_count)},
+        {"item": "shadow closed", "status": str(shadow_closed_count)},
+        {"item": "shadow unknown", "status": str(shadow_unknown_count)},
     ]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
