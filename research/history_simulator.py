@@ -85,72 +85,55 @@ def set_db_safety(conn):
 
 
 def ensure_tables(conn):
+    """
+    BELANGRIJK:
+    experience_trades schema wordt NIET meer hier geforceerd.
+    Dat loopt via sync_schema() uit data/fix_experience_schema.py
+
+    Dit bestand zorgt alleen nog voor:
+    - experience_scoreboard
+    - benodigde indexes
+    """
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.experience_trades (
-                id BIGSERIAL PRIMARY KEY,
-                trade_key TEXT UNIQUE,
-                source TEXT NOT NULL DEFAULT 'SIM',
-
-                timestamp TIMESTAMPTZ NOT NULL,
-                entry_time TIMESTAMPTZ NOT NULL,
-                exit_time TIMESTAMPTZ,
-
-                coin TEXT NOT NULL,
-                entry_timeframe TEXT NOT NULL,
-                regime_timeframe TEXT NOT NULL,
-
-                setup_type TEXT NOT NULL,
-                market_regime TEXT NOT NULL,
-                grade TEXT NOT NULL,
-
-                entry DOUBLE PRECISION NOT NULL,
-                stop DOUBLE PRECISION NOT NULL,
-                target DOUBLE PRECISION NOT NULL,
-
-                decision TEXT NOT NULL DEFAULT 'SIM',
-                outcome TEXT NOT NULL,
-
-                mfe DOUBLE PRECISION NOT NULL DEFAULT 0,
-                mae DOUBLE PRECISION NOT NULL DEFAULT 0,
-                time_minutes INTEGER NOT NULL DEFAULT 0,
-
-                why TEXT,
-                market_condition TEXT,
-                bot_confidence INTEGER,
-                overextended DOUBLE PRECISION,
-
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            """
-        )
-
+        # scoreboard
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.experience_scoreboard (
                 score_key TEXT PRIMARY KEY,
-
                 setup_type TEXT NOT NULL,
                 market_regime TEXT NOT NULL,
                 grade TEXT NOT NULL,
-
                 n INTEGER NOT NULL DEFAULT 0,
                 wins INTEGER NOT NULL DEFAULT 0,
                 losses INTEGER NOT NULL DEFAULT 0,
                 timeouts INTEGER NOT NULL DEFAULT 0,
-
                 avg_mfe DOUBLE PRECISION NOT NULL DEFAULT 0,
                 avg_mae DOUBLE PRECISION NOT NULL DEFAULT 0,
                 avg_time_minutes DOUBLE PRECISION NOT NULL DEFAULT 0,
                 win_rate DOUBLE PRECISION NOT NULL DEFAULT 0,
-
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
             """
         )
 
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS score_key TEXT;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS setup_type TEXT;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS market_regime TEXT;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS grade TEXT;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS n INTEGER NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS wins INTEGER NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS losses INTEGER NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS timeouts INTEGER NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS avg_mfe DOUBLE PRECISION NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS avg_mae DOUBLE PRECISION NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS avg_time_minutes DOUBLE PRECISION NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS win_rate DOUBLE PRECISION NOT NULL DEFAULT 0;")
+        cur.execute("ALTER TABLE public.experience_scoreboard ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();")
+
+        # Als score_key nog geen PK is, forceren we dat niet hier opnieuw.
+        # Dat hebben we al handmatig goed gezet in de DB.
+
+        # Indexes op experience_trades (best effort, schema wordt door sync_schema geregeld)
         cur.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_experience_trades_coin
@@ -161,7 +144,7 @@ def ensure_tables(conn):
         cur.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_experience_trades_timestamp
-            ON public.experience_trades(timestamp DESC);
+            ON public.experience_trades("timestamp" DESC);
             """
         )
 
@@ -190,9 +173,13 @@ def ensure_tables(conn):
 
 
 def reset_tables(conn):
+    """
+    Geen RESTART IDENTITY gebruiken:
+    experience_trades gebruikt nu niet per se meer een BIGSERIAL id.
+    """
     with conn.cursor() as cur:
-        cur.execute("TRUNCATE TABLE public.experience_trades RESTART IDENTITY;")
-        cur.execute("TRUNCATE TABLE public.experience_scoreboard;")
+        cur.execute("DELETE FROM public.experience_trades;")
+        cur.execute("DELETE FROM public.experience_scoreboard;")
     conn.commit()
 
 
@@ -525,26 +512,58 @@ def insert_experience_trade(conn, row: Dict[str, Any]) -> bool:
         cur.execute(
             """
             INSERT INTO public.experience_trades (
-                trade_key, source,
-                timestamp, entry_time, exit_time,
-                coin, entry_timeframe, regime_timeframe,
-                setup_type, market_regime, grade,
-                entry, stop, target,
-                decision, outcome,
-                mfe, mae, time_minutes,
-                why, market_condition, bot_confidence, overextended,
-                created_at, updated_at
+                trade_key,
+                source,
+                timestamp,
+                entry_time,
+                exit_time,
+                coin,
+                entry_timeframe,
+                regime_timeframe,
+                setup_type,
+                market_regime,
+                grade,
+                entry,
+                stop,
+                target,
+                decision,
+                outcome,
+                mfe,
+                mae,
+                time_minutes,
+                why,
+                market_condition,
+                bot_confidence,
+                overextended,
+                created_at,
+                updated_at
             )
             VALUES (
-                %s, 'SIM',
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                %s, %s, %s,
-                'SIM', %s,
-                %s, %s, %s,
-                %s, %s, %s, %s,
-                NOW(), NOW()
+                %s,
+                'SIM',
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                'SIM',
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                %s,
+                NOW(),
+                NOW()
             )
             ON CONFLICT (trade_key) DO NOTHING;
             """,
@@ -635,16 +654,32 @@ def upsert_scoreboard(conn, combined_sb: Dict[str, Any]) -> None:
                 """
                 INSERT INTO public.experience_scoreboard (
                     score_key,
-                    setup_type, market_regime, grade,
-                    n, wins, losses, timeouts,
-                    avg_mfe, avg_mae, avg_time_minutes, win_rate,
+                    setup_type,
+                    market_regime,
+                    grade,
+                    n,
+                    wins,
+                    losses,
+                    timeouts,
+                    avg_mfe,
+                    avg_mae,
+                    avg_time_minutes,
+                    win_rate,
                     updated_at
                 )
                 VALUES (
                     %s,
-                    %s, %s, %s,
-                    %s, %s, %s, %s,
-                    %s, %s, %s, %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
+                    %s,
                     NOW()
                 )
                 ON CONFLICT (score_key)
@@ -847,6 +882,10 @@ def main():
     try:
         conn = pg_connect()
         set_db_safety(conn)
+
+        print("🔧 syncing experience_trades schema...")
+        sync_schema()
+
         ensure_tables(conn)
 
         if SIM_RESET:
@@ -886,6 +925,4 @@ def main():
 
 
 if __name__ == "__main__":
-    print("🔧 syncing experience_trades schema...")
-    sync_schema()
     main()
