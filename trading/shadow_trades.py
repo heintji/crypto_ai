@@ -237,6 +237,10 @@ def ensure_schema() -> None:
                 CREATE INDEX IF NOT EXISTS idx_experience_trades_shadow_created
                 ON public.experience_trades(created_at DESC);
             """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_trades_shadow_symbol_created
+                ON public.experience_trades(symbol, created_at DESC);
+            """)
         conn.commit()
 
 
@@ -266,7 +270,7 @@ def create_shadow(
     Fallback = JSON file.
     """
 
-    shadow_id = f"SH-{prebuy_id}"
+    shadow_id = f"SH-{prebuy_id}-{int(time.time())}"
     created_at = now_utc()
 
     payload = {
