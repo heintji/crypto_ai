@@ -1,45 +1,3 @@
-# trade_monitor.py
-# ==========================================================
-# ✅ Trade monitor (exit logic) — LIVE + PAPER compatible
-#
-# Wat is hier aangepast (zonder jouw exit-logica te veranderen):
-# 1) ✅ STATE_PATH auto switch:
-#    - TRADER_MODE=live  -> LIVE_STATE_PATH (default /data/live_state.json)
-#    - TRADER_MODE=paper -> PAPER_STATE_PATH
-#    - TRADER_MODE=auto  -> default LIVE_STATE_PATH (want jouw doel is live)
-#
-# 2) ✅ PRICE SOURCE auto:
-#    - Als trade live is -> Bitvavo prijs (EUR market)
-#    - Anders -> Binance prijs (USDT)
-#
-# 3) ✅ SYMBOL NORMALIZATION:
-#    - Als je trade symbol = BTCUSDT (Binance-wereld) maar live -> wordt BTC-EUR voor Bitvavo price
-#    - Als je trade symbol al "BTC-EUR" is -> blijft het zo
-#
-# 4) ✅ STRUCTUUR-MODE lows:
-#    - Live -> Bitvavo candles (als beschikbaar) of fallback Binance
-#    - Paper/Binance -> Binance lows
-#
-# 5) ✅ EXTRA DEBUG:
-#    - Print duidelijk welke prijsbron gebruikt wordt + market mapping
-#
-# 6) ✅ LEERLAAG UITGEBREID:
-#    - MFE / MAE tracking
-#    - max/min price seen
-#    - holding time
-#    - close reason
-#    - richer experience logging
-#    - update van prebuy_experience waar mogelijk
-#
-# 7) ✅ SHADOW TRADES:
-#    - open shadow trades worden nu ook automatisch geëvalueerd
-#    - target geraakt => WIN
-#    - stop geraakt => LOSS
-#    - ook zónder open_trades in state
-#
-# Jouw exit-regels blijven EXACT hetzelfde.
-# ==========================================================
-
 from __future__ import annotations
 
 import os
@@ -64,9 +22,14 @@ if PROJECT_ROOT not in sys.path:
 # ✅ Shadow trades import
 # =========================
 try:
-    from trading.shadow_trades import evaluate_open_shadows_for_symbol, load_shadows
+    from trading.shadow_trades import (
+        evaluate_open_shadows_for_symbol,
+        get_open_shadows,
+        load_shadows,
+    )
 except Exception:
     evaluate_open_shadows_for_symbol = None
+    get_open_shadows = None
     load_shadows = None
 
 # =========================
@@ -103,7 +66,7 @@ def _choose_state_path() -> str:
 
 
 STATE_PATH = _choose_state_path()
-FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
+FORCE_EXIT_LOCK_PATH = (os.getenv("FORCE_TEST_EXIT_LOCK_PATH") or os.path.join(DATA_DIR, "force_test_exit.lock")).strip()
 
 # =========================
 # Binance endpoints (prijs/structuur)
@@ -655,27 +618,38 @@ def evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
 
 def get_open_shadow_symbols() -> List[str]:
     """
-    Haalt alle open shadow symbols op uit trading/shadow_trades.py opslag.
+    Haalt alle open shadow symbols op.
+    Eerst uit DB via get_open_shadows(), daarna fallback file.
     """
-    if load_shadows is None:
-        return []
+    symbols: Set[str] = set()
 
-    try:
-        shadows = load_shadows()
-        symbols: Set[str] = set()
+    if get_open_shadows is not None:
+        try:
+            db_shadows = get_open_shadows()
+            for sh in db_shadows:
+                if not isinstance(sh, dict):
+                    continue
+                symbol = _safe_str(sh.get("symbol"))
+                status = _safe_str(sh.get("status"), "OPEN").upper()
+                if symbol and status == "OPEN":
+                    symbols.add(symbol)
+        except Exception as e:
+            _print(f"⚠️ Open shadow symbols uit DB ophalen mislukt: {type(e).__name__}: {e}")
 
-        for sh in shadows:
-            if not isinstance(sh, dict):
-                continue
-            status = _safe_str(sh.get("status"), "OPEN").upper()
-            symbol = _safe_str(sh.get("symbol"))
-            if status == "OPEN" and symbol:
-                symbols.add(symbol)
+    if not symbols and load_shadows is not None:
+        try:
+            file_shadows = load_shadows()
+            for sh in file_shadows:
+                if not isinstance(sh, dict):
+                    continue
+                symbol = _safe_str(sh.get("symbol"))
+                status = _safe_str(sh.get("status"), "OPEN").upper()
+                if symbol and status == "OPEN":
+                    symbols.add(symbol)
+        except Exception as e:
+            _print(f"⚠️ Open shadow symbols uit file ophalen mislukt: {type(e).__name__}: {e}")
 
-        return sorted(symbols)
-    except Exception as e:
-        _print(f"⚠️ Open shadow symbols ophalen mislukt: {type(e).__name__}: {e}")
-        return []
+    return sorted(symbols)
 
 
 def evaluate_all_open_shadows() -> None:
