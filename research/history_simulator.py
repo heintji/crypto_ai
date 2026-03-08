@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import os
-import math
 import traceback
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 
 import psycopg2
 import psycopg2.extras
+
+from data.fix_experience_schema import sync_schema
 
 
 # ==========================================================
@@ -76,48 +77,11 @@ def set_db_safety(conn):
 
 
 def ensure_tables(conn):
+    """
+    Houd alleen scoreboard en veilige indexes hier.
+    experience_trades schema wordt waterdicht gemaakt via sync_schema().
+    """
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            CREATE TABLE IF NOT EXISTS public.experience_trades (
-                id BIGSERIAL PRIMARY KEY,
-                trade_key TEXT UNIQUE,
-                source TEXT NOT NULL DEFAULT 'SIM',
-
-                timestamp TIMESTAMPTZ NOT NULL,
-                entry_time TIMESTAMPTZ NOT NULL,
-                exit_time TIMESTAMPTZ,
-
-                coin TEXT NOT NULL,
-                entry_timeframe TEXT NOT NULL,
-                regime_timeframe TEXT NOT NULL,
-
-                setup_type TEXT NOT NULL,
-                market_regime TEXT NOT NULL,
-                grade TEXT NOT NULL,
-
-                entry DOUBLE PRECISION NOT NULL,
-                stop DOUBLE PRECISION NOT NULL,
-                target DOUBLE PRECISION NOT NULL,
-
-                decision TEXT NOT NULL DEFAULT 'SIM',
-                outcome TEXT NOT NULL,
-
-                mfe DOUBLE PRECISION NOT NULL DEFAULT 0,
-                mae DOUBLE PRECISION NOT NULL DEFAULT 0,
-                time_minutes INTEGER NOT NULL DEFAULT 0,
-
-                why TEXT,
-                market_condition TEXT,
-                bot_confidence INTEGER,
-                overextended DOUBLE PRECISION,
-
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-            );
-            """
-        )
-
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS public.experience_scoreboard (
@@ -170,19 +134,12 @@ def ensure_tables(conn):
             """
         )
 
-        cur.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_candles_symbol_tf_time
-            ON public.candles(symbol, timeframe, open_time);
-            """
-        )
-
     conn.commit()
 
 
 def reset_tables(conn):
     with conn.cursor() as cur:
-        cur.execute("TRUNCATE TABLE public.experience_trades RESTART IDENTITY;")
+        cur.execute("TRUNCATE TABLE public.experience_trades;")
         cur.execute("TRUNCATE TABLE public.experience_scoreboard;")
     conn.commit()
 
@@ -877,4 +834,6 @@ def main():
 
 
 if __name__ == "__main__":
+    print("🔧 syncing experience_trades schema...")
+    sync_schema()
     main()
