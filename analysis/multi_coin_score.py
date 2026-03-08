@@ -1,4 +1,3 @@
-# analysis/multi_coin_score.py
 from __future__ import annotations
 
 import os
@@ -66,6 +65,14 @@ BITVAVO_FILTER_UNIVERSE = (os.getenv("BITVAVO_FILTER_UNIVERSE") or "1").strip() 
 
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "20")
 
+# Experience layer
+EXPERIENCE_ENABLED = (os.getenv("EXPERIENCE_ENABLED") or "1").strip() == "1"
+EXPERIENCE_MIN_TRADES = int(os.getenv("EXPERIENCE_MIN_TRADES") or "15")
+EXPERIENCE_SCORE_WEIGHT = float(os.getenv("EXPERIENCE_SCORE_WEIGHT") or "12")
+EXPERIENCE_EDGE_WEIGHT = float(os.getenv("EXPERIENCE_EDGE_WEIGHT") or "4")
+EXPERIENCE_MAX_BOOST = int(os.getenv("EXPERIENCE_MAX_BOOST") or "15")
+EXPERIENCE_MAX_PENALTY = int(os.getenv("EXPERIENCE_MAX_PENALTY") or "15")
+
 # WhatsApp push via Twilio (optioneel)
 TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
 TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
@@ -96,6 +103,35 @@ class Prebuy:
     why_tag: str = ""
     market_condition: str = "NORMAAL"
     overextended_pct: float = 0.0
+
+    # experience layer
+    exp_n: int = 0
+    exp_win_rate: float = 0.0
+    exp_bias: int = 0
+    exp_avg_mfe: float = 0.0
+    exp_avg_mae: float = 0.0
+    exp_key: str = ""
+    exp_used: bool = False
+
+
+# =========================
+# Helpers
+# =========================
+def safe_str(value: Any, default: str = "") -> str:
+    if value is None:
+        return default
+    try:
+        return str(value)
+    except Exception:
+        return default
+
+
+def clamp_int(value: float, min_value: int = 0, max_value: int = 100) -> int:
+    return max(min_value, min(max_value, int(round(value))))
+
+
+def current_label_from_score(score: int) -> str:
+    return "GO" if score >= MIN_SCORE_TO_GO else "WATCH"
 
 
 # =========================
@@ -140,6 +176,12 @@ def ensure_schema(cur):
     cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
     cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();")
     cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS status TEXT;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_n INTEGER;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_win_rate DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_bias INTEGER;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_avg_mfe DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_avg_mae DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_key TEXT;")
 
     # trade_fingerprints: deduplicatie van dezelfde trade
     cur.execute("""
@@ -198,6 +240,13 @@ def ensure_schema(cur):
     cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS label TEXT;")
     cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();")
     cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_n INTEGER;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_win_rate DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_bias INTEGER;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_avg_mfe DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_avg_mae DOUBLE PRECISION;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_key TEXT;")
+    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_used BOOLEAN DEFAULT FALSE;")
 
     cur.execute("""
     CREATE INDEX IF NOT EXISTS idx_prebuy_experience_symbol_created_at
@@ -267,9 +316,10 @@ def insert_pending(cur, pre: Prebuy):
     cur.execute("""
     INSERT INTO public.pending_approvals(
         id, symbol, timeframe, setup_type, regime, score, raw_score, chance, confidence,
-        entry, stop, target, status, created_at, expires_at, bitvavo_market
+        entry, stop, target, status, created_at, expires_at, bitvavo_market,
+        exp_n, exp_win_rate, exp_bias, exp_avg_mfe, exp_avg_mae, exp_key
     )
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING', NOW(), %s, %s)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING', NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (id) DO NOTHING
     """, (
         pre.prebuy_id,
@@ -286,6 +336,12 @@ def insert_pending(cur, pre: Prebuy):
         pre.target,
         pre.expires_at,
         pre.bitvavo_market,
+        pre.exp_n,
+        pre.exp_win_rate,
+        pre.exp_bias,
+        pre.exp_avg_mfe,
+        pre.exp_avg_mae,
+        pre.exp_key,
     ))
 
 
@@ -294,10 +350,12 @@ def insert_experience(cur, pre: Prebuy, fp: str, notified: bool, notification_re
     INSERT INTO public.prebuy_experience(
         prebuy_id, fingerprint, symbol, timeframe, setup_type, regime, score, raw_score,
         chance, confidence, label, entry, stop, target, bitvavo_market, why_tag,
-        market_condition, overextended_pct, notified, notification_reason, created_at, expires_at
+        market_condition, overextended_pct, notified, notification_reason, created_at, expires_at,
+        exp_n, exp_win_rate, exp_bias, exp_avg_mfe, exp_avg_mae, exp_key, exp_used
     )
     VALUES (
-        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s
+        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,
+        %s,%s,%s,%s,%s,%s,%s
     )
     ON CONFLICT (prebuy_id) DO NOTHING
     """, (
@@ -322,7 +380,123 @@ def insert_experience(cur, pre: Prebuy, fp: str, notified: bool, notification_re
         notified,
         notification_reason,
         pre.expires_at,
+        pre.exp_n,
+        pre.exp_win_rate,
+        pre.exp_bias,
+        pre.exp_avg_mfe,
+        pre.exp_avg_mae,
+        pre.exp_key,
+        pre.exp_used,
     ))
+
+
+def load_experience_scoreboard(cur) -> Dict[str, Dict[str, Any]]:
+    if not EXPERIENCE_ENABLED:
+        return {}
+
+    cur.execute("""
+    SELECT
+        score_key,
+        setup_type,
+        market_regime,
+        grade,
+        n,
+        wins,
+        losses,
+        timeouts,
+        avg_mfe,
+        avg_mae,
+        avg_time_minutes,
+        win_rate
+    FROM public.experience_scoreboard
+    """)
+    rows = cur.fetchall()
+
+    result: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        key = safe_str(row[0])
+        result[key] = {
+            "score_key": key,
+            "setup_type": safe_str(row[1]),
+            "market_regime": safe_str(row[2]),
+            "grade": safe_str(row[3]),
+            "n": int(row[4] or 0),
+            "wins": int(row[5] or 0),
+            "losses": int(row[6] or 0),
+            "timeouts": int(row[7] or 0),
+            "avg_mfe": float(row[8] or 0.0),
+            "avg_mae": float(row[9] or 0.0),
+            "avg_time_minutes": float(row[10] or 0.0),
+            "win_rate": float(row[11] or 0.0),
+        }
+    return result
+
+
+def compute_experience_adjustment(
+    setup_type: str,
+    regime: str,
+    base_grade: str,
+    scoreboard: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    Geeft een conservatieve boost/penalty op basis van historische ervaring.
+    We blokkeren GEEN trades hard, maar sturen score/chance/confidence subtiel bij.
+    """
+    key = f"{setup_type}|{regime}|{base_grade}"
+    rec = scoreboard.get(key)
+
+    if not EXPERIENCE_ENABLED or not rec:
+        return {
+            "key": key,
+            "used": False,
+            "n": 0,
+            "win_rate": 0.0,
+            "avg_mfe": 0.0,
+            "avg_mae": 0.0,
+            "bias": 0,
+            "reason": "NO_SCOREBOARD_MATCH",
+        }
+
+    n = int(rec.get("n", 0) or 0)
+    win_rate = float(rec.get("win_rate", 0.0) or 0.0)
+    avg_mfe = float(rec.get("avg_mfe", 0.0) or 0.0)
+    avg_mae = float(rec.get("avg_mae", 0.0) or 0.0)
+
+    if n < EXPERIENCE_MIN_TRADES:
+        return {
+            "key": key,
+            "used": False,
+            "n": n,
+            "win_rate": win_rate,
+            "avg_mfe": avg_mfe,
+            "avg_mae": avg_mae,
+            "bias": 0,
+            "reason": f"NOT_ENOUGH_TRADES_{n}",
+        }
+
+    # win_rate rondom 50% centreren
+    wr_component = ((win_rate - 50.0) / 50.0) * EXPERIENCE_SCORE_WEIGHT
+
+    # MFE/MAE edge: positief als favorable > adverse
+    edge = avg_mfe - avg_mae
+    edge_component = edge * EXPERIENCE_EDGE_WEIGHT
+
+    raw_bias = wr_component + edge_component
+
+    max_down = abs(EXPERIENCE_MAX_PENALTY)
+    max_up = abs(EXPERIENCE_MAX_BOOST)
+    bias = int(round(max(-max_down, min(max_up, raw_bias))))
+
+    return {
+        "key": key,
+        "used": True,
+        "n": n,
+        "win_rate": round(win_rate, 2),
+        "avg_mfe": round(avg_mfe, 4),
+        "avg_mae": round(avg_mae, 4),
+        "bias": bias,
+        "reason": f"N={n}|WR={round(win_rate,2)}|EDGE={round(edge,4)}",
+    }
 
 
 # =========================
@@ -564,17 +738,20 @@ def make_prebuy(
     why_tag: str,
     market_condition: str,
     overextended_pct: float,
+    exp_meta: Optional[Dict[str, Any]] = None,
 ) -> Prebuy:
     stop, target = build_levels(entry)
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=PREBUY_VALID_SECONDS)
     uid = hashlib.md5(f"{symbol}-{time.time()}".encode("utf-8")).hexdigest()[:6]
     prebuy_id = f"PB-{symbol}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uid}"
 
-    label = "GO" if norm >= MIN_SCORE_TO_GO else "WATCH"
+    label = current_label_from_score(norm)
 
     bitvavo_market = None
     if symbol_usdt_to_bitvavo_market:
         bitvavo_market = symbol_usdt_to_bitvavo_market(symbol)
+
+    exp_meta = exp_meta or {}
 
     return Prebuy(
         prebuy_id=prebuy_id,
@@ -595,6 +772,13 @@ def make_prebuy(
         why_tag=why_tag,
         market_condition=market_condition,
         overextended_pct=overextended_pct,
+        exp_n=int(exp_meta.get("n", 0) or 0),
+        exp_win_rate=float(exp_meta.get("win_rate", 0.0) or 0.0),
+        exp_bias=int(exp_meta.get("bias", 0) or 0),
+        exp_avg_mfe=float(exp_meta.get("avg_mfe", 0.0) or 0.0),
+        exp_avg_mae=float(exp_meta.get("avg_mae", 0.0) or 0.0),
+        exp_key=safe_str(exp_meta.get("key"), ""),
+        exp_used=bool(exp_meta.get("used", False)),
     )
 
 
@@ -693,6 +877,13 @@ def main():
         with conn.cursor() as cur:
             ensure_schema(cur)
 
+            scoreboard = load_experience_scoreboard(cur)
+            print(
+                f"experience_enabled={EXPERIENCE_ENABLED} | "
+                f"scoreboard_rows={len(scoreboard)} | "
+                f"min_trades={EXPERIENCE_MIN_TRADES}"
+            )
+
             push_count_today = get_pushes_today(cur)
             day = utc_day_str()
             print(f"multi_coin_score | day={day} | auto_push_today={push_count_today}/{MAX_PREBUY_PER_DAY}")
@@ -714,6 +905,7 @@ def main():
             experienced = 0
             shadow_created = 0
             shadow_failed = 0
+            exp_used_count = 0
 
             for sym in universe:
                 try:
@@ -738,19 +930,45 @@ def main():
                     market_condition = detect_market_condition(closes)
                     overextended_pct = calc_overextended_pct(closes)
 
+                    # eerst base grade bepalen
+                    base_grade = current_label_from_score(norm)
+
+                    # experience adjustment ophalen
+                    exp_meta = compute_experience_adjustment(
+                        setup_type=setup,
+                        regime=regime,
+                        base_grade=base_grade,
+                        scoreboard=scoreboard,
+                    )
+
+                    # score/chance/conf subtiel bijsturen, nooit hard blokkeren
+                    adjusted_norm = clamp_int(norm + exp_meta["bias"])
+                    adjusted_chance = clamp_int(chance + (exp_meta["bias"] * 0.8))
+                    adjusted_conf = clamp_int(conf + (exp_meta["bias"] * 0.6))
+
+                    # why_tag uitbreiden met experience info
+                    if exp_meta["used"]:
+                        exp_used_count += 1
+                        why_tag = (
+                            f"{why_tag}|exp_wr={exp_meta['win_rate']}"
+                            f"|exp_n={exp_meta['n']}"
+                            f"|exp_bias={exp_meta['bias']}"
+                        )
+
                     pre = make_prebuy(
                         symbol=sym,
                         tf=TF_MAIN,
                         setup=setup,
                         regime=regime,
                         raw=raw,
-                        norm=norm,
-                        chance=chance,
-                        conf=conf,
+                        norm=adjusted_norm,
+                        chance=adjusted_chance,
+                        conf=adjusted_conf,
                         entry=entry,
                         why_tag=why_tag,
                         market_condition=market_condition,
                         overextended_pct=overextended_pct,
+                        exp_meta=exp_meta,
                     )
 
                     fp = fingerprint_for(pre)
@@ -766,7 +984,9 @@ def main():
                         experienced += 1
                         print(
                             f"📘 {sym}: duplicate geblokkeerd | label={pre.label} "
-                            f"score={pre.score} chance={pre.chance} reason={notification_reason}"
+                            f"score={pre.score} chance={pre.chance} "
+                            f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
+                            f"reason={notification_reason}"
                         )
                         continue
 
@@ -804,15 +1024,18 @@ def main():
                             notification_reason = "AUTO_PUSH_LIMIT_REACHED_PENDING_KEPT"
 
                         print(
-                            f"🟢 {sym}: pending aangemaakt | label={pre.label} raw={pre.raw_score} "
-                            f"norm={pre.score} chance={pre.chance} regime={pre.regime} "
+                            f"🟢 {sym}: pending aangemaakt | "
+                            f"label={pre.label} raw={pre.raw_score} norm={pre.score} chance={pre.chance} "
+                            f"regime={pre.regime} exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
+                            f"exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
                             f"why={pre.why_tag} push={notification_reason} shadow={shadow_reason} id={pre.prebuy_id}"
                         )
                     else:
                         print(
-                            f"📘 {sym}: alleen leren | label={pre.label} score={pre.score} "
-                            f"chance={pre.chance} regime={pre.regime} why={pre.why_tag} "
-                            f"reason={notification_reason} shadow={shadow_reason}"
+                            f"📘 {sym}: alleen leren | "
+                            f"label={pre.label} score={pre.score} chance={pre.chance} regime={pre.regime} "
+                            f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
+                            f"why={pre.why_tag} reason={notification_reason} shadow={shadow_reason}"
                         )
 
                     insert_experience(cur, pre, fp, notified, notification_reason)
@@ -825,7 +1048,8 @@ def main():
             dur = time.time() - start
             print(
                 f"DONE pending_created={created_pending} auto_push_sent={pushed_count} "
-                f"experienced={experienced} shadow_created={shadow_created} shadow_failed={shadow_failed} "
+                f"experienced={experienced} exp_used_count={exp_used_count} "
+                f"shadow_created={shadow_created} shadow_failed={shadow_failed} "
                 f"candidates={candidates} scanned={len(universe)} seconds={dur:.1f}"
             )
 
