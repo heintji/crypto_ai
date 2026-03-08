@@ -33,6 +33,17 @@ def now_ts() -> int:
     return int(time.time())
 
 
+def dt_to_iso(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    try:
+        return str(value)
+    except Exception:
+        return None
+
+
 def safe_float(x: Any, default: float = 0.0) -> float:
     try:
         return float(x)
@@ -90,7 +101,6 @@ def save_shadows_file(shadows: List[Dict[str, Any]]) -> None:
         json.dump(shadows, f, indent=2, ensure_ascii=False)
 
 
-# Belangrijk:
 # alias zodat trade_monitor.py gewoon load_shadows kan importeren
 def load_shadows() -> List[Dict[str, Any]]:
     return load_shadows_file()
@@ -103,16 +113,64 @@ def calc_r_result(entry: float, stop: float, exit_price: float) -> float:
     return (exit_price - entry) / risk
 
 
+def calc_pnl_pct(entry: float, exit_price: float) -> float:
+    if entry <= 0:
+        return 0.0
+    return ((exit_price - entry) / entry) * 100.0
+
+
 def infer_outcome(result_r: float, flat_band: float = 0.05) -> str:
     if abs(result_r) <= flat_band:
         return "FLAT"
     return "WIN" if result_r > 0 else "LOSS"
 
 
+def normalize_shadow_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Zorgt dat dashboard-consumptie netjes en consistent is.
+    """
+    out = dict(row)
+
+    out["id"] = safe_str(out.get("id"))
+    out["exchange"] = safe_str(out.get("exchange"), "BINANCE")
+    out["symbol"] = safe_str(out.get("symbol"))
+    out["timeframe"] = safe_str(out.get("timeframe"), "4h")
+    out["setup_type"] = safe_str(out.get("setup_type"), "UNKNOWN")
+    out["regime"] = safe_str(out.get("regime"), "UNKNOWN")
+    out["label"] = safe_str(out.get("label"), "WATCH")
+    out["status"] = safe_str(out.get("status"), "OPEN").upper()
+
+    out["score"] = safe_float(out.get("score"))
+    out["raw_score"] = safe_float(out.get("raw_score"))
+    out["chance"] = safe_float(out.get("chance"))
+    out["confidence"] = safe_float(out.get("confidence"))
+
+    out["entry"] = safe_float(out.get("entry"))
+    out["stop"] = safe_float(out.get("stop"))
+    out["target"] = safe_float(out.get("target"))
+    out["exit_price"] = safe_float(out.get("exit_price"), 0.0) if out.get("exit_price") is not None else None
+
+    out["result_r"] = safe_float(out.get("result_r"), 0.0) if out.get("result_r") is not None else None
+    out["pnl_pct"] = safe_float(out.get("pnl_pct"), 0.0) if out.get("pnl_pct") is not None else None
+    out["outcome"] = safe_str(out.get("outcome"), "UNKNOWN").upper()
+    out["is_shadow"] = True
+
+    out["created_at"] = dt_to_iso(out.get("created_at"))
+    out["closed_at"] = dt_to_iso(out.get("closed_at"))
+
+    return out
+
+
 # ==========================================================
 # DB SCHEMA
 # ==========================================================
 def ensure_schema() -> None:
+    """
+    Houdt experience_trades compatible met:
+    - history_simulator
+    - shadow trades
+    - dashboard historie
+    """
     if not db_ready():
         return
 
@@ -134,8 +192,11 @@ def ensure_schema() -> None:
                     entry DOUBLE PRECISION,
                     stop DOUBLE PRECISION,
                     target DOUBLE PRECISION,
+                    exit_price DOUBLE PRECISION,
+                    pnl_pct DOUBLE PRECISION,
                     result_r DOUBLE PRECISION,
                     outcome TEXT,
+                    status TEXT DEFAULT 'OPEN',
                     is_shadow BOOLEAN DEFAULT FALSE,
                     created_at TIMESTAMPTZ DEFAULT NOW(),
                     closed_at TIMESTAMPTZ
@@ -155,11 +216,27 @@ def ensure_schema() -> None:
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS entry DOUBLE PRECISION;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS stop DOUBLE PRECISION;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS target DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS exit_price DOUBLE PRECISION;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS pnl_pct DOUBLE PRECISION;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS result_r DOUBLE PRECISION;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS outcome TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'OPEN';")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS is_shadow BOOLEAN DEFAULT FALSE;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;")
+
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_trades_shadow_status
+                ON public.experience_trades(is_shadow, status);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_trades_shadow_symbol
+                ON public.experience_trades(symbol, is_shadow, status);
+            """)
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_experience_trades_shadow_created
+                ON public.experience_trades(created_at DESC);
+            """)
         conn.commit()
 
 
@@ -190,6 +267,7 @@ def create_shadow(
     """
 
     shadow_id = f"SH-{prebuy_id}"
+    created_at = now_utc()
 
     payload = {
         "id": shadow_id,
@@ -206,10 +284,13 @@ def create_shadow(
         "entry": safe_float(entry),
         "stop": safe_float(stop),
         "target": safe_float(target),
+        "exit_price": None,
+        "pnl_pct": None,
         "result_r": None,
         "outcome": "UNKNOWN",
+        "status": "OPEN",
         "is_shadow": True,
-        "created_at": now_utc(),
+        "created_at": created_at,
         "closed_at": None,
     }
 
@@ -222,9 +303,16 @@ def create_shadow(
                         id, exchange, symbol, timeframe, setup_type, regime, label,
                         score, raw_score, chance, confidence,
                         entry, stop, target,
-                        result_r, outcome, is_shadow, created_at, closed_at
+                        exit_price, pnl_pct, result_r, outcome, status,
+                        is_shadow, created_at, closed_at
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s,
+                        %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        %s, %s, %s
+                    )
                     ON CONFLICT (id) DO NOTHING
                 """, (
                     payload["id"],
@@ -241,8 +329,11 @@ def create_shadow(
                     payload["entry"],
                     payload["stop"],
                     payload["target"],
+                    payload["exit_price"],
+                    payload["pnl_pct"],
                     payload["result_r"],
                     payload["outcome"],
+                    payload["status"],
                     payload["is_shadow"],
                     payload["created_at"],
                     payload["closed_at"],
@@ -254,10 +345,8 @@ def create_shadow(
     shadows = load_shadows_file()
     shadows.append({
         "id": shadow_id,
+        "exchange": exchange,
         "symbol": symbol,
-        "entry": safe_float(entry),
-        "stop": safe_float(stop),
-        "target": safe_float(target),
         "timeframe": timeframe,
         "setup_type": setup_type,
         "regime": regime,
@@ -266,10 +355,16 @@ def create_shadow(
         "raw_score": safe_float(raw_score),
         "chance": safe_float(chance),
         "confidence": safe_float(confidence),
-        "status": "OPEN",
+        "entry": safe_float(entry),
+        "stop": safe_float(stop),
+        "target": safe_float(target),
+        "exit_price": None,
+        "pnl_pct": None,
         "result_r": None,
         "outcome": "UNKNOWN",
-        "opened_at": now_ts(),
+        "status": "OPEN",
+        "is_shadow": True,
+        "created_at": dt_to_iso(created_at),
         "closed_at": None,
     })
     save_shadows_file(shadows)
@@ -287,7 +382,7 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
 
     if db_ready():
         ensure_schema()
-        where = "WHERE is_shadow = TRUE AND closed_at IS NULL"
+        where = "WHERE is_shadow = TRUE AND COALESCE(status,'OPEN') = 'OPEN' AND closed_at IS NULL"
         params: List[Any] = []
 
         if symbol:
@@ -298,8 +393,8 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
             SELECT
                 id, exchange, symbol, timeframe, setup_type, regime, label,
                 score, raw_score, chance, confidence,
-                entry, stop, target,
-                result_r, outcome, is_shadow, created_at, closed_at
+                entry, stop, target, exit_price, pnl_pct,
+                result_r, outcome, status, is_shadow, created_at, closed_at
             FROM public.experience_trades
             {where}
             ORDER BY created_at ASC NULLS LAST
@@ -309,7 +404,7 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(sql, tuple(params))
                 rows = cur.fetchall()
-                return [dict(r) for r in rows]
+                return [normalize_shadow_row(dict(r)) for r in rows]
 
     # fallback file
     out = []
@@ -318,7 +413,7 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
             continue
         if symbol and s.get("symbol") != symbol:
             continue
-        out.append(s)
+        out.append(normalize_shadow_row(s))
     return out
 
 
@@ -338,7 +433,7 @@ def close_shadow(
     outcome: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Sluit shadow trade af en berekent result_r.
+    Sluit shadow trade af en berekent pnl/result_r.
     """
 
     exit_price = safe_float(exit_price)
@@ -348,7 +443,7 @@ def close_shadow(
         with db_connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, symbol, entry, stop, target, result_r, outcome, is_shadow
+                    SELECT id, symbol, entry, stop, target, result_r, outcome, is_shadow, status
                     FROM public.experience_trades
                     WHERE id = %s AND is_shadow = TRUE
                     LIMIT 1
@@ -362,15 +457,21 @@ def close_shadow(
                 stop = safe_float(row["stop"])
 
                 result_r = calc_r_result(entry, stop, exit_price)
+                pnl_pct = calc_pnl_pct(entry, exit_price)
                 final_outcome = safe_str(outcome, "").upper() or infer_outcome(result_r)
 
                 cur.execute("""
                     UPDATE public.experience_trades
-                    SET result_r = %s,
+                    SET exit_price = %s,
+                        pnl_pct = %s,
+                        result_r = %s,
                         outcome = %s,
+                        status = 'CLOSED',
                         closed_at = NOW()
                     WHERE id = %s
                 """, (
+                    exit_price,
+                    pnl_pct,
                     result_r,
                     final_outcome,
                     shadow_id,
@@ -382,14 +483,17 @@ def close_shadow(
             "storage": "postgres",
             "id": shadow_id,
             "exit_price": exit_price,
+            "pnl_pct": pnl_pct,
             "result_r": result_r,
             "outcome": final_outcome,
+            "status": "CLOSED",
         }
 
     # fallback file
     shadows = load_shadows_file()
     found = False
     result_r = 0.0
+    pnl_pct = 0.0
     final_outcome = "UNKNOWN"
 
     for s in shadows:
@@ -400,13 +504,15 @@ def close_shadow(
         entry = safe_float(s.get("entry"))
         stop = safe_float(s.get("stop"))
         result_r = calc_r_result(entry, stop, exit_price)
+        pnl_pct = calc_pnl_pct(entry, exit_price)
         final_outcome = safe_str(outcome, "").upper() or infer_outcome(result_r)
 
         s["status"] = "CLOSED"
         s["exit_price"] = exit_price
+        s["pnl_pct"] = pnl_pct
         s["result_r"] = result_r
         s["outcome"] = final_outcome
-        s["closed_at"] = now_ts()
+        s["closed_at"] = dt_to_iso(now_utc())
         break
 
     if not found:
@@ -418,8 +524,10 @@ def close_shadow(
         "storage": "file",
         "id": shadow_id,
         "exit_price": exit_price,
+        "pnl_pct": pnl_pct,
         "result_r": result_r,
         "outcome": final_outcome,
+        "status": "CLOSED",
     }
 
 
@@ -431,7 +539,6 @@ def evaluate_shadow_price(shadow: Dict[str, Any], current_price: float) -> Optio
     Kijkt of shadow trade target of stop heeft geraakt.
     Returnt close-result als trade sluit, anders None.
     """
-    entry = safe_float(shadow.get("entry"))
     stop = safe_float(shadow.get("stop"))
     target = safe_float(shadow.get("target"))
     current_price = safe_float(current_price)
@@ -477,8 +584,8 @@ def list_recent_shadows(limit: int = 100, include_open: bool = True) -> List[Dic
             SELECT
                 id, exchange, symbol, timeframe, setup_type, regime, label,
                 score, raw_score, chance, confidence,
-                entry, stop, target,
-                result_r, outcome, is_shadow, created_at, closed_at
+                entry, stop, target, exit_price, pnl_pct,
+                result_r, outcome, status, is_shadow, created_at, closed_at
             FROM public.experience_trades
             {where}
             ORDER BY created_at DESC NULLS LAST
@@ -487,12 +594,12 @@ def list_recent_shadows(limit: int = 100, include_open: bool = True) -> List[Dic
         with db_connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(sql)
-                return [dict(r) for r in cur.fetchall()]
+                return [normalize_shadow_row(dict(r)) for r in cur.fetchall()]
 
     shadows = load_shadows_file()
     if not include_open:
         shadows = [s for s in shadows if safe_str(s.get("status")).upper() == "CLOSED"]
-    return list(reversed(shadows))[:limit]
+    return [normalize_shadow_row(s) for s in list(reversed(shadows))[:limit]]
 
 
 def shadow_stats() -> Dict[str, Any]:
@@ -506,6 +613,7 @@ def shadow_stats() -> Dict[str, Any]:
     flats = 0
     unknown = 0
     sum_r = 0.0
+    sum_pnl_pct = 0.0
 
     for r in rows:
         outcome = safe_str(r.get("outcome"), "").upper()
@@ -517,7 +625,9 @@ def shadow_stats() -> Dict[str, Any]:
 
         closed_count += 1
         rr = safe_float(r.get("result_r"), 0.0)
+        pnl_pct = safe_float(r.get("pnl_pct"), 0.0)
         sum_r += rr
+        sum_pnl_pct += pnl_pct
 
         if outcome == "WIN":
             wins += 1
@@ -530,6 +640,7 @@ def shadow_stats() -> Dict[str, Any]:
 
     winrate = (wins / closed_count * 100.0) if closed_count else 0.0
     avg_r = (sum_r / closed_count) if closed_count else 0.0
+    avg_pnl_pct = (sum_pnl_pct / closed_count) if closed_count else 0.0
 
     return {
         "total": total,
@@ -541,6 +652,7 @@ def shadow_stats() -> Dict[str, Any]:
         "unknown": unknown,
         "winrate": round(winrate, 2),
         "avg_r": round(avg_r, 4),
+        "avg_pnl_pct": round(avg_pnl_pct, 4),
         "storage_path": SHADOW_PATH,
     }
 
