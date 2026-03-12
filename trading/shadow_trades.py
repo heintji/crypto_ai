@@ -131,13 +131,14 @@ def normalize_shadow_row(row: Dict[str, Any]) -> Dict[str, Any]:
     """
     out = dict(row)
 
-    out["id"] = safe_str(out.get("id"))
+    out["id"] = safe_str(out.get("id") or out.get("trade_key"))
+    out["trade_key"] = safe_str(out.get("trade_key"), out["id"])
     out["exchange"] = safe_str(out.get("exchange"), "BINANCE")
-    out["symbol"] = safe_str(out.get("symbol"))
-    out["timeframe"] = safe_str(out.get("timeframe"), "4h")
+    out["symbol"] = safe_str(out.get("symbol") or out.get("coin"))
+    out["timeframe"] = safe_str(out.get("timeframe") or out.get("entry_timeframe"), "4h")
     out["setup_type"] = safe_str(out.get("setup_type"), "UNKNOWN")
-    out["regime"] = safe_str(out.get("regime"), "UNKNOWN")
-    out["label"] = safe_str(out.get("label"), "WATCH")
+    out["regime"] = safe_str(out.get("regime") or out.get("market_regime"), "UNKNOWN")
+    out["label"] = safe_str(out.get("label") or out.get("grade"), "WATCH")
     out["status"] = safe_str(out.get("status"), "OPEN").upper()
 
     out["score"] = safe_float(out.get("score"))
@@ -155,8 +156,8 @@ def normalize_shadow_row(row: Dict[str, Any]) -> Dict[str, Any]:
     out["outcome"] = safe_str(out.get("outcome"), "UNKNOWN").upper()
     out["is_shadow"] = True
 
-    out["created_at"] = dt_to_iso(out.get("created_at"))
-    out["closed_at"] = dt_to_iso(out.get("closed_at"))
+    out["created_at"] = dt_to_iso(out.get("created_at") or out.get("timestamp") or out.get("entry_time"))
+    out["closed_at"] = dt_to_iso(out.get("closed_at") or out.get("exit_time"))
 
     return out
 
@@ -176,33 +177,26 @@ def ensure_schema() -> None:
 
     with db_connect() as conn:
         with conn.cursor() as cur:
+            # Basistabel als hij nog niet bestaat
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS public.experience_trades (
-                    id TEXT PRIMARY KEY,
-                    exchange TEXT,
-                    symbol TEXT,
-                    timeframe TEXT,
-                    setup_type TEXT,
-                    regime TEXT,
-                    label TEXT,
-                    score DOUBLE PRECISION,
-                    raw_score DOUBLE PRECISION,
-                    chance DOUBLE PRECISION,
-                    confidence DOUBLE PRECISION,
-                    entry DOUBLE PRECISION,
-                    stop DOUBLE PRECISION,
-                    target DOUBLE PRECISION,
-                    exit_price DOUBLE PRECISION,
-                    pnl_pct DOUBLE PRECISION,
-                    result_r DOUBLE PRECISION,
-                    outcome TEXT,
-                    status TEXT DEFAULT 'OPEN',
-                    is_shadow BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMPTZ DEFAULT NOW(),
-                    closed_at TIMESTAMPTZ
+                    trade_key TEXT PRIMARY KEY
                 );
             """)
 
+            # Compat-kolommen voor bestaande simulator-structuur
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS id TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS source TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS timestamp TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS entry_time TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS exit_time TIMESTAMPTZ;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS coin TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS entry_timeframe TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS regime_timeframe TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS market_regime TEXT;")
+            cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS grade TEXT;")
+
+            # Shadow/dashboard kolommen
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS exchange TEXT;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS symbol TEXT;")
             cur.execute("ALTER TABLE public.experience_trades ADD COLUMN IF NOT EXISTS timeframe TEXT;")
@@ -270,17 +264,24 @@ def create_shadow(
     Fallback = JSON file.
     """
 
-    shadow_id = f"SH-{prebuy_id}-{int(time.time())}"
+    trade_key = f"SH-{prebuy_id}"
+    shadow_id = trade_key
     created_at = now_utc()
 
     payload = {
+        "trade_key": trade_key,
         "id": shadow_id,
+        "source": "SHADOW",
         "exchange": exchange,
         "symbol": symbol,
+        "coin": symbol,
         "timeframe": timeframe,
+        "entry_timeframe": timeframe,
         "setup_type": setup_type,
         "regime": regime,
+        "market_regime": regime,
         "label": label,
+        "grade": label,
         "score": safe_float(score),
         "raw_score": safe_float(raw_score),
         "chance": safe_float(chance),
@@ -294,8 +295,11 @@ def create_shadow(
         "outcome": "UNKNOWN",
         "status": "OPEN",
         "is_shadow": True,
+        "timestamp": created_at,
+        "entry_time": created_at,
         "created_at": created_at,
         "closed_at": None,
+        "exit_time": None,
     }
 
     if db_ready():
@@ -304,28 +308,57 @@ def create_shadow(
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO public.experience_trades(
-                        id, exchange, symbol, timeframe, setup_type, regime, label,
-                        score, raw_score, chance, confidence,
-                        entry, stop, target,
-                        exit_price, pnl_pct, result_r, outcome, status,
-                        is_shadow, created_at, closed_at
+                        trade_key,
+                        id,
+                        source,
+                        exchange,
+                        symbol,
+                        coin,
+                        timeframe,
+                        entry_timeframe,
+                        setup_type,
+                        regime,
+                        market_regime,
+                        label,
+                        grade,
+                        score,
+                        raw_score,
+                        chance,
+                        confidence,
+                        entry,
+                        stop,
+                        target,
+                        exit_price,
+                        pnl_pct,
+                        result_r,
+                        outcome,
+                        status,
+                        is_shadow,
+                        timestamp,
+                        entry_time,
+                        created_at,
+                        closed_at,
+                        exit_time
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s,
-                        %s, %s, %s,
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
-                    ON CONFLICT (id) DO NOTHING
+                    ON CONFLICT (trade_key) DO NOTHING
                 """, (
+                    payload["trade_key"],
                     payload["id"],
+                    payload["source"],
                     payload["exchange"],
                     payload["symbol"],
+                    payload["coin"],
                     payload["timeframe"],
+                    payload["entry_timeframe"],
                     payload["setup_type"],
                     payload["regime"],
+                    payload["market_regime"],
                     payload["label"],
+                    payload["grade"],
                     payload["score"],
                     payload["raw_score"],
                     payload["chance"],
@@ -339,16 +372,20 @@ def create_shadow(
                     payload["outcome"],
                     payload["status"],
                     payload["is_shadow"],
+                    payload["timestamp"],
+                    payload["entry_time"],
                     payload["created_at"],
                     payload["closed_at"],
+                    payload["exit_time"],
                 ))
             conn.commit()
-        return {"ok": True, "storage": "postgres", "id": shadow_id}
+        return {"ok": True, "storage": "postgres", "id": shadow_id, "trade_key": trade_key}
 
     # fallback file
     shadows = load_shadows_file()
     shadows.append({
         "id": shadow_id,
+        "trade_key": trade_key,
         "exchange": exchange,
         "symbol": symbol,
         "timeframe": timeframe,
@@ -372,7 +409,7 @@ def create_shadow(
         "closed_at": None,
     })
     save_shadows_file(shadows)
-    return {"ok": True, "storage": "file", "id": shadow_id}
+    return {"ok": True, "storage": "file", "id": shadow_id, "trade_key": trade_key}
 
 
 # ==========================================================
@@ -390,15 +427,16 @@ def get_open_shadows(symbol: Optional[str] = None) -> List[Dict[str, Any]]:
         params: List[Any] = []
 
         if symbol:
-            where += " AND symbol = %s"
+            where += " AND COALESCE(symbol, coin) = %s"
             params.append(symbol)
 
         sql = f"""
             SELECT
-                id, exchange, symbol, timeframe, setup_type, regime, label,
+                trade_key, id, exchange, symbol, coin, timeframe, entry_timeframe,
+                setup_type, regime, market_regime, label, grade,
                 score, raw_score, chance, confidence,
                 entry, stop, target, exit_price, pnl_pct,
-                result_r, outcome, status, is_shadow, created_at, closed_at
+                result_r, outcome, status, is_shadow, timestamp, entry_time, created_at, closed_at, exit_time
             FROM public.experience_trades
             {where}
             ORDER BY created_at ASC NULLS LAST
@@ -447,11 +485,11 @@ def close_shadow(
         with db_connect() as conn:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT id, symbol, entry, stop, target, result_r, outcome, is_shadow, status
+                    SELECT trade_key, id, symbol, coin, entry, stop, target, result_r, outcome, is_shadow, status
                     FROM public.experience_trades
-                    WHERE id = %s AND is_shadow = TRUE
+                    WHERE (id = %s OR trade_key = %s) AND is_shadow = TRUE
                     LIMIT 1
-                """, (shadow_id,))
+                """, (shadow_id, shadow_id))
                 row = cur.fetchone()
 
                 if not row:
@@ -471,13 +509,15 @@ def close_shadow(
                         result_r = %s,
                         outcome = %s,
                         status = 'CLOSED',
-                        closed_at = NOW()
-                    WHERE id = %s
+                        closed_at = NOW(),
+                        exit_time = NOW()
+                    WHERE (id = %s OR trade_key = %s) AND is_shadow = TRUE
                 """, (
                     exit_price,
                     pnl_pct,
                     result_r,
                     final_outcome,
+                    shadow_id,
                     shadow_id,
                 ))
             conn.commit()
@@ -501,7 +541,7 @@ def close_shadow(
     final_outcome = "UNKNOWN"
 
     for s in shadows:
-        if s.get("id") != shadow_id:
+        if s.get("id") != shadow_id and s.get("trade_key") != shadow_id:
             continue
 
         found = True
@@ -546,7 +586,7 @@ def evaluate_shadow_price(shadow: Dict[str, Any], current_price: float) -> Optio
     stop = safe_float(shadow.get("stop"))
     target = safe_float(shadow.get("target"))
     current_price = safe_float(current_price)
-    shadow_id = safe_str(shadow.get("id"))
+    shadow_id = safe_str(shadow.get("id") or shadow.get("trade_key"))
 
     if not shadow_id:
         return None
@@ -586,10 +626,11 @@ def list_recent_shadows(limit: int = 100, include_open: bool = True) -> List[Dic
 
         sql = f"""
             SELECT
-                id, exchange, symbol, timeframe, setup_type, regime, label,
+                trade_key, id, exchange, symbol, coin, timeframe, entry_timeframe,
+                setup_type, regime, market_regime, label, grade,
                 score, raw_score, chance, confidence,
                 entry, stop, target, exit_price, pnl_pct,
-                result_r, outcome, status, is_shadow, created_at, closed_at
+                result_r, outcome, status, is_shadow, timestamp, entry_time, created_at, closed_at, exit_time
             FROM public.experience_trades
             {where}
             ORDER BY created_at DESC NULLS LAST
