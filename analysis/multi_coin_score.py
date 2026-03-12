@@ -73,6 +73,9 @@ EXPERIENCE_EDGE_WEIGHT = float(os.getenv("EXPERIENCE_EDGE_WEIGHT") or "4")
 EXPERIENCE_MAX_BOOST = int(os.getenv("EXPERIENCE_MAX_BOOST") or "15")
 EXPERIENCE_MAX_PENALTY = int(os.getenv("EXPERIENCE_MAX_PENALTY") or "15")
 
+# Shadow behaviour
+SHADOW_ENABLED = (os.getenv("SHADOW_ENABLED") or "1").strip() == "1"
+
 # WhatsApp push via Twilio (optioneel)
 TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
 TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
@@ -121,7 +124,8 @@ def safe_str(value: Any, default: str = "") -> str:
     if value is None:
         return default
     try:
-        return str(value)
+        s = str(value).strip()
+        return s if s else default
     except Exception:
         return default
 
@@ -474,10 +478,7 @@ def compute_experience_adjustment(
             "reason": f"NOT_ENOUGH_TRADES_{n}",
         }
 
-    # win_rate rondom 50% centreren
     wr_component = ((win_rate - 50.0) / 50.0) * EXPERIENCE_SCORE_WEIGHT
-
-    # MFE/MAE edge: positief als favorable > adverse
     edge = avg_mfe - avg_mae
     edge_component = edge * EXPERIENCE_EDGE_WEIGHT
 
@@ -836,6 +837,9 @@ def create_shadow_safe(pre: Prebuy) -> Tuple[bool, str]:
     Maakt een shadow trade aan voor deze unieke setup.
     Faalt shadow aanmaak, dan mag de scan niet crashen.
     """
+    if not SHADOW_ENABLED:
+        return False, "SHADOW_DISABLED"
+
     if create_shadow is None:
         return False, "SHADOW_MODULE_NOT_AVAILABLE"
 
@@ -858,7 +862,9 @@ def create_shadow_safe(pre: Prebuy) -> Tuple[bool, str]:
         )
 
         if isinstance(result, dict) and result.get("ok"):
-            return True, safe_str(result.get("storage"), "OK")
+            shadow_id = safe_str(result.get("id"), "-")
+            storage = safe_str(result.get("storage"), "OK")
+            return True, f"{storage}|{shadow_id}"
 
         return False, "SHADOW_CREATE_RETURNED_NOT_OK"
 
@@ -883,6 +889,7 @@ def main():
                 f"scoreboard_rows={len(scoreboard)} | "
                 f"min_trades={EXPERIENCE_MIN_TRADES}"
             )
+            print(f"shadow_enabled={SHADOW_ENABLED} | shadow_module={'OK' if create_shadow is not None else 'MISSING'}")
 
             push_count_today = get_pushes_today(cur)
             day = utc_day_str()
@@ -930,10 +937,8 @@ def main():
                     market_condition = detect_market_condition(closes)
                     overextended_pct = calc_overextended_pct(closes)
 
-                    # eerst base grade bepalen
                     base_grade = current_label_from_score(norm)
 
-                    # experience adjustment ophalen
                     exp_meta = compute_experience_adjustment(
                         setup_type=setup,
                         regime=regime,
@@ -941,12 +946,10 @@ def main():
                         scoreboard=scoreboard,
                     )
 
-                    # score/chance/conf subtiel bijsturen, nooit hard blokkeren
                     adjusted_norm = clamp_int(norm + exp_meta["bias"])
                     adjusted_chance = clamp_int(chance + (exp_meta["bias"] * 0.8))
                     adjusted_conf = clamp_int(conf + (exp_meta["bias"] * 0.6))
 
-                    # why_tag uitbreiden met experience info
                     if exp_meta["used"]:
                         exp_used_count += 1
                         why_tag = (
@@ -973,7 +976,6 @@ def main():
 
                     fp = fingerprint_for(pre)
 
-                    # standaard: alleen leren
                     notified = False
                     notification_reason = "LEARNING_ONLY"
 
@@ -983,8 +985,8 @@ def main():
                         insert_experience(cur, pre, fp, notified, notification_reason)
                         experienced += 1
                         print(
-                            f"📘 {sym}: duplicate geblokkeerd | label={pre.label} "
-                            f"score={pre.score} chance={pre.chance} "
+                            f"📘 {sym}: duplicate geblokkeerd | "
+                            f"label={pre.label} score={pre.score} chance={pre.chance} "
                             f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
                             f"reason={notification_reason}"
                         )
@@ -993,7 +995,7 @@ def main():
                     # 2) fingerprint onthouden zodat exact dezelfde trade niet opnieuw binnenkomt
                     remember_fingerprint(cur, fp)
 
-                    # 3) shadow trade aanmaken voor iedere unieke setup
+                    # 3) ALTIJD shadow trade starten voor iedere unieke Pre-BUY
                     shadow_ok, shadow_reason = create_shadow_safe(pre)
                     if shadow_ok:
                         shadow_created += 1
@@ -1001,10 +1003,8 @@ def main():
                         shadow_failed += 1
                         print(f"⚠️ {sym}: shadow create failed | reason={shadow_reason}")
 
-                    # 4) altijd experience opslaan
+                    # 4) WATCH niet in pending tenzij expliciet aangezet
                     should_insert_pending = True
-
-                    # WATCH niet in pending tenzij jij dit expliciet aanzet
                     if pre.label == "WATCH" and not INCLUDE_WATCH_IN_PENDING:
                         should_insert_pending = False
                         notification_reason = "WATCH_ONLY_NOT_PENDING"
@@ -1014,7 +1014,6 @@ def main():
                         insert_pending(cur, pre)
                         created_pending += 1
 
-                        # 6) auto-push limiet geldt ALLEEN nog voor melding, niet voor pending
                         if can_auto_push(cur):
                             inc_pushes_today(cur, 1)
                             pushed_count += 1
@@ -1028,16 +1027,19 @@ def main():
                             f"label={pre.label} raw={pre.raw_score} norm={pre.score} chance={pre.chance} "
                             f"regime={pre.regime} exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
                             f"exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
-                            f"why={pre.why_tag} push={notification_reason} shadow={shadow_reason} id={pre.prebuy_id}"
+                            f"shadow_ok={shadow_ok} shadow={shadow_reason} "
+                            f"why={pre.why_tag} push={notification_reason} id={pre.prebuy_id}"
                         )
                     else:
                         print(
                             f"📘 {sym}: alleen leren | "
                             f"label={pre.label} score={pre.score} chance={pre.chance} regime={pre.regime} "
                             f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
-                            f"why={pre.why_tag} reason={notification_reason} shadow={shadow_reason}"
+                            f"shadow_ok={shadow_ok} shadow={shadow_reason} "
+                            f"why={pre.why_tag} reason={notification_reason}"
                         )
 
+                    # 6) altijd prebuy experience opslaan
                     insert_experience(cur, pre, fp, notified, notification_reason)
                     experienced += 1
 
