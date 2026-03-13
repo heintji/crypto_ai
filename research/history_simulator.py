@@ -262,6 +262,51 @@ def _grade_from_score(score: int) -> str:
     return "IGNORE"
 
 
+def determine_outcome(
+    entry_price: float,
+    exit_price: Optional[float] = None,
+    pnl_eur: Optional[float] = None,
+    pnl_pct: Optional[float] = None,
+    final_close: Optional[float] = None,
+) -> Tuple[str, str]:
+    """
+    Definitieve user-regel:
+    - exit_price > entry_price => WIN
+    - exit_price <= entry_price => LOSS
+    - fallback op pnl_eur
+    - fallback op pnl_pct
+    - fallback op final_close
+    - als alles ontbreekt => LOSS
+
+    Er bestaat hier dus GEEN UNKNOWN / TIMEOUT als einduitkomst.
+    """
+    try:
+        if exit_price is not None:
+            if exit_price > entry_price:
+                return "WIN", "exit_price_above_entry"
+            return "LOSS", "exit_price_at_or_below_entry"
+
+        if pnl_eur is not None:
+            if pnl_eur > 0:
+                return "WIN", "positive_pnl_eur"
+            return "LOSS", "non_positive_pnl_eur"
+
+        if pnl_pct is not None:
+            if pnl_pct > 0:
+                return "WIN", "positive_pnl_pct"
+            return "LOSS", "non_positive_pnl_pct"
+
+        if final_close is not None:
+            if final_close > entry_price:
+                return "WIN", "final_close_above_entry"
+            return "LOSS", "final_close_at_or_below_entry"
+
+        return "LOSS", "no_close_data_default_loss"
+
+    except Exception:
+        return "LOSS", "determine_outcome_exception_default_loss"
+
+
 # ==========================================================
 # LOAD CANDLES
 # ==========================================================
@@ -592,25 +637,36 @@ def _simulate_real_trade_outcome(
     pnl_pct: Optional[float],
 ) -> Dict[str, Any]:
     """
-    Logica:
-    - stop eerst geraakt => loss
-    - target eerst geraakt => win
-    - beide in zelfde candle => conservatief loss
-    - als geen stop/target geraakt maar wel closed:
-        exit_price > entry => win
-        anders loss
-    - anders pnl fallback
-    - anders timeout/open => timeout
+    Definitieve logica voor jouw bot:
+
+    1. Stop eerst geraakt => LOSS
+    2. Target eerst geraakt => WIN
+    3. Stop + target in dezelfde candle => conservatief LOSS
+    4. Geen stop/target geraakt?
+       Dan GEEN timeout/unknown eindresultaat meer.
+       Dan bepalen we altijd:
+       - exit_price > entry => WIN
+       - anders LOSS
+       - fallback pnl_eur
+       - fallback pnl_pct
+       - fallback laatste close > entry => WIN, anders LOSS
+
+    Resultaat is dus ALTIJD:
+    - WIN
+    - LOSS
     """
 
     if entry <= 0:
         return {
-            "outcome": "invalid",
+            "outcome": "INVALID",
             "mfe": 0.0,
             "mae": 0.0,
             "time_minutes": 0,
             "exit_time": exit_time,
             "result_reason": "invalid_entry",
+            "max_price_seen": 0.0,
+            "min_price_seen": 0.0,
+            "final_close": None,
         }
 
     risk = None
@@ -627,7 +683,6 @@ def _simulate_real_trade_outcome(
 
     start_ts = c1h[entry_idx].ts_ms
 
-    last_idx = len(c1h) - 1
     if exit_time is not None:
         idx_exit = _find_last_index_le(c1h, exit_time)
         if idx_exit >= entry_idx:
@@ -658,7 +713,7 @@ def _simulate_real_trade_outcome(
         if stop_hit and target_hit:
             tmin = int((c.ts_ms - start_ts) / 60000)
             return {
-                "outcome": "loss",
+                "outcome": "LOSS",
                 "mfe": _safe_round(mfe_r, 4),
                 "mae": _safe_round(mae_r, 4),
                 "time_minutes": tmin,
@@ -666,12 +721,13 @@ def _simulate_real_trade_outcome(
                 "result_reason": "stop_and_target_same_candle_conservative_loss",
                 "max_price_seen": _safe_round(max_price_seen, 8),
                 "min_price_seen": _safe_round(min_price_seen, 8),
+                "final_close": c.close,
             }
 
         if stop_hit:
             tmin = int((c.ts_ms - start_ts) / 60000)
             return {
-                "outcome": "loss",
+                "outcome": "LOSS",
                 "mfe": _safe_round(mfe_r, 4),
                 "mae": _safe_round(mae_r, 4),
                 "time_minutes": tmin,
@@ -679,12 +735,13 @@ def _simulate_real_trade_outcome(
                 "result_reason": "stop_hit_first",
                 "max_price_seen": _safe_round(max_price_seen, 8),
                 "min_price_seen": _safe_round(min_price_seen, 8),
+                "final_close": c.close,
             }
 
         if target_hit:
             tmin = int((c.ts_ms - start_ts) / 60000)
             return {
-                "outcome": "win",
+                "outcome": "WIN",
                 "mfe": _safe_round(mfe_r, 4),
                 "mae": _safe_round(mae_r, 4),
                 "time_minutes": tmin,
@@ -692,56 +749,31 @@ def _simulate_real_trade_outcome(
                 "result_reason": "target_hit_first",
                 "max_price_seen": _safe_round(max_price_seen, 8),
                 "min_price_seen": _safe_round(min_price_seen, 8),
+                "final_close": c.close,
             }
 
     final_ts = c1h[last_idx].ts
+    final_close = c1h[last_idx].close
     time_minutes = int((c1h[last_idx].ts_ms - start_ts) / 60000)
 
-    if exit_price is not None:
-        return {
-            "outcome": "win" if exit_price > entry else "loss",
-            "mfe": _safe_round(mfe_r, 4),
-            "mae": _safe_round(mae_r, 4),
-            "time_minutes": time_minutes,
-            "exit_time": exit_time or final_ts,
-            "result_reason": "closed_trade_exit_above_entry" if exit_price > entry else "closed_trade_exit_at_or_below_entry",
-            "max_price_seen": _safe_round(max_price_seen, 8),
-            "min_price_seen": _safe_round(min_price_seen, 8),
-        }
-
-    if pnl_eur is not None:
-        return {
-            "outcome": "win" if pnl_eur > 0 else "loss",
-            "mfe": _safe_round(mfe_r, 4),
-            "mae": _safe_round(mae_r, 4),
-            "time_minutes": time_minutes,
-            "exit_time": exit_time or final_ts,
-            "result_reason": "closed_trade_positive_pnl" if pnl_eur > 0 else "closed_trade_non_positive_pnl",
-            "max_price_seen": _safe_round(max_price_seen, 8),
-            "min_price_seen": _safe_round(min_price_seen, 8),
-        }
-
-    if pnl_pct is not None:
-        return {
-            "outcome": "win" if pnl_pct > 0 else "loss",
-            "mfe": _safe_round(mfe_r, 4),
-            "mae": _safe_round(mae_r, 4),
-            "time_minutes": time_minutes,
-            "exit_time": exit_time or final_ts,
-            "result_reason": "closed_trade_positive_pnl_pct" if pnl_pct > 0 else "closed_trade_non_positive_pnl_pct",
-            "max_price_seen": _safe_round(max_price_seen, 8),
-            "min_price_seen": _safe_round(min_price_seen, 8),
-        }
+    outcome, reason = determine_outcome(
+        entry_price=entry,
+        exit_price=exit_price,
+        pnl_eur=pnl_eur,
+        pnl_pct=pnl_pct,
+        final_close=final_close,
+    )
 
     return {
-        "outcome": "timeout",
+        "outcome": outcome,
         "mfe": _safe_round(mfe_r, 4),
         "mae": _safe_round(mae_r, 4),
         "time_minutes": time_minutes,
         "exit_time": exit_time or final_ts,
-        "result_reason": "insufficient_close_data_timeout",
+        "result_reason": reason,
         "max_price_seen": _safe_round(max_price_seen, 8),
         "min_price_seen": _safe_round(min_price_seen, 8),
+        "final_close": _safe_round(final_close, 8),
     }
 
 
@@ -833,8 +865,7 @@ def insert_experience_trade(conn, row: Dict[str, Any]) -> bool:
                 bot_confidence = EXCLUDED.bot_confidence,
                 overextended = EXCLUDED.overextended,
                 updated_at = NOW();
-            """
-            ,
+            """,
             (
                 row["trade_key"],
                 row["timestamp"],
@@ -873,7 +904,7 @@ def _update_scoreboard_local(sb: Dict[str, Any], row: Dict[str, Any]) -> None:
     setup = str(row["setup_type"])
     regime = str(row["market_regime"])
     grade = str(row["grade"])
-    outcome = str(row["outcome"])
+    outcome = str(row["outcome"]).upper()
     mfe = float(row["mfe"])
     mae = float(row["mae"])
     tmin = int(row["time_minutes"])
@@ -902,13 +933,12 @@ def _update_scoreboard_local(sb: Dict[str, Any], row: Dict[str, Any]) -> None:
     n1 = n0 + 1
     rec["n"] = n1
 
-    if outcome == "win":
+    if outcome == "WIN":
         rec["wins"] = int(rec["wins"]) + 1
-    elif outcome == "loss":
-        rec["losses"] = int(rec["losses"]) + 1
     else:
-        rec["timeouts"] = int(rec["timeouts"]) + 1
+        rec["losses"] = int(rec["losses"]) + 1
 
+    rec["timeouts"] = 0
     rec["avg_mfe"] = (float(rec["avg_mfe"]) * n0 + mfe) / n1
     rec["avg_mae"] = (float(rec["avg_mae"]) * n0 + mae) / n1
     rec["avg_time_minutes"] = (float(rec["avg_time_minutes"]) * n0 + tmin) / n1
@@ -975,7 +1005,7 @@ def upsert_scoreboard(conn, combined_sb: Dict[str, Any]) -> None:
                     int(rec["n"]),
                     int(rec["wins"]),
                     int(rec["losses"]),
-                    int(rec["timeouts"]),
+                    0,
                     float(rec["avg_mfe"]),
                     float(rec["avg_mae"]),
                     float(rec["avg_time_minutes"]),
@@ -993,6 +1023,7 @@ def merge_scoreboards(all_scoreboards: List[Dict[str, Any]]) -> Dict[str, Any]:
         for key, b in sb.items():
             if key not in combined:
                 combined[key] = dict(b)
+                combined[key]["timeouts"] = 0
                 continue
 
             a = combined[key]
@@ -1009,7 +1040,7 @@ def merge_scoreboards(all_scoreboards: List[Dict[str, Any]]) -> Dict[str, Any]:
             a["n"] = nT
             a["wins"] = int(a["wins"]) + int(b["wins"])
             a["losses"] = int(a["losses"]) + int(b["losses"])
-            a["timeouts"] = int(a["timeouts"]) + int(b["timeouts"])
+            a["timeouts"] = 0
             a["avg_mfe"] = wavg(a["avg_mfe"], b["avg_mfe"])
             a["avg_mae"] = wavg(a["avg_mae"], b["avg_mae"])
             a["avg_time_minutes"] = wavg(a["avg_time_minutes"], b["avg_time_minutes"])
@@ -1083,7 +1114,7 @@ def review_real_trades(conn) -> Tuple[int, Dict[str, Any]]:
                 pnl_pct=trade.pnl_pct,
             )
 
-            if sim["outcome"] == "invalid":
+            if sim["outcome"] == "INVALID":
                 continue
 
             market_condition = _market_condition_from_atr_like(c1h, entry_idx)
