@@ -259,7 +259,7 @@ def save_shadow_monitor_state(state: Dict[str, Any]) -> None:
 
 
 # =========================
-# ✅ DB UPDATE HELPERS
+# ✅ DB HELPERS
 # =========================
 def _update_prebuy_experience_outcome(
     conn,
@@ -311,218 +311,6 @@ def _update_prebuy_experience_outcome(
             """,
             tuple(vals),
         )
-
-
-def _experience_insert_trade(
-    conn,
-    trade: Dict[str, Any],
-    *,
-    close_price: float,
-    result_r: float,
-    outcome: str,
-    is_shadow: bool,
-) -> None:
-    if not _table_exists(conn, "public.experience_trades"):
-        return
-
-    cols: List[str] = []
-    vals: List[Any] = []
-
-    candidates = [
-        ("prebuy_id", trade.get("prebuy_id")),
-        ("symbol", trade.get("symbol")),
-        ("coin", trade.get("coin") or trade.get("symbol")),
-        ("setup_type", trade.get("setup_type") or "TREND_PULLBACK"),
-        ("timeframe", trade.get("timeframe") or trade.get("tf") or trade.get("entry_timeframe") or "4h"),
-        ("regime", trade.get("regime") or trade.get("market_regime") or "UNKNOWN"),
-        ("market_regime", trade.get("market_regime") or trade.get("regime") or "UNKNOWN"),
-        ("entry_timeframe", trade.get("entry_timeframe") or trade.get("timeframe") or trade.get("tf") or "4h"),
-        ("label", _infer_label(trade)),
-        ("bot_decision", _infer_label(trade)),
-        ("user_decision", trade.get("user_decision") or "YES"),
-        ("score", _safe_int(trade.get("score"), 0)),
-        ("raw_score", trade.get("raw_score")),
-        ("chance", _safe_int(trade.get("chance"), 0)),
-        ("confidence", _safe_int(trade.get("confidence"), trade.get("chance") or 0)),
-        ("why_tag", trade.get("why_tag")),
-        ("market_condition", trade.get("market_condition")),
-        ("overextended_pct", _safe_float(trade.get("overextended_pct"), 0.0)),
-        ("entry", _safe_float(trade.get("entry"), 0.0)),
-        ("stop", _safe_float(trade.get("stop") or trade.get("stop_loss"), 0.0)),
-        ("stop_loss", _safe_float(trade.get("stop_loss") or trade.get("stop"), 0.0)),
-        ("target", _safe_float(trade.get("target"), 0.0)),
-        ("exit", close_price),
-        ("exit_price", close_price),
-        ("result_r", result_r),
-        ("outcome", outcome),
-        ("close_reason", trade.get("closed_reason")),
-        ("mfe_r", _safe_float(trade.get("mfe_r"), 0.0)),
-        ("mae_r", _safe_float(trade.get("mae_r"), 0.0)),
-        ("max_price_seen", _safe_float(trade.get("max_price_seen"), 0.0)),
-        ("min_price_seen", _safe_float(trade.get("min_price_seen"), 0.0)),
-        ("holding_minutes", _holding_minutes(trade)),
-        ("is_shadow", is_shadow),
-        ("source", "SHADOW" if is_shadow else "REAL"),
-        ("created_at", now_utc_dt()),
-    ]
-
-    for c, v in candidates:
-        if _has_column(conn, "experience_trades", c):
-            cols.append(c)
-            vals.append(v)
-
-    if not cols:
-        return
-
-    placeholders = ", ".join(["%s"] * len(cols))
-    col_sql = ", ".join(cols)
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"INSERT INTO public.experience_trades ({col_sql}) VALUES ({placeholders})",
-            tuple(vals),
-        )
-
-
-def _experience_upsert_scoreboard(conn, trade: Dict[str, Any], *, include_shadow: Optional[bool] = None) -> None:
-    if not _table_exists(conn, "public.experience_scoreboard"):
-        return
-    if not _table_exists(conn, "public.experience_trades"):
-        return
-    if not _has_column(conn, "experience_trades", "result_r") or not _has_column(conn, "experience_trades", "outcome"):
-        return
-
-    setup_type = trade.get("setup_type") or "TREND_PULLBACK"
-    regime = trade.get("regime") or trade.get("market_regime") or "UNKNOWN"
-    timeframe = trade.get("timeframe") or trade.get("tf") or trade.get("entry_timeframe") or "4h"
-
-    sql = """
-        SELECT
-          COUNT(*)::int AS n,
-          AVG(result_r)::float AS avg_r,
-          AVG(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END)::float AS win_rate,
-          AVG(CASE WHEN outcome='WIN' THEN result_r END)::float AS avg_win_r,
-          AVG(CASE WHEN outcome='LOSS' THEN result_r END)::float AS avg_loss_r
-        FROM public.experience_trades
-        WHERE setup_type=%s
-          AND (regime=%s OR market_regime=%s)
-          AND (timeframe=%s OR entry_timeframe=%s)
-    """
-    params: List[Any] = [setup_type, regime, regime, timeframe, timeframe]
-
-    if include_shadow is not None and _has_column(conn, "experience_trades", "is_shadow"):
-        sql += " AND is_shadow=%s"
-        params.append(include_shadow)
-
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, tuple(params))
-        stats = cur.fetchone() or {}
-
-    payload = {
-        "setup_type": setup_type,
-        "regime": regime,
-        "timeframe": timeframe,
-        "n": _safe_int(stats.get("n"), 0),
-        "avg_r": _safe_float(stats.get("avg_r"), 0.0),
-        "win_rate": _safe_float(stats.get("win_rate"), 0.0),
-        "avg_win_r": _safe_float(stats.get("avg_win_r"), 0.0),
-        "avg_loss_r": _safe_float(stats.get("avg_loss_r"), 0.0),
-        "updated_at": now_utc_dt(),
-        "asof_ts": now_utc_dt(),
-        "created_at": now_utc_dt(),
-    }
-
-    cols: List[str] = []
-    vals: List[Any] = []
-
-    for k, v in payload.items():
-        if _has_column(conn, "experience_scoreboard", k):
-            cols.append(k)
-            vals.append(v)
-
-    if not cols:
-        return
-
-    conflict_cols = [c for c in ["setup_type", "regime", "timeframe"] if _has_column(conn, "experience_scoreboard", c)]
-    if len(conflict_cols) < 2:
-        return
-
-    col_sql = ", ".join(cols)
-    placeholders = ", ".join(["%s"] * len(cols))
-    set_sql = ", ".join([f"{c}=EXCLUDED.{c}" for c in cols if c not in conflict_cols]) or "updated_at=EXCLUDED.updated_at"
-
-    with conn.cursor() as cur:
-        cur.execute(
-            f"""
-            INSERT INTO public.experience_scoreboard ({col_sql})
-            VALUES ({placeholders})
-            ON CONFLICT ({", ".join(conflict_cols)})
-            DO UPDATE SET {set_sql}
-            """,
-            tuple(vals),
-        )
-
-
-def experience_on_close(trade: Dict[str, Any], *, close_price: float, result_r: float, is_shadow: bool = False) -> None:
-    if not db_ready():
-        return
-
-    try:
-        outcome = "WIN" if result_r > 0 else "LOSS"
-        with db_connect() as conn:
-            try:
-                _experience_insert_trade(
-                    conn,
-                    trade,
-                    close_price=close_price,
-                    result_r=result_r,
-                    outcome=outcome,
-                    is_shadow=is_shadow,
-                )
-                _experience_upsert_scoreboard(conn, trade, include_shadow=is_shadow if _has_column(conn, "experience_trades", "is_shadow") else None)
-                _update_prebuy_experience_outcome(conn, trade, close_price=close_price, result_r=result_r, outcome=outcome)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-    except Exception as e:
-        _print(f"⚠️ Experience update skipped: {type(e).__name__}: {e}")
-
-
-# =========================
-# ✅ WHATSAPP
-# =========================
-def twilio_ready() -> bool:
-    return all([
-        os.getenv("TWILIO_ACCOUNT_SID"),
-        os.getenv("TWILIO_AUTH_TOKEN"),
-        os.getenv("TWILIO_WHATSAPP_FROM"),
-        os.getenv("TWILIO_WHATSAPP_TO"),
-    ])
-
-
-def send_whatsapp(message: str) -> bool:
-    if not twilio_ready():
-        _print("📭 WhatsApp melding overgeslagen (Twilio env vars ontbreken).")
-        return False
-
-    sid = os.getenv("TWILIO_ACCOUNT_SID")
-    token = os.getenv("TWILIO_AUTH_TOKEN")
-    wa_from = os.getenv("TWILIO_WHATSAPP_FROM")
-    wa_to = os.getenv("TWILIO_WHATSAPP_TO")
-
-    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-    data = {"From": wa_from, "To": wa_to, "Body": message}
-
-    try:
-        r = requests.post(url, data=data, auth=(sid, token), timeout=HTTP_TIMEOUT)
-        if r.status_code >= 400:
-            _print(f"⚠️ Twilio send failed ({r.status_code}): {r.text[:200]}")
-            return False
-        return True
-    except Exception as e:
-        _print(f"⚠️ Twilio send exception: {e}")
-        return False
 
 
 # =========================
@@ -640,6 +428,30 @@ def calc_r_multiple(price: float, entry: float, stop_loss: float) -> float:
 
 
 # =========================
+# ✅ LEARNING HELPERS
+# =========================
+def _ensure_learning_fields(trade: Dict[str, Any], entry: float) -> None:
+    trade.setdefault("monitor_started_at", now_ts())
+    trade.setdefault("max_price_seen", entry)
+    trade.setdefault("min_price_seen", entry)
+    trade.setdefault("mfe_r", 0.0)
+    trade.setdefault("mae_r", 0.0)
+    trade.setdefault("user_decision", "YES")
+    trade.setdefault("bot_decision", _infer_label(trade))
+
+
+def _update_learning_snapshot(trade: Dict[str, Any], price: float, entry: float, stop_loss: float) -> None:
+    _ensure_learning_fields(trade, entry)
+
+    trade["max_price_seen"] = max(_safe_float(trade.get("max_price_seen"), entry), price)
+    trade["min_price_seen"] = min(_safe_float(trade.get("min_price_seen"), entry), price)
+
+    r_now = calc_r_multiple(price, entry, stop_loss)
+    trade["mfe_r"] = max(_safe_float(trade.get("mfe_r"), 0.0), r_now)
+    trade["mae_r"] = min(_safe_float(trade.get("mae_r"), 0.0), r_now)
+
+
+# =========================
 # ✅ SHADOW DB HELPERS
 # =========================
 def _shadow_trade_id(trade: Dict[str, Any]) -> str:
@@ -751,7 +563,7 @@ def _get_open_shadow_trades_db() -> List[Dict[str, Any]]:
             with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                 cur.execute(
                     """
-                    SELECT *
+                    SELECT ctid::text AS __row_ctid, *
                     FROM public.experience_trades
                     WHERE UPPER(COALESCE(source, '')) = 'SHADOW'
                       AND (
@@ -780,7 +592,11 @@ def _update_shadow_trade_db(trade: Dict[str, Any], updates: Dict[str, Any]) -> b
             where_sql = ""
             where_vals: List[Any] = []
 
-            if _safe_str(trade.get("trade_key")) and _has_column(conn, "experience_trades", "trade_key"):
+            row_ctid = _safe_str(trade.get("__row_ctid"))
+            if row_ctid:
+                where_sql = "ctid::text=%s"
+                where_vals = [row_ctid]
+            elif _safe_str(trade.get("trade_key")) and _has_column(conn, "experience_trades", "trade_key"):
                 where_sql = "trade_key=%s"
                 where_vals = [_safe_str(trade.get("trade_key"))]
             elif _safe_str(trade.get("prebuy_id")) and _has_column(conn, "experience_trades", "prebuy_id"):
@@ -818,35 +634,13 @@ def _update_shadow_trade_db(trade: Dict[str, Any], updates: Dict[str, Any]) -> b
                     f"UPDATE public.experience_trades SET {', '.join(set_parts)} WHERE {where_sql}",
                     tuple(set_vals + where_vals),
                 )
+                rowcount = cur.rowcount
+
             conn.commit()
-            return True
+            return rowcount > 0
     except Exception as e:
         _print(f"⚠️ Shadow DB update mislukt: {type(e).__name__}: {e}")
         return False
-
-
-# =========================
-# ✅ LEARNING HELPERS
-# =========================
-def _ensure_learning_fields(trade: Dict[str, Any], entry: float) -> None:
-    trade.setdefault("monitor_started_at", now_ts())
-    trade.setdefault("max_price_seen", entry)
-    trade.setdefault("min_price_seen", entry)
-    trade.setdefault("mfe_r", 0.0)
-    trade.setdefault("mae_r", 0.0)
-    trade.setdefault("user_decision", "YES")
-    trade.setdefault("bot_decision", _infer_label(trade))
-
-
-def _update_learning_snapshot(trade: Dict[str, Any], price: float, entry: float, stop_loss: float) -> None:
-    _ensure_learning_fields(trade, entry)
-
-    trade["max_price_seen"] = max(_safe_float(trade.get("max_price_seen"), entry), price)
-    trade["min_price_seen"] = min(_safe_float(trade.get("min_price_seen"), entry), price)
-
-    r_now = calc_r_multiple(price, entry, stop_loss)
-    trade["mfe_r"] = max(_safe_float(trade.get("mfe_r"), 0.0), r_now)
-    trade["mae_r"] = min(_safe_float(trade.get("mae_r"), 0.0), r_now)
 
 
 # =========================
@@ -889,26 +683,36 @@ def _close_shadow_trade(trade: Dict[str, Any], *, exit_price: float, result_r: f
     updates: Dict[str, Any] = {
         "outcome": outcome,
         "status": "CLOSED",
-        "close_reason": close_reason,
+        "result_r": float(result_r),
         "exit_price": float(exit_price),
         "exit": float(exit_price),
-        "result_r": float(result_r),
         "mfe_r": _safe_float(trade.get("mfe_r"), 0.0),
         "mae_r": _safe_float(trade.get("mae_r"), 0.0),
         "max_price_seen": _safe_float(trade.get("max_price_seen"), 0.0),
         "min_price_seen": _safe_float(trade.get("min_price_seen"), 0.0),
         "holding_minutes": _holding_minutes(trade),
+        "updated_at": now_utc_dt(),
     }
 
-    now_dt = now_utc_dt()
     if trade.get("entry_time") is not None:
-        updates["exit_time"] = now_dt
-    if trade.get("created_at") is not None:
-        updates["updated_at"] = now_dt
+        updates["exit_time"] = now_utc_dt()
+
+    # Alleen toevoegen als kolom bestaat
+    try:
+        with db_connect() as conn:
+            if _has_column(conn, "experience_trades", "close_reason"):
+                updates["close_reason"] = close_reason
+    except Exception:
+        pass
 
     updated = _update_shadow_trade_db(trade, updates)
     if not updated:
         _print(f"⚠️ Shadow close DB update niet gelukt voor {trade.get('shadow_id')}")
+    else:
+        _print(
+            f"✅ Shadow DB updated | id={trade.get('shadow_id')} symbol={trade.get('symbol')} "
+            f"outcome={outcome} result_r={float(result_r):.2f}"
+        )
 
     try:
         if db_ready():
@@ -928,6 +732,107 @@ def _close_shadow_trade(trade: Dict[str, Any], *, exit_price: float, result_r: f
         f"👻 Shadow closed | id={trade.get('shadow_id')} symbol={trade.get('symbol')} "
         f"outcome={outcome} result_r={float(result_r):.2f} reason={close_reason}"
     )
+
+
+# =========================
+# ✅ SHADOW EVALUATION
+# =========================
+def _legacy_evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
+    if evaluate_open_shadows_for_symbol is None:
+        return
+    try:
+        results = evaluate_open_shadows_for_symbol(symbol, price)
+        if results:
+            for res in results:
+                if isinstance(res, dict) and res.get("ok"):
+                    _print(
+                        f"👻 Legacy shadow closed | id={res.get('id')} "
+                        f"outcome={res.get('outcome')} result_r={res.get('result_r')}"
+                    )
+    except Exception as e:
+        _print(f"⚠️ Legacy shadow evaluation failed for {symbol}: {type(e).__name__}: {e}")
+
+
+def evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
+    handled = False
+    shadow_store = load_shadow_monitor_state()
+    shadow_map = shadow_store.get("trades", {}) if isinstance(shadow_store, dict) else {}
+
+    raw_trades = [t for t in _get_open_shadow_trades_db() if _safe_str(t.get("coin") or t.get("symbol")) == symbol]
+    if raw_trades:
+        handled = True
+        for raw in raw_trades:
+            trade = _normalize_shadow_trade(raw, shadow_map)
+            closed = process_shadow_trade_record(trade, price=price, price_src="pre_fetched")
+            trade_id = trade["shadow_id"]
+
+            if closed:
+                shadow_map.pop(trade_id, None)
+            else:
+                shadow_map[trade_id] = _shadow_state_snapshot(trade)
+
+        shadow_store["trades"] = shadow_map
+        save_shadow_monitor_state(shadow_store)
+
+    if not handled:
+        _legacy_evaluate_shadow_for_symbol(symbol, price)
+
+
+def get_open_shadow_symbols() -> List[str]:
+    symbols: Set[str] = set()
+
+    for sh in _get_open_shadow_trades_db():
+        symbol = _safe_str(sh.get("coin") or sh.get("symbol"))
+        if symbol:
+            if "-" in symbol:
+                symbol = bitvavo_to_binance_symbol(symbol)
+            symbols.add(symbol)
+
+    if not symbols and get_open_shadows is not None:
+        try:
+            db_shadows = get_open_shadows()
+            for sh in db_shadows:
+                if not isinstance(sh, dict):
+                    continue
+                symbol = _safe_str(sh.get("symbol"))
+                status = _safe_str(sh.get("status"), "OPEN").upper()
+                if symbol and status == "OPEN":
+                    symbols.add(symbol)
+        except Exception as e:
+            _print(f"⚠️ Open shadow symbols uit legacy DB ophalen mislukt: {type(e).__name__}: {e}")
+
+    if not symbols and load_shadows is not None:
+        try:
+            file_shadows = load_shadows()
+            for sh in file_shadows:
+                if not isinstance(sh, dict):
+                    continue
+                symbol = _safe_str(sh.get("symbol"))
+                status = _safe_str(sh.get("status"), "OPEN").upper()
+                if symbol and status == "OPEN":
+                    symbols.add(symbol)
+        except Exception as e:
+            _print(f"⚠️ Open shadow symbols uit file ophalen mislukt: {type(e).__name__}: {e}")
+
+    return sorted(symbols)
+
+
+def evaluate_all_open_shadows() -> None:
+    symbols = get_open_shadow_symbols()
+    if not symbols:
+        _print("👻 Geen open shadow symbols gevonden.")
+        return
+
+    _print(f"👻 Open shadow symbols gevonden: {len(symbols)}")
+
+    for symbol in symbols:
+        try:
+            dummy_trade = {"symbol": symbol, "live": (TRADER_MODE == "live")}
+            price, src = get_price(symbol, dummy_trade)
+            _print(f"👻 Auto shadow check for {symbol} | price={price:.6f} ({src})")
+            evaluate_shadow_for_symbol(symbol, price)
+        except Exception as e:
+            _print(f"⚠️ Auto shadow check failed for {symbol}: {type(e).__name__}: {e}")
 
 
 # =========================
@@ -1060,11 +965,6 @@ def _force_exit_once_if_enabled(state: Dict[str, Any]) -> bool:
 
     _send_sell_close_message(symbol, "FORCE TEST EXIT (debug)", entry, stop_loss, target, r_now, sell_res)
 
-    if isinstance(sell_res, dict) and sell_res.get("ok"):
-        exit_price = float(sell_res.get("price", price))
-        r_exit = calc_r_multiple(exit_price, entry, stop_loss) if entry > 0 and stop_loss > 0 else 0.0
-        experience_on_close(trade, close_price=exit_price, result_r=r_exit, is_shadow=False)
-
     state["open_trades"] = [t for t in state.get("open_trades", []) if t.get("symbol") != symbol]
     save_state(state)
 
@@ -1094,7 +994,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
     else:
         price, src = get_price(symbol, trade)
 
-    # shadow trades voor dit symbool ook evalueren
     evaluate_shadow_for_symbol(symbol, price)
 
     r = calc_r_multiple(price, entry, stop_loss)
@@ -1119,7 +1018,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         f"SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}"
     )
 
-    # 1) Stop vóór 1R = SELL 100%
     if price <= stop_loss and r < 1.0:
         _print(f"🛑 {symbol} -> STOP-LOSS geraakt vóór 1R => SELL 100%")
         sell_res = _execute_sell(trade, 1.0)
@@ -1129,15 +1027,8 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["closed_at"] = now_ts()
 
         _send_sell_close_message(symbol, "STOP-LOSS vóór 1R", entry, stop_loss, target, r, sell_res)
-
-        if isinstance(sell_res, dict) and sell_res.get("ok"):
-            exit_price = float(sell_res.get("price", price))
-            r_exit = calc_r_multiple(exit_price, entry, stop_loss)
-            experience_on_close(trade, close_price=exit_price, result_r=r_exit, is_shadow=False)
-
         return True
 
-    # 2) Target geraakt => STRUCTUUR-MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         _print(f"🎯 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
         trade["target_reached_notified"] = True
@@ -1152,7 +1043,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             f"Mode: STRUCTUUR-MODE"
         )
 
-    # 3) STRUCTUUR-MODE
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows, lows_src = get_klines_lows(symbol, trade)
@@ -1176,12 +1066,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
                         trade["closed_at"] = now_ts()
 
                         _send_sell_close_message(symbol, "STRUCTUUR: eerste lower-low", entry, stop_loss, target, r, sell_res)
-
-                        if isinstance(sell_res, dict) and sell_res.get("ok"):
-                            exit_price = float(sell_res.get("price", price))
-                            r_exit = calc_r_multiple(exit_price, entry, stop_loss)
-                            experience_on_close(trade, close_price=exit_price, result_r=r_exit, is_shadow=False)
-
                         return True
         except Exception as e:
             _print(f"⚠️ STRUCTUUR fetch error {symbol}: {type(e).__name__}: {e}")
@@ -1189,13 +1073,11 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # 4) Boven 1R = wachten
     if r >= 1.0:
         trade["below_1r_count"] = 0
         trade["last_check"] = now_ts()
         return False
 
-    # 5) Na >1R terug onder 1R => SELL 40%
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _print(f"⚠️ {symbol} was >1R, nu <1R -> SELL 40%")
         _execute_sell(trade, 0.40)
@@ -1204,7 +1086,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
         trade["last_check"] = now_ts()
         return False
 
-    # 6) Na partial: 3 candles onder 1R => rest SELL 100%
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"⏳ {symbol} onder 1R count={trade['below_1r_count']}/3")
@@ -1217,12 +1098,6 @@ def process_trade(state: Dict[str, Any], trade: Dict[str, Any], test_price: Opti
             trade["closed_at"] = now_ts()
 
             _send_sell_close_message(symbol, "Na >1R: 3x onder 1R (rest gesloten)", entry, stop_loss, target, r, sell_res)
-
-            if isinstance(sell_res, dict) and sell_res.get("ok"):
-                exit_price = float(sell_res.get("price", price))
-                r_exit = calc_r_multiple(exit_price, entry, stop_loss)
-                experience_on_close(trade, close_price=exit_price, result_r=r_exit, is_shadow=False)
-
             return True
     else:
         trade["below_1r_count"] = 0
@@ -1274,20 +1149,20 @@ def process_shadow_trade_record(trade: Dict[str, Any], *, price: Optional[float]
         f"SL={stop_loss:.6f} | R={r:.2f} | mode={trade['mode']}"
     )
 
-    # 1) Stop vóór 1R = virtuele LOSS close
+    # 1) Stop vóór 1R = LOSS
     if price <= stop_loss and r < 1.0:
         total_result_r = _shadow_closed_result_r(trade, r)
         _close_shadow_trade(trade, exit_price=price, result_r=total_result_r, close_reason="STOP_LOSS_BEFORE_1R")
         return True
 
-    # 2) Target geraakt = zelfde als echte trade -> STRUCTUUR-MODE
+    # 2) Target geraakt => STRUCTUUR-MODE
     if target > 0 and price >= target and not trade.get("target_reached_notified", False):
         trade["target_reached_notified"] = True
         trade["mode"] = "STRUCTUUR"
         trade.setdefault("struct_trailing_low", None)
         _print(f"👻 {symbol} TARGET REACHED! -> switch naar STRUCTUUR-MODE")
 
-    # 3) STRUCTUUR-MODE = zelfde close-logica
+    # 3) STRUCTUUR-MODE
     if trade.get("mode") == "STRUCTUUR":
         try:
             lows, lows_src = get_klines_lows(symbol, trade)
@@ -1318,13 +1193,13 @@ def process_shadow_trade_record(trade: Dict[str, Any], *, price: Optional[float]
         trade["last_check"] = now_ts()
         return False
 
-    # 5) Na >1R terug onder 1R = virtuele partial 40%
+    # 5) Na >1R terug onder 1R = virtuele 40% partial
     if trade.get("had_over_1r") and r < 1.0 and not trade.get("partial_sold_40"):
         _shadow_partial_sell_40(trade, r)
         trade["last_check"] = now_ts()
         return False
 
-    # 6) Na partial: 3 candles onder 1R = rest virtueel sluiten
+    # 6) Na partial: 3 candles onder 1R = rest sluiten
     if trade.get("partial_sold_40") and r < 1.0:
         trade["below_1r_count"] = int(trade.get("below_1r_count", 0)) + 1
         _print(f"👻 {symbol} onder 1R count={trade['below_1r_count']}/3")
@@ -1359,12 +1234,6 @@ def _legacy_evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
 
 
 def evaluate_shadow_for_symbol(symbol: str, price: float) -> None:
-    """
-    Nieuwe shadow evaluatie:
-    - leest open SHADOW rows uit experience_trades
-    - gebruikt dezelfde lifecycle als echte trades
-    - sluit virtueel af met WIN/LOSS
-    """
     handled = False
     shadow_store = load_shadow_monitor_state()
     shadow_map = shadow_store.get("trades", {}) if isinstance(shadow_store, dict) else {}
@@ -1458,7 +1327,6 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
     open_trades = state.get("open_trades", []) or []
     closed_symbols: List[str] = []
 
-    # 1) echte trades monitoren
     for trade in list(open_trades):
         symbol = trade.get("symbol")
         if only_symbol and symbol != only_symbol:
@@ -1476,7 +1344,6 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         if closed:
             closed_symbols.append(symbol)
 
-    # 2) handmatige shadow-only check
     if only_symbol and not open_trades:
         try:
             if test_price is not None:
@@ -1491,7 +1358,6 @@ def run_once(test_price: Optional[float] = None, only_symbol: Optional[str] = No
         except Exception as e:
             _print(f"⚠️ Shadow-only symbol check failed for {only_symbol}: {type(e).__name__}: {e}")
 
-    # 3) automatische shadow scan
     if not only_symbol:
         evaluate_all_open_shadows()
 
