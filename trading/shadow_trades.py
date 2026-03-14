@@ -119,10 +119,27 @@ def calc_pnl_pct(entry: float, exit_price: float) -> float:
     return ((exit_price - entry) / entry) * 100.0
 
 
-def infer_outcome(result_r: float, flat_band: float = 0.05) -> str:
-    if abs(result_r) <= flat_band:
-        return "FLAT"
-    return "WIN" if result_r > 0 else "LOSS"
+def determine_shadow_outcome(entry: float, exit_price: float) -> str:
+    """
+    Definitieve regel voor shadow trades:
+    - exit_price > entry  => WIN
+    - exit_price <= entry => LOSS
+    """
+    entry = safe_float(entry, 0.0)
+    exit_price = safe_float(exit_price, 0.0)
+
+    if entry <= 0:
+        return "LOSS"
+
+    return "WIN" if exit_price > entry else "LOSS"
+
+
+def infer_outcome(result_r: float, entry: float, exit_price: float) -> str:
+    """
+    Backward compatible helper.
+    Geen FLAT/UNKNOWN meer als einduitkomst.
+    """
+    return determine_shadow_outcome(entry, exit_price)
 
 
 def normalize_shadow_row(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,7 +170,18 @@ def normalize_shadow_row(row: Dict[str, Any]) -> Dict[str, Any]:
 
     out["result_r"] = safe_float(out.get("result_r"), 0.0) if out.get("result_r") is not None else None
     out["pnl_pct"] = safe_float(out.get("pnl_pct"), 0.0) if out.get("pnl_pct") is not None else None
-    out["outcome"] = safe_str(out.get("outcome"), "UNKNOWN").upper()
+
+    raw_outcome = safe_str(out.get("outcome"), "OPEN").upper()
+    if out["status"] == "OPEN":
+        out["outcome"] = "OPEN"
+    else:
+        if raw_outcome in ("WIN", "LOSS"):
+            out["outcome"] = raw_outcome
+        elif out["exit_price"] is not None:
+            out["outcome"] = determine_shadow_outcome(out["entry"], safe_float(out["exit_price"]))
+        else:
+            out["outcome"] = "LOSS"
+
     out["is_shadow"] = True
 
     out["created_at"] = dt_to_iso(out.get("created_at") or out.get("timestamp") or out.get("entry_time"))
@@ -292,7 +320,7 @@ def create_shadow(
         "exit_price": None,
         "pnl_pct": None,
         "result_r": None,
-        "outcome": "UNKNOWN",
+        "outcome": "OPEN",
         "status": "OPEN",
         "is_shadow": True,
         "timestamp": created_at,
@@ -402,11 +430,12 @@ def create_shadow(
         "exit_price": None,
         "pnl_pct": None,
         "result_r": None,
-        "outcome": "UNKNOWN",
+        "outcome": "OPEN",
         "status": "OPEN",
         "is_shadow": True,
         "created_at": dt_to_iso(created_at),
         "closed_at": None,
+        "exit_time": None,
     })
     save_shadows_file(shadows)
     return {"ok": True, "storage": "file", "id": shadow_id, "trade_key": trade_key}
@@ -476,6 +505,7 @@ def close_shadow(
 ) -> Dict[str, Any]:
     """
     Sluit shadow trade af en berekent pnl/result_r.
+    Einduitkomst mag alleen WIN of LOSS zijn.
     """
 
     exit_price = safe_float(exit_price)
@@ -500,7 +530,12 @@ def close_shadow(
 
                 result_r = calc_r_result(entry, stop, exit_price)
                 pnl_pct = calc_pnl_pct(entry, exit_price)
-                final_outcome = safe_str(outcome, "").upper() or infer_outcome(result_r)
+
+                forced_outcome = safe_str(outcome, "").upper()
+                if forced_outcome in ("WIN", "LOSS"):
+                    final_outcome = forced_outcome
+                else:
+                    final_outcome = determine_shadow_outcome(entry, exit_price)
 
                 cur.execute("""
                     UPDATE public.experience_trades
@@ -538,7 +573,7 @@ def close_shadow(
     found = False
     result_r = 0.0
     pnl_pct = 0.0
-    final_outcome = "UNKNOWN"
+    final_outcome = "LOSS"
 
     for s in shadows:
         if s.get("id") != shadow_id and s.get("trade_key") != shadow_id:
@@ -549,7 +584,12 @@ def close_shadow(
         stop = safe_float(s.get("stop"))
         result_r = calc_r_result(entry, stop, exit_price)
         pnl_pct = calc_pnl_pct(entry, exit_price)
-        final_outcome = safe_str(outcome, "").upper() or infer_outcome(result_r)
+
+        forced_outcome = safe_str(outcome, "").upper()
+        if forced_outcome in ("WIN", "LOSS"):
+            final_outcome = forced_outcome
+        else:
+            final_outcome = determine_shadow_outcome(entry, exit_price)
 
         s["status"] = "CLOSED"
         s["exit_price"] = exit_price
@@ -557,6 +597,7 @@ def close_shadow(
         s["result_r"] = result_r
         s["outcome"] = final_outcome
         s["closed_at"] = dt_to_iso(now_utc())
+        s["exit_time"] = dt_to_iso(now_utc())
         break
 
     if not found:
@@ -655,8 +696,6 @@ def shadow_stats() -> Dict[str, Any]:
     closed_count = 0
     wins = 0
     losses = 0
-    flats = 0
-    unknown = 0
     sum_r = 0.0
     sum_pnl_pct = 0.0
 
@@ -664,7 +703,7 @@ def shadow_stats() -> Dict[str, Any]:
         outcome = safe_str(r.get("outcome"), "").upper()
         closed_at = r.get("closed_at")
 
-        if not closed_at:
+        if not closed_at or outcome == "OPEN":
             open_count += 1
             continue
 
@@ -676,12 +715,8 @@ def shadow_stats() -> Dict[str, Any]:
 
         if outcome == "WIN":
             wins += 1
-        elif outcome == "LOSS":
-            losses += 1
-        elif outcome == "FLAT":
-            flats += 1
         else:
-            unknown += 1
+            losses += 1
 
     winrate = (wins / closed_count * 100.0) if closed_count else 0.0
     avg_r = (sum_r / closed_count) if closed_count else 0.0
@@ -693,8 +728,6 @@ def shadow_stats() -> Dict[str, Any]:
         "closed": closed_count,
         "wins": wins,
         "losses": losses,
-        "flats": flats,
-        "unknown": unknown,
         "winrate": round(winrate, 2),
         "avg_r": round(avg_r, 4),
         "avg_pnl_pct": round(avg_pnl_pct, 4),
