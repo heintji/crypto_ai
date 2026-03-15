@@ -9,6 +9,7 @@ import json
 import time
 import hmac
 import hashlib
+import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -70,7 +71,10 @@ SESSION_DEFAULTS = {
     "hotkey_show_pg_help": False,
     "hotkey_show_pg_structure": False,
     "hotkey_advanced_mode": False,
+    "hotkey_show_debug": False,
     "hotkey_notice": "",
+    "last_error_text": "",
+    "debug_events": [],
 }
 for _k, _v in SESSION_DEFAULTS.items():
     if _k not in st.session_state:
@@ -115,10 +119,7 @@ st.markdown(
 
         section[data-testid="stSidebar"] {display:none;}
         header[data-testid="stHeader"] {background: transparent;}
-
-        div[data-testid="stDataFrame"] {
-            border: 0 !important;
-        }
+        div[data-testid="stDataFrame"] {border:0 !important;}
 
         .app-shell {
             background: linear-gradient(180deg, rgba(12,14,22,0.96) 0%, rgba(10,12,18,0.96) 100%);
@@ -177,8 +178,11 @@ st.markdown(
             font-size:14px;
         }
 
-        .side-nav {
-            background: linear-gradient(180deg, rgba(12,14,22,0.96) 0%, rgba(10,12,18,0.96) 100%);
+        .side-nav,
+        .main-panel,
+        .right-panel,
+        .sub-panel {
+            background: linear-gradient(180deg, rgba(17,21,31,0.96) 0%, rgba(14,18,27,0.96) 100%);
             border: 1px solid rgba(255,255,255,0.06);
             border-radius: 20px;
             padding: 14px;
@@ -213,17 +217,6 @@ st.markdown(
             background: linear-gradient(90deg, rgba(244,114,182,0.22) 0%, rgba(126,201,255,0.22) 100%);
             color:#ffffff;
             border-color: rgba(255,255,255,0.10);
-        }
-
-        .main-panel,
-        .right-panel,
-        .sub-panel {
-            background: linear-gradient(180deg, rgba(17,21,31,0.96) 0%, rgba(14,18,27,0.96) 100%);
-            border: 1px solid rgba(255,255,255,0.06);
-            border-radius: 20px;
-            padding: 14px;
-            box-shadow: 0 12px 32px rgba(0,0,0,0.22);
-            height: 100%;
         }
 
         .section-title {
@@ -527,6 +520,17 @@ st.markdown(
 # ==========================================================
 # HELPERS
 # ==========================================================
+def append_debug_event(message: str) -> None:
+    stamp = datetime.now().strftime("%H:%M:%S")
+    st.session_state.debug_events = [f"{stamp} | {message}"] + st.session_state.debug_events[:49]
+
+
+def capture_exception(prefix: str, err: Exception) -> None:
+    text = f"{prefix}: {type(err).__name__}: {err}"
+    st.session_state.last_error_text = text
+    append_debug_event(text)
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -616,6 +620,7 @@ def safe_read_json(path: str) -> Tuple[Optional[dict], Optional[str]]:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f), None
     except Exception as e:
+        capture_exception("safe_read_json", e)
         return None, f"JSON leesfout ({path}): {e}"
 
 
@@ -741,6 +746,44 @@ def postgres_trade_read_explanation() -> str:
     )
 
 
+def explain_blocks_md() -> str:
+    return """
+### Uitleg per codeblok
+
+**1. Config & session state**  
+Hier worden API-sleutels, database-instellingen, limieten en Streamlit session state geladen.  
+Deze laag bepaalt hoe het dashboard zich gedraagt tussen reruns.
+
+**2. Style laag**  
+Alle visuele componenten zoals kaarten, panelen, tabs en kleuren worden via CSS in Streamlit gestyled.
+
+**3. Helpers**  
+Functies voor veilige conversies, datum-formattering, geldbedragen, debug logging en herbruikbare UI-logica.
+
+**4. Snapshot / Bitvavo**  
+Leest balances op, vertaalt coins naar EUR-waarde en bouwt een snapshot van de actuele portefeuille.
+
+**5. Database laag**  
+Verbindt met PostgreSQL, leest beschikbare kolommen op en zorgt dat queries stabiel blijven bij schema-verschillen.
+
+**6. Trade loader**  
+Bouwt dynamische SQL voor REAL, SIM, SHADOW en HISTORY.  
+De code ondersteunt meerdere schema-varianten zoals `symbol/coin`, `regime/market_regime` en `result_r/outcome`.
+
+**7. Performance & scoreboard**  
+Berekent win rate, expectancy, drawdown, advanced stats en setup-ranking.
+
+**8. UI hoofdscherm**  
+Toont metrics, trade detail, filters, activiteiten, portfolio, scoreboard en volledige geschiedenis.
+
+**9. Hotkeys / acties**  
+W = volgende trade  
+D = debug + database structuur  
+A = advanced mode  
+S = uitleg per blok + PostgreSQL reading
+"""
+
+
 def postgres_structure_advice_md() -> str:
     return """
 ### PostgreSQL trade-structuur analyse
@@ -855,277 +898,276 @@ return (
 )
 ```
 
-# ==========================================================
-
-# SNAPSHOT / BITVAVO
-
-# ==========================================================
-
-def bitvavo_request(method: str, path: str, body: str = ""):
-if not API_KEY or not API_SECRET:
-raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
-
-```
-method_u = method.upper()
-timestamp = str(int(time.time() * 1000))
-body = body or ""
-message = f"{timestamp}{method_u}{path}{body}"
-signature = hmac.new(
-    API_SECRET.encode("utf-8"),
-    message.encode("utf-8"),
-    hashlib.sha256,
-).hexdigest()
-
-headers = {
-    "Bitvavo-Access-Key": API_KEY,
-    "Bitvavo-Access-Signature": signature,
-    "Bitvavo-Access-Timestamp": timestamp,
-    "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
-    "Content-Type": "application/json",
-}
-url = f"{BASE_URL}{path}"
-
-if method_u == "GET":
-    r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-elif method_u == "POST":
-    r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
-else:
-    raise ValueError("Alleen GET/POST ondersteund.")
-
-if r.status_code >= 400:
-    try:
-        err = r.json()
-    except Exception:
-        err = {"error": r.text}
-    raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
-return r.json()
-```
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_all_market_prices() -> Dict[str, float]:
-url = f"{BASE_URL}/v2/ticker/price"
-r = requests.get(url, timeout=HTTP_TIMEOUT)
-r.raise_for_status()
-data = r.json()
-
-```
-prices: Dict[str, float] = {}
-for row in data:
-    market = row.get("market")
-    price = row.get("price")
-    if market and price is not None:
-        try:
-            prices[market] = float(price)
-        except Exception:
-            pass
-return prices
-```
-
-def price_in_eur(symbol: str, prices: Dict[str, float]) -> Tuple[Optional[float], str]:
-if symbol == "EUR":
-return 1.0, "EUR"
-direct = f"{symbol}-EUR"
-if direct in prices:
-return prices[direct], direct
-a = f"{symbol}-USDT"
-b = "USDT-EUR"
-if a in prices and b in prices:
-return prices[a] * prices[b], f"{a}*{b}"
-a = f"{symbol}-BTC"
-b = "BTC-EUR"
-if a in prices and b in prices:
-return prices[a] * prices[b], f"{a}*{b}"
-return None, "NO_ROUTE"
-
-def build_snapshot_with_eur_values() -> dict:
-balances = bitvavo_request("GET", "/v2/balance")
-prices = fetch_all_market_prices()
-assets: List[Dict[str, Any]] = []
-eur_available = 0.0
-
-```
-for row in balances:
-    symbol = row.get("symbol")
-    available = float(row.get("available", 0) or 0)
-    in_order = float(row.get("inOrder", 0) or 0)
-    total = available + in_order
-
-    if symbol == "EUR":
-        eur_available = available
-
-    if total > 0:
-        p_eur, route = price_in_eur(symbol, prices)
-        eur_value = float(total) * float(p_eur) if p_eur is not None else None
-        assets.append(
-            {
-                "symbol": symbol,
-                "available": available,
-                "inOrder": in_order,
-                "total": total,
-                "price_eur": p_eur,
-                "eur_value": eur_value,
-                "price_route": route,
-            }
-        )
-
-crypto_assets_eur = sum(
-    float(a["eur_value"])
-    for a in assets
-    if a["symbol"] != "EUR" and a.get("eur_value") is not None
-)
-total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
-
-snapshot = {
-    "status": "OK",
-    "ts": now_iso(),
-    "eur_available": float(eur_available),
-    "crypto_assets_eur": float(crypto_assets_eur),
-    "total_portfolio_eur": float(total_portfolio_eur),
-    "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
-}
-
-ensure_parent_dir(SNAPSHOT_PATH)
-with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-    json.dump(snapshot, f, indent=2, ensure_ascii=False)
-
-return snapshot
-```
-
-def read_snapshot_only() -> Tuple[dict, str]:
-snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
-if snapshot is None:
-snapshot = {
-"status": "MISSING",
-"ts": None,
-"eur_available": 0.0,
-"crypto_assets_eur": 0.0,
-"total_portfolio_eur": 0.0,
-"assets": [],
-}
-return snapshot, snapshot_err or "Snapshot niet gevonden"
-return snapshot, "read-only snapshot"
-
-# ==========================================================
-
-# DATABASE
-
-# ==========================================================
-
-def db_ready() -> bool:
-return bool(DATABASE_URL)
-
-def get_db_conn():
-if not DATABASE_URL:
-return None
-return psycopg2.connect(
-DATABASE_URL,
-sslmode="require",
-connect_timeout=DB_CONNECT_TIMEOUT,
-options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
-)
-
-def run_df_query(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
-if not db_ready():
-return pd.DataFrame([])
-try:
-conn = get_db_conn()
-if conn is None:
-return pd.DataFrame([])
-with conn:
-with conn.cursor() as cur:
-cur.execute(sql, params or ())
-rows = cur.fetchall()
-cols = [desc[0] for desc in cur.description]
-conn.close()
-return pd.DataFrame(rows, columns=cols)
-except Exception:
-return pd.DataFrame([])
-
-@st.cache_data(ttl=20, show_spinner=False)
-def get_table_columns(table_name: str) -> List[str]:
-sql = """
-SELECT column_name
-FROM information_schema.columns
-WHERE table_schema = 'public'
-AND table_name = %s
-ORDER BY ordinal_position
-"""
-df = run_df_query(sql, (table_name,))
-if df.empty or "column_name" not in df.columns:
-return []
-return [str(x) for x in df["column_name"].tolist()]
-
-def has_columns(table_name: str) -> bool:
-return len(get_table_columns(table_name)) > 0
-
-def sql_col(cols: List[str], name: str, cast: str = "text") -> str:
-if name in cols:
-return f'"{name}"'
-return f"NULL::{cast}"
-
-@st.cache_data(ttl=20, show_spinner=False)
-def table_count(table_name: str) -> int:
-if not has_columns(table_name):
-return 0
-df = run_df_query(f"SELECT COUNT(*) AS n FROM public.{table_name}")
-if df.empty or "n" not in df.columns:
-return 0
-return safe_int(df.iloc[0]["n"], 0)
-
-@st.cache_data(ttl=20, show_spinner=False)
-def load_pending_orders_db() -> pd.DataFrame:
-if not has_columns("pending_approvals"):
-return pd.DataFrame([])
-cols = get_table_columns("pending_approvals")
-
-```
-def c(name: str, cast: str = "text") -> str:
-    return sql_col(cols, name, cast)
-
-sql = f"""
-    SELECT
-        {c("id")} AS id,
-        {c("symbol")} AS symbol,
-        {c("status")} AS status,
-        {c("setup_type")} AS setup_type,
-        {c("regime")} AS regime,
-        {c("score", "double precision")} AS score,
-        {c("chance", "double precision")} AS chance,
-        {c("confidence", "double precision")} AS confidence,
-        {c("entry", "double precision")} AS entry,
-        {c("stop", "double precision")} AS stop,
-        {c("target", "double precision")} AS target,
-        {c("timeframe")} AS timeframe,
-        {c("created_at", "timestamptz")} AS created_at,
-        {c("expires_at", "timestamptz")} AS expires_at
-    FROM public.pending_approvals
-    WHERE COALESCE({c("status")}, 'PENDING') IN ('PENDING', 'APPROVED')
-    ORDER BY COALESCE({c("chance", "double precision")}, 0) DESC,
-             COALESCE({c("score", "double precision")}, 0) DESC,
-             {c("created_at", "timestamptz")} DESC NULLS LAST
-    LIMIT {PENDING_LIMIT}
-"""
-df = run_df_query(sql)
-if df.empty:
-    return df
-
-for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-if "created_at" in df.columns:
-    df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-if "expires_at" in df.columns:
-    df["expires_at"] = pd.to_datetime(df["expires_at"], errors="coerce", utc=True)
-return df
-```
-
 ````
 
 ```python
 # ==========================================================
 # DEEL 2/3
 # ==========================================================
+def bitvavo_request(method: str, path: str, body: str = ""):
+    if not API_KEY or not API_SECRET:
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
+
+    method_u = method.upper()
+    timestamp = str(int(time.time() * 1000))
+    body = body or ""
+    message = f"{timestamp}{method_u}{path}{body}"
+    signature = hmac.new(
+        API_SECRET.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    headers = {
+        "Bitvavo-Access-Key": API_KEY,
+        "Bitvavo-Access-Signature": signature,
+        "Bitvavo-Access-Timestamp": timestamp,
+        "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
+        "Content-Type": "application/json",
+    }
+    url = f"{BASE_URL}{path}"
+
+    if method_u == "GET":
+        r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    elif method_u == "POST":
+        r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
+    else:
+        raise ValueError("Alleen GET/POST ondersteund.")
+
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = {"error": r.text}
+        raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
+    return r.json()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def fetch_all_market_prices() -> Dict[str, float]:
+    try:
+        url = f"{BASE_URL}/v2/ticker/price"
+        r = requests.get(url, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
+
+        prices: Dict[str, float] = {}
+        for row in data:
+            market = row.get("market")
+            price = row.get("price")
+            if market and price is not None:
+                try:
+                    prices[market] = float(price)
+                except Exception:
+                    pass
+        return prices
+    except Exception as e:
+        capture_exception("fetch_all_market_prices", e)
+        return {}
+
+
+def price_in_eur(symbol: str, prices: Dict[str, float]) -> Tuple[Optional[float], str]:
+    if symbol == "EUR":
+        return 1.0, "EUR"
+    direct = f"{symbol}-EUR"
+    if direct in prices:
+        return prices[direct], direct
+    a = f"{symbol}-USDT"
+    b = "USDT-EUR"
+    if a in prices and b in prices:
+        return prices[a] * prices[b], f"{a}*{b}"
+    a = f"{symbol}-BTC"
+    b = "BTC-EUR"
+    if a in prices and b in prices:
+        return prices[a] * prices[b], f"{a}*{b}"
+    return None, "NO_ROUTE"
+
+
+def build_snapshot_with_eur_values() -> dict:
+    balances = bitvavo_request("GET", "/v2/balance")
+    prices = fetch_all_market_prices()
+    assets: List[Dict[str, Any]] = []
+    eur_available = 0.0
+
+    for row in balances:
+        symbol = row.get("symbol")
+        available = float(row.get("available", 0) or 0)
+        in_order = float(row.get("inOrder", 0) or 0)
+        total = available + in_order
+
+        if symbol == "EUR":
+            eur_available = available
+
+        if total > 0:
+            p_eur, route = price_in_eur(symbol, prices)
+            eur_value = float(total) * float(p_eur) if p_eur is not None else None
+            assets.append(
+                {
+                    "symbol": symbol,
+                    "available": available,
+                    "inOrder": in_order,
+                    "total": total,
+                    "price_eur": p_eur,
+                    "eur_value": eur_value,
+                    "price_route": route,
+                }
+            )
+
+    crypto_assets_eur = sum(
+        float(a["eur_value"])
+        for a in assets
+        if a["symbol"] != "EUR" and a.get("eur_value") is not None
+    )
+    total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
+
+    snapshot = {
+        "status": "OK",
+        "ts": now_iso(),
+        "eur_available": float(eur_available),
+        "crypto_assets_eur": float(crypto_assets_eur),
+        "total_portfolio_eur": float(total_portfolio_eur),
+        "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
+    }
+
+    ensure_parent_dir(SNAPSHOT_PATH)
+    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, indent=2, ensure_ascii=False)
+
+    append_debug_event("Snapshot succesvol opgebouwd.")
+    return snapshot
+
+
+def read_snapshot_only() -> Tuple[dict, str]:
+    snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
+    if snapshot is None:
+        snapshot = {
+            "status": "MISSING",
+            "ts": None,
+            "eur_available": 0.0,
+            "crypto_assets_eur": 0.0,
+            "total_portfolio_eur": 0.0,
+            "assets": [],
+        }
+        return snapshot, snapshot_err or "Snapshot niet gevonden"
+    return snapshot, "read-only snapshot"
+
+
+def db_ready() -> bool:
+    return bool(DATABASE_URL)
+
+
+def get_db_conn():
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        connect_timeout=DB_CONNECT_TIMEOUT,
+        options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
+    )
+
+
+def run_df_query(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
+    if not db_ready():
+        return pd.DataFrame([])
+    try:
+        conn = get_db_conn()
+        if conn is None:
+            return pd.DataFrame([])
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params or ())
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+        conn.close()
+        return pd.DataFrame(rows, columns=cols)
+    except Exception as e:
+        capture_exception("run_df_query", e)
+        return pd.DataFrame([])
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def get_table_columns(table_name: str) -> List[str]:
+    sql = """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = %s
+        ORDER BY ordinal_position
+    """
+    df = run_df_query(sql, (table_name,))
+    if df.empty or "column_name" not in df.columns:
+        return []
+    return [str(x) for x in df["column_name"].tolist()]
+
+
+def has_columns(table_name: str) -> bool:
+    return len(get_table_columns(table_name)) > 0
+
+
+def sql_col(cols: List[str], name: str, cast: str = "text") -> str:
+    if name in cols:
+        return f'"{name}"'
+    return f"NULL::{cast}"
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def table_count(table_name: str) -> int:
+    if not has_columns(table_name):
+        return 0
+    df = run_df_query(f"SELECT COUNT(*) AS n FROM public.{table_name}")
+    if df.empty or "n" not in df.columns:
+        return 0
+    return safe_int(df.iloc[0]["n"], 0)
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def load_pending_orders_db() -> pd.DataFrame:
+    if not has_columns("pending_approvals"):
+        return pd.DataFrame([])
+    cols = get_table_columns("pending_approvals")
+
+    def c(name: str, cast: str = "text") -> str:
+        return sql_col(cols, name, cast)
+
+    sql = f"""
+        SELECT
+            {c("id")} AS id,
+            {c("symbol")} AS symbol,
+            {c("status")} AS status,
+            {c("setup_type")} AS setup_type,
+            {c("regime")} AS regime,
+            {c("score", "double precision")} AS score,
+            {c("chance", "double precision")} AS chance,
+            {c("confidence", "double precision")} AS confidence,
+            {c("entry", "double precision")} AS entry,
+            {c("stop", "double precision")} AS stop,
+            {c("target", "double precision")} AS target,
+            {c("timeframe")} AS timeframe,
+            {c("created_at", "timestamptz")} AS created_at,
+            {c("expires_at", "timestamptz")} AS expires_at
+        FROM public.pending_approvals
+        WHERE COALESCE({c("status")}, 'PENDING') IN ('PENDING', 'APPROVED')
+        ORDER BY COALESCE({c("chance", "double precision")}, 0) DESC,
+                 COALESCE({c("score", "double precision")}, 0) DESC,
+                 {c("created_at", "timestamptz")} DESC NULLS LAST
+        LIMIT {PENDING_LIMIT}
+    """
+    df = run_df_query(sql)
+    if df.empty:
+        return df
+
+    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    if "created_at" in df.columns:
+        df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    if "expires_at" in df.columns:
+        df["expires_at"] = pd.to_datetime(df["expires_at"], errors="coerce", utc=True)
+    return df
+
+
 def build_experience_trades_sql(kind: str, limit: int) -> str:
     cols = get_table_columns("experience_trades")
     if not cols:
@@ -1808,7 +1850,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
 snapshot, snapshot_state = read_snapshot_only()
 orders_df = load_pending_orders_db()
 real_df = load_real_trades_db()
@@ -1859,7 +1900,6 @@ scoreboard_meta = scoreboard_overview(scoreboard_df)
 experience_total_count = table_count("experience_trades")
 experience_scoreboard_count = table_count("experience_scoreboard")
 
-
 metric_cols = st.columns([1.15, 0.95, 0.9, 0.95, 0.85, 0.9], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
@@ -1877,7 +1917,7 @@ with metric_cols[5]:
 
 st.markdown('<div class="footspace"></div>', unsafe_allow_html=True)
 
-shell_cols = st.columns([0.7, 2.15, 0.9], gap="small")
+shell_cols = st.columns([0.72, 2.15, 0.9], gap="small")
 
 with shell_cols[0]:
     st.markdown('<div class="side-nav">', unsafe_allow_html=True)
@@ -1893,8 +1933,9 @@ with shell_cols[0]:
     with hk2:
         st.markdown('<div class="hotkey-button">', unsafe_allow_html=True)
         if st.button("D 🧠", use_container_width=True):
+            st.session_state.hotkey_show_debug = not st.session_state.hotkey_show_debug
             st.session_state.hotkey_show_pg_structure = not st.session_state.hotkey_show_pg_structure
-            st.session_state.hotkey_notice = "D toegepast: PostgreSQL structuur-analyse bijgewerkt."
+            st.session_state.hotkey_notice = "D toegepast: debug-sectie en PostgreSQL structuur bijgewerkt."
         st.markdown('</div>', unsafe_allow_html=True)
 
     hk3, hk4 = st.columns(2, gap="small")
@@ -1909,7 +1950,7 @@ with shell_cols[0]:
         st.markdown('<div class="hotkey-button">', unsafe_allow_html=True)
         if st.button("S 📖", use_container_width=True):
             st.session_state.hotkey_show_pg_help = not st.session_state.hotkey_show_pg_help
-            st.session_state.hotkey_notice = "S toegepast: uitleg over PostgreSQL trade reading bijgewerkt."
+            st.session_state.hotkey_notice = "S toegepast: uitlegblokken bijgewerkt."
         st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state.hotkey_notice:
@@ -1920,9 +1961,32 @@ with shell_cols[0]:
 
     if st.session_state.hotkey_show_pg_help:
         st.info(postgres_trade_read_explanation())
+        st.markdown(explain_blocks_md())
 
     if st.session_state.hotkey_show_pg_structure:
         st.markdown(postgres_structure_advice_md())
+
+    if st.session_state.hotkey_show_debug:
+        st.markdown('<div class="panel-divider"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">Debug</div>', unsafe_allow_html=True)
+        debug_rows = [
+            ("DATABASE_URL aanwezig", "JA" if bool(DATABASE_URL) else "NEE"),
+            ("Bitvavo API key aanwezig", "JA" if bool(API_KEY) else "NEE"),
+            ("Bitvavo API secret aanwezig", "JA" if bool(API_SECRET) else "NEE"),
+            ("experience_trades kolommen", str(len(get_table_columns("experience_trades")))),
+            ("experience_scoreboard kolommen", str(len(get_table_columns("experience_scoreboard")))),
+            ("pending_approvals kolommen", str(len(get_table_columns("pending_approvals")))),
+            ("Laatste fout", st.session_state.last_error_text or "-"),
+        ]
+        for label, value in debug_rows:
+            st.markdown(
+                f'<div class="info-row"><div class="info-left">{label}</div><div class="info-right">{value}</div></div>',
+                unsafe_allow_html=True,
+            )
+        if st.session_state.debug_events:
+            st.markdown('<div class="subtle" style="margin-top:10px;"><b>Debug events</b></div>', unsafe_allow_html=True)
+            for item in st.session_state.debug_events[:10]:
+                st.markdown(f'<div class="subtle">{item}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="panel-divider"></div>', unsafe_allow_html=True)
 
@@ -2002,6 +2066,7 @@ with shell_cols[1]:
                     <div class="chip">{safe_str(selected_trade.get("timeframe"), "-")}</div>
                     <div class="chip green">{safe_str(selected_trade.get("regime"), "-")}</div>
                     <div class="chip {'green' if outcome == 'WIN' else 'red' if outcome == 'LOSS' else 'yellow'}">{outcome}</div>
+                    <div class="chip blue">{trade_type}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -2106,23 +2171,28 @@ with shell_cols[1]:
             st.markdown('<div class="footspace"></div>', unsafe_allow_html=True)
 
             if st.session_state.hotkey_advanced_mode:
-                adv_cols = st.columns(6, gap="small")
+                adv_cols = st.columns(8, gap="small")
+                active_wr = float((pd.to_numeric(filtered_trade_df["pnl_r"], errors="coerce").fillna(0) > 0).mean() * 100.0) if not filtered_trade_df.empty else 0.0
+                expectancy_live = (winrate / 100.0 * 2.0) + ((1 - winrate / 100.0) * -1.0)
+                expectancy_sim = (sim_winrate / 100.0 * 2.0) + ((1 - sim_winrate / 100.0) * -1.0)
+                expectancy_shadow = (shadow_winrate / 100.0 * 2.0) + ((1 - shadow_winrate / 100.0) * -1.0)
                 with adv_cols[0]:
                     st.markdown(metric_card_html("Live Realized Profit", format_r(real_profit_r), "green"), unsafe_allow_html=True)
                 with adv_cols[1]:
                     avg_active = float(pd.to_numeric(filtered_trade_df["pnl_r"], errors="coerce").fillna(0).mean()) if not filtered_trade_df.empty else 0.0
                     st.markdown(metric_card_html("Average R", f"{avg_active:.2f} R", "blue"), unsafe_allow_html=True)
                 with adv_cols[2]:
-                    active_wr = float((pd.to_numeric(filtered_trade_df["pnl_r"], errors="coerce").fillna(0) > 0).mean() * 100.0) if not filtered_trade_df.empty else 0.0
                     st.markdown(metric_card_html(f"{active_tab_label(st.session_state.active_trade_tab)} Win Rate", pct_str(active_wr), "purple"), unsafe_allow_html=True)
                 with adv_cols[3]:
                     st.markdown(metric_card_html("History Simulator Win Rate", pct_str(sim_winrate), "blue"), unsafe_allow_html=True)
                 with adv_cols[4]:
-                    expectancy_r = (winrate / 100.0 * 2.0) + ((1 - winrate / 100.0) * -1.0)
-                    st.markdown(metric_card_html("Live Expectancy", f"{expectancy_r:.2f} R", "green"), unsafe_allow_html=True)
+                    st.markdown(metric_card_html("Shadow Win Rate", pct_str(shadow_winrate), "green"), unsafe_allow_html=True)
                 with adv_cols[5]:
-                    shadow_expectancy_r = (shadow_winrate / 100.0 * 2.0) + ((1 - shadow_winrate / 100.0) * -1.0)
-                    st.markdown(metric_card_html("Shadow Expectancy", f"{shadow_expectancy_r:.2f} R", "purple"), unsafe_allow_html=True)
+                    st.markdown(metric_card_html("Live Expectancy", f"{expectancy_live:.2f} R", "green"), unsafe_allow_html=True)
+                with adv_cols[6]:
+                    st.markdown(metric_card_html("SIM Expectancy", f"{expectancy_sim:.2f} R", "blue"), unsafe_allow_html=True)
+                with adv_cols[7]:
+                    st.markdown(metric_card_html("Shadow Expectancy", f"{expectancy_shadow:.2f} R", "purple"), unsafe_allow_html=True)
             else:
                 mini_cols = st.columns(4, gap="small")
                 with mini_cols[0]:
@@ -2318,6 +2388,7 @@ with st.expander("Volledige trade-geschiedenis / filters", expanded=False):
                 st.session_state.last_snapshot_refresh_msg = "Snapshot succesvol vernieuwd."
                 st.rerun()
             except Exception as e:
+                capture_exception("Nieuwe snapshot ophalen", e)
                 st.session_state.last_snapshot_refresh_msg = f"Snapshot refresh mislukt: {e}"
 
     with hist_toggle_cols[2]:
@@ -2389,9 +2460,9 @@ with st.expander("Volledige trade-geschiedenis / filters", expanded=False):
 hotkey_status = (
     f"Hotkeys | "
     f"W: volgende trade | "
-    f"D: PostgreSQL structuur {'AAN' if st.session_state.hotkey_show_pg_structure else 'UIT'} | "
+    f"D: debug + PostgreSQL structuur {'AAN' if st.session_state.hotkey_show_debug else 'UIT'} | "
     f"A: Advanced AI Mode {'AAN' if st.session_state.hotkey_advanced_mode else 'UIT'} | "
-    f"S: PostgreSQL uitleg {'AAN' if st.session_state.hotkey_show_pg_help else 'UIT'}"
+    f"S: uitlegblokken {'AAN' if st.session_state.hotkey_show_pg_help else 'UIT'}"
 )
 st.caption(hotkey_status)
 
@@ -2411,3 +2482,8 @@ st.caption(status_text)
 
 st.markdown("</div>", unsafe_allow_html=True)
 ```
+
+W ⚡ doorgaan met extra features
+D 🧠 fout debuggen op jouw app.py
+A 🚀 nog krachtigere advanced analytics
+S 📖 uitleg waarom iets niet werkt
