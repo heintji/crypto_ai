@@ -69,6 +69,8 @@ REAL_LIMIT = int(os.getenv("DASH_REAL_LIMIT", "400"))
 SIM_LIMIT = int(os.getenv("DASH_SIM_LIMIT", "400"))
 SHADOW_LIMIT = int(os.getenv("DASH_SHADOW_LIMIT", "400"))
 HISTORY_LIMIT = int(os.getenv("DASH_HISTORY_LIMIT", "100000"))
+PENDING_LIMIT = int(os.getenv("DASH_PENDING_LIMIT", "1000"))
+SCOREBOARD_LIMIT = int(os.getenv("DASH_SCOREBOARD_LIMIT", "500"))
 ASSET_LIMIT = int(os.getenv("DASH_ASSET_LIMIT", "20"))
 
 
@@ -1221,6 +1223,7 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
 
 
 
+
 @st.cache_data(ttl=25, show_spinner=False)
 def load_real_trades_db() -> pd.DataFrame:
     sql = build_experience_trades_sql("REAL", REAL_LIMIT)
@@ -1261,6 +1264,131 @@ def load_history_trades_db_raw() -> pd.DataFrame:
     return normalize_trade_df(run_df_query(sql))
 
 
+@st.cache_data(ttl=25, show_spinner=False)
+def load_pending_orders_db() -> pd.DataFrame:
+    cols = get_table_columns("pending_approvals")
+    if not cols:
+        return pd.DataFrame([])
+
+    def c(name: str, cast: str = "text") -> str:
+        return sql_col(cols, name, cast)
+
+    sql = f"""
+        SELECT
+            {c("id")} AS id,
+            COALESCE({c("symbol")}, {c("coin")}) AS symbol,
+            COALESCE({c("coin")}, {c("symbol")}) AS coin,
+            {c("status")} AS status,
+            {c("setup_type")} AS setup_type,
+            COALESCE({c("regime")}, {c("market_regime")}) AS regime,
+            COALESCE({c("market_regime")}, {c("regime")}) AS market_regime,
+            COALESCE({c("score", "double precision")}, 0) AS score,
+            COALESCE({c("chance", "double precision")}, 0) AS chance,
+            COALESCE({c("confidence", "double precision")}, 0) AS confidence,
+            {c("entry", "double precision")} AS entry,
+            {c("stop", "double precision")} AS stop,
+            {c("target", "double precision")} AS target,
+            COALESCE({c("timeframe")}, {c("entry_timeframe")}) AS timeframe,
+            COALESCE({c("entry_timeframe")}, {c("timeframe")}) AS entry_timeframe,
+            COALESCE({c("created_at", "timestamptz")}, {c("timestamp", "timestamptz")}) AS created_at,
+            {c("timestamp", "timestamptz")} AS timestamp,
+            {c("expires_at", "timestamptz")} AS expires_at
+        FROM public.pending_approvals
+        ORDER BY COALESCE({c("created_at", "timestamptz")}, {c("timestamp", "timestamptz")}) DESC NULLS LAST
+        LIMIT {PENDING_LIMIT}
+    """
+    df = run_df_query(sql)
+    if df.empty:
+        return df
+
+    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    for col in ["created_at", "timestamp", "expires_at"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+
+    return df
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_scoreboard_db() -> pd.DataFrame:
+    cols = get_table_columns("experience_scoreboard")
+    if not cols:
+        return pd.DataFrame([])
+
+    def c(name: str, cast: str = "text") -> str:
+        return sql_col(cols, name, cast)
+
+    regime_expr = (
+        'COALESCE("market_regime", "regime")'
+        if "market_regime" in cols and "regime" in cols
+        else '"market_regime"'
+        if "market_regime" in cols
+        else '"regime"'
+        if "regime" in cols
+        else "NULL::text"
+    )
+
+    sql = f"""
+        SELECT
+            {c("score_key")} AS score_key,
+            {c("setup_type")} AS setup_type,
+            {regime_expr} AS market_regime,
+            {c("grade")} AS grade,
+            COALESCE({c("n", "double precision")}, 0) AS n,
+            COALESCE({c("wins", "double precision")}, 0) AS wins,
+            COALESCE({c("losses", "double precision")}, 0) AS losses,
+            COALESCE({c("timeouts", "double precision")}, 0) AS timeouts,
+            COALESCE({c("win_rate", "double precision")}, 0) AS win_rate,
+            COALESCE({c("avg_mfe", "double precision")}, 0) AS avg_mfe,
+            COALESCE({c("avg_mae", "double precision")}, 0) AS avg_mae,
+            COALESCE({c("avg_time_minutes", "double precision")}, 0) AS avg_time_minutes,
+            {c("updated_at", "timestamptz")} AS updated_at
+        FROM public.experience_scoreboard
+        ORDER BY COALESCE({c("n", "double precision")}, 0) DESC NULLS LAST
+        LIMIT {SCOREBOARD_LIMIT}
+    """
+    df = run_df_query(sql)
+    if df.empty:
+        return df
+
+    for col in ["n", "wins", "losses", "timeouts", "win_rate", "avg_mfe", "avg_mae", "avg_time_minutes"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    if "updated_at" in df.columns:
+        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True)
+
+    return df
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_source_counts() -> pd.DataFrame:
+    cols = get_table_columns("experience_trades")
+    if not cols:
+        return pd.DataFrame([])
+
+    if "source" not in cols:
+        return pd.DataFrame([])
+
+    sql = """
+        SELECT
+            CASE
+                WHEN UPPER(COALESCE(source, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
+                WHEN UPPER(COALESCE(source, '')) = 'SIM' THEN 'SIM'
+                WHEN UPPER(COALESCE(source, '')) = 'SHADOW' THEN 'SHADOW'
+                ELSE 'OTHER'
+            END AS source,
+            COUNT(*) AS n
+        FROM public.experience_trades
+        GROUP BY 1
+        ORDER BY n DESC
+    """
+    return run_df_query(sql)
+
+
 def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
     table_rows = table_count("experience_trades") if db_ready() else 0
 
@@ -1272,18 +1400,16 @@ def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
     frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
     combined = normalize_trade_df(pd.concat(frames, ignore_index=True)) if frames else empty_trade_df()
 
-    # Prefer the fullest DB dataset available
     if len(combined) > len(history_df):
         history_df = combined
 
     if history_df.empty and table_rows > 0:
         history_df = load_history_trades_db_raw()
 
-    if len(history_df) > 0:
+    if not history_df.empty:
         return real_df, sim_df, shadow_df, history_df, "DB_PRIORITY"
 
     if table_rows > 0:
-        # DB exists but app could not map rows correctly
         return real_df, sim_df, shadow_df, history_df, "DB_MAP_ISSUE"
 
     demo = demo_trades()
@@ -2383,146 +2509,6 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
 # ==========================================================
 # DATA LOAD
 # ==========================================================
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_pending_orders_db() -> pd.DataFrame:
-    cols = get_table_columns("pending_approvals")
-    if not cols:
-        return pd.DataFrame([])
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    sql = f"""
-        SELECT
-            {c("id")} AS id,
-            {c("symbol")} AS symbol,
-            {c("coin")} AS coin,
-            {c("status")} AS status,
-            {c("setup_type")} AS setup_type,
-            {c("regime")} AS regime,
-            {c("market_regime")} AS market_regime,
-            {c("score", "double precision")} AS score,
-            {c("chance", "double precision")} AS chance,
-            {c("confidence", "double precision")} AS confidence,
-            {c("entry", "double precision")} AS entry,
-            {c("stop", "double precision")} AS stop,
-            {c("target", "double precision")} AS target,
-            {c("timeframe")} AS timeframe,
-            {c("entry_timeframe")} AS entry_timeframe,
-            {c("created_at", "timestamptz")} AS created_at,
-            {c("timestamp", "timestamptz")} AS timestamp,
-            {c("expires_at", "timestamptz")} AS expires_at
-        FROM public.pending_approvals
-        ORDER BY COALESCE({c("created_at", "timestamptz")}, {c("timestamp", "timestamptz")}) DESC NULLS LAST
-        LIMIT {PENDING_LIMIT}
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return df
-
-    if "symbol" in df.columns and "coin" in df.columns:
-        df["symbol"] = df["symbol"].fillna(df["coin"])
-    elif "coin" in df.columns and "symbol" not in df.columns:
-        df["symbol"] = df["coin"]
-
-    if "regime" in df.columns and "market_regime" in df.columns:
-        df["regime"] = df["regime"].fillna(df["market_regime"])
-    elif "market_regime" in df.columns and "regime" not in df.columns:
-        df["regime"] = df["market_regime"]
-
-    if "timeframe" in df.columns and "entry_timeframe" in df.columns:
-        df["timeframe"] = df["timeframe"].fillna(df["entry_timeframe"])
-    elif "entry_timeframe" in df.columns and "timeframe" not in df.columns:
-        df["timeframe"] = df["entry_timeframe"]
-
-    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    for col in ["created_at", "timestamp", "expires_at"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_scoreboard_db() -> pd.DataFrame:
-    cols = get_table_columns("experience_scoreboard")
-    if not cols:
-        return pd.DataFrame([])
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    regime_expr = (
-        'COALESCE("market_regime", "regime")'
-        if "market_regime" in cols and "regime" in cols
-        else '"market_regime"'
-        if "market_regime" in cols
-        else '"regime"'
-        if "regime" in cols
-        else "NULL::text"
-    )
-
-    sql = f"""
-        SELECT
-            {c("score_key")} AS score_key,
-            {c("setup_type")} AS setup_type,
-            {regime_expr} AS market_regime,
-            {c("grade")} AS grade,
-            COALESCE({c("n", "double precision")}, 0) AS n,
-            COALESCE({c("wins", "double precision")}, 0) AS wins,
-            COALESCE({c("losses", "double precision")}, 0) AS losses,
-            COALESCE({c("timeouts", "double precision")}, 0) AS timeouts,
-            COALESCE({c("win_rate", "double precision")}, 0) AS win_rate,
-            COALESCE({c("avg_mfe", "double precision")}, 0) AS avg_mfe,
-            COALESCE({c("avg_mae", "double precision")}, 0) AS avg_mae,
-            COALESCE({c("avg_time_minutes", "double precision")}, 0) AS avg_time_minutes,
-            {c("updated_at", "timestamptz")} AS updated_at
-        FROM public.experience_scoreboard
-        ORDER BY COALESCE({c("n", "double precision")}, 0) DESC NULLS LAST
-        LIMIT {SCOREBOARD_LIMIT}
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return df
-
-    for col in ["n", "wins", "losses", "timeouts", "win_rate", "avg_mfe", "avg_mae", "avg_time_minutes"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    if "updated_at" in df.columns:
-        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True)
-
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_source_counts() -> pd.DataFrame:
-    cols = get_table_columns("experience_trades")
-    if not cols:
-        return pd.DataFrame([])
-
-    if "source" in cols:
-        sql = """
-            SELECT
-                CASE
-                    WHEN UPPER(COALESCE(source, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
-                    WHEN UPPER(COALESCE(source, '')) = 'SIM' THEN 'SIM'
-                    WHEN UPPER(COALESCE(source, '')) = 'SHADOW' THEN 'SHADOW'
-                    ELSE 'OTHER'
-                END AS source,
-                COUNT(*) AS n
-            FROM public.experience_trades
-            GROUP BY 1
-            ORDER BY n DESC
-        """
-        return run_df_query(sql)
-
-    return pd.DataFrame([])
-
 real_df, sim_df, shadow_df, history_df, source_mode = get_all_trade_data()
 snapshot, snapshot_mode = read_snapshot_with_fallback()
 assets_df = prepare_assets_df(snapshot)
