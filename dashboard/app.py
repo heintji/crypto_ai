@@ -1220,6 +1220,47 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
     """
 
 
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_real_trades_db() -> pd.DataFrame:
+    sql = build_experience_trades_sql("REAL", REAL_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_sim_trades_db() -> pd.DataFrame:
+    sql = build_experience_trades_sql("SIM", SIM_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_shadow_trades_db() -> pd.DataFrame:
+    sql = build_experience_trades_sql("SHADOW", SHADOW_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_history_trades_db() -> pd.DataFrame:
+    sql = build_experience_trades_sql("ALL", HISTORY_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_history_trades_db_raw() -> pd.DataFrame:
+    sql = build_experience_trades_sql("RAWALL", HISTORY_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
 def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
     table_rows = table_count("experience_trades") if db_ready() else 0
 
