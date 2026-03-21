@@ -2586,7 +2586,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
         ]:
             st.markdown(f'<div class="list-row"><div class="list-left">{label}</div><div class="list-right">{value}</div></div>', unsafe_allow_html=True)
 
-    st.plotly_chart(build_trade_detail_chart(row), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(build_trade_detail_chart(row), use_container_width=True, config={"displayModeBar": False}, key=f"trade_detail_{safe_str(row.get('trade_id', 'x'))}")
 
     st.markdown(
         f'<div class="trade-note"><b>Trade-analyse:</b> {trade_reason_text(row)}</div>',
@@ -2764,15 +2764,16 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
+                key="hero_trade_winrate_small",
             )
 
         st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss / 0 open</div>',
+            f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary["wins"])} win / {int(overall_trade_summary["losses"])} loss / 0 open</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
-            f'<div class="hero-note-muted">({int(overall_trade_summary['count'])} Opp ({int(overall_trade_summary['count'])} afgehandeld))</div>',
+            f'<div class="hero-note-muted">({int(overall_trade_summary["count"])} opp / {int(overall_trade_summary["count"])} afgehandeld)</div>',
             unsafe_allow_html=True,
         )
 
@@ -2781,7 +2782,7 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
         mini2_left, mini2_right = st.columns([0.56, 0.44], gap="small")
         with mini2_left:
             st.markdown('<div class="hero-title-small"><span class="green">Euro</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="hero-small-number">{format_money(euro_sim5_summary['total_eur'])}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="hero-small-number">{format_money(euro_sim5_summary["total_eur"])}</div>', unsafe_allow_html=True)
             st.markdown('<div class="hero-small-label">Rate Win Rate</div>', unsafe_allow_html=True)
         with mini2_right:
             st.plotly_chart(
@@ -2793,27 +2794,29 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
+                key="hero_euro_winrate_small",
             )
 
         st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="hero-note"><span style="color:#34d399;">●</span> {format_money(euro_sim5_summary['gross_profit_eur'])} / {format_money(euro_sim5_summary['gross_loss_eur'])} / €0</div>',
+            f'<div class="hero-note"><span style="color:#34d399;">●</span> {format_money(euro_sim5_summary["gross_profit_eur"])} / {format_money(euro_sim5_summary["gross_loss_eur"])} / €0</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
-            f'<div class="hero-note-muted">({int(overall_trade_summary['count'])}0 afgehandeld)</div>',
+            f'<div class="hero-note-muted">({int(overall_trade_summary["count"])} afgehandeld)</div>',
             unsafe_allow_html=True,
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
     with main_col:
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="hero-main-amount">{format_money(real_money_summary['net_eur'])}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero-main-amount">{format_money(real_money_summary["net_eur"])}</div>', unsafe_allow_html=True)
         st.markdown('<div class="hero-main-label">Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
             chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
             use_container_width=True,
             config={"displayModeBar": False},
+            key="hero_real_performance_big",
         )
         st.markdown('</div>', unsafe_allow_html=True)
 
@@ -2825,17 +2828,15 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
         st.markdown('<div class="hero-stats-head">STATISTIEKEN</div>', unsafe_allow_html=True)
 
         rows = [
-            ("Aantal trade", str(int(real_money_summary.get("count", 0))), ""),
-            ("Win Trades", f'{safe_float(real_money_summary.get("winrate", 0.0)):.1f}%', ""),
-            ("Verlies Trades", f'{safe_float(real_money_summary.get("lossrate", 0.0)):.1f}%', ""),
-            ("Real Performance)", format_money(real_money_summary.get("gross_profit_eur", 0.0)), ""),
-            ("Aantal echte trades", str(int(real_money_summary.get("count", 0))), f'{safe_float(real_money_summary.get("winrate", 0.0)):.0f}%'),
+            ("Aantal echte trades", str(int(real_money_summary.get("count", 0))), ""),
             ("Win Trades", str(int(real_money_summary.get("wins", 0))), f'{safe_float(real_money_summary.get("winrate", 0.0)):.1f}%'),
             ("Verlies Trades", str(int(real_money_summary.get("losses", 0))), f'{safe_float(real_money_summary.get("lossrate", 0.0)):.1f}%'),
+            ("Totale Winst", format_money(real_money_summary.get("gross_profit_eur", 0.0)), ""),
             ("Totale Verlies", format_money(real_money_summary.get("gross_loss_eur", 0.0)), ""),
+            ("Netto Resultaat", format_money(real_money_summary.get("net_eur", 0.0)), ""),
         ]
         for label, value, badge in rows:
-            badge_cls = "green" if ("Win" in label or label == "Aantal echte trades") else "red"
+            badge_cls = "green" if ("Win" in label or label == "Aantal echte trades" or label == "Netto Resultaat") else "red"
             badge_html = f'<span class="hero-stat-badge {badge_cls}">{badge}</span>' if badge else ""
             st.markdown(
                 f'<div class="hero-stat-row"><div class="hero-stat-label">{label}</div><div class="hero-stat-value">{value}{badge_html}</div></div>',
@@ -2868,13 +2869,13 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     with tab_overview:
         row1_left, row1_right = st.columns([1.45, 1.0], gap="small")
         with row1_left:
-            st.plotly_chart(chart_equity_curve(filtered, "Equity Curve"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_equity_curve(filtered, "Equity Curve"), use_container_width=True, config={"displayModeBar": False}, key="overview_equity_curve")
         with row1_right:
-            st.plotly_chart(chart_win_loss(filtered, "Win / Loss Verdeling"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_win_loss(filtered, "Win / Loss Verdeling"), use_container_width=True, config={"displayModeBar": False}, key="overview_win_loss")
 
         row2_left, row2_right = st.columns([1.05, 1.0], gap="small")
         with row2_left:
-            st.plotly_chart(chart_setup_performance(filtered, "Setup Performance"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_setup_performance(filtered, "Setup Performance"), use_container_width=True, config={"displayModeBar": False}, key="overview_setup_performance")
         with row2_right:
             best_setup = "-"
             if not scoreboard_df.empty and "setup_type" in scoreboard_df.columns:
@@ -2904,15 +2905,15 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     with tab_analytics:
         a1, a2 = st.columns([1.0, 1.0], gap="small")
         with a1:
-            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R"), use_container_width=True, config={"displayModeBar": False}, key="analytics_daily_r")
         with a2:
-            st.plotly_chart(chart_trade_timeline(filtered, "Trade Timeline"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_trade_timeline(filtered, "Trade Timeline"), use_container_width=True, config={"displayModeBar": False}, key="analytics_trade_timeline")
 
         b1, b2 = st.columns([1.0, 1.0], gap="small")
         with b1:
-            st.plotly_chart(chart_source_distribution(filtered, "Bronverdeling in selectie"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_source_distribution(filtered, "Bronverdeling in selectie"), use_container_width=True, config={"displayModeBar": False}, key="analytics_source_distribution")
         with b2:
-            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R (detail)"), use_container_width=True, config={"displayModeBar": False})
+            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R (detail)"), use_container_width=True, config={"displayModeBar": False}, key="analytics_daily_r_detail")
 
     with tab_tapelist:
         t1, t2 = st.columns([1.15, 0.95], gap="small")
@@ -2956,9 +2957,9 @@ def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool
 
     chart_left, chart_right = st.columns([1.4, 1.0], gap="small")
     with chart_left:
-        st.plotly_chart(chart_equity_curve(filtered, f"{title_map.get(page_name, 'Trades')} Equity Curve"), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(chart_equity_curve(filtered, f"{title_map.get(page_name, 'Trades')} Equity Curve"), use_container_width=True, config={"displayModeBar": False}, key=f"{page_name}_equity_curve")
     with chart_right:
-        st.plotly_chart(chart_win_loss(filtered, f"{title_map.get(page_name, 'Trades')} Win/Loss"), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(chart_win_loss(filtered, f"{title_map.get(page_name, 'Trades')} Win/Loss"), use_container_width=True, config={"displayModeBar": False}, key=f"{page_name}_win_loss")
 
     lower_left, lower_right = st.columns([1.2, 1.0], gap="small")
     with lower_left:
@@ -2968,7 +2969,7 @@ def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool
         render_trade_detail(selected)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.plotly_chart(chart_setup_performance(filtered, f"{title_map.get(page_name, 'Trades')} Setup Performance"), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(chart_setup_performance(filtered, f"{title_map.get(page_name, 'Trades')} Setup Performance"), use_container_width=True, config={"displayModeBar": False}, key=f"{page_name}_setup_performance")
 
     display_cols = [c for c in ["trade_id", "symbol", "trade_type", "setup_type", "regime", "timeframe", "outcome", "pnl_r", "score", "chance", "confidence", "datetime"] if c in filtered.columns]
     if display_cols:
@@ -3006,7 +3007,7 @@ def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snapshot_mode
 
     top_left, top_right = st.columns([1.08, 0.92], gap="small")
     with top_left:
-        st.plotly_chart(chart_portfolio_allocation(holdings_df, "Portfolio Allocation"), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(chart_portfolio_allocation(holdings_df, "Portfolio Allocation"), use_container_width=True, config={"displayModeBar": False}, key="portfolio_allocation")
     with top_right:
         st.markdown('<div class="panel-tight">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Snapshot status</div>', unsafe_allow_html=True)
@@ -3233,53 +3234,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.62, 0.62, 0.88], gap="small")
-with metric_cols[0]:
-    st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
-with metric_cols[1]:
-    st.markdown(metric_card_html("Available EUR Balance", format_money(eur_available), "green"), unsafe_allow_html=True)
-with metric_cols[2]:
-    st.markdown(metric_card_html("Live Realized Profit", format_r(live_summary["total_r"]), "green"), unsafe_allow_html=True)
-with metric_cols[3]:
-    st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
-with metric_cols[4]:
-    st.plotly_chart(
-        render_donut(
-            safe_float(overall_trade_summary["winrate"], 0.0),
-            "Trade Win Rate",
-            "#34d399",
-            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss",
-            height=118,
-        ),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-with metric_cols[5]:
-    st.plotly_chart(
-        render_donut(
-            safe_float(euro_sim5_summary["money_winrate"], 0.0),
-            "Euro Win Rate",
-            "#60a5fa",
-            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade",
-            height=118,
-        ),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-with metric_cols[6]:
-    st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
-
-combined_row = st.columns([0.42, 1.35, 0.95], gap="small")
-with combined_row[1]:
-    st.plotly_chart(
-        chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-with combined_row[2]:
-    render_real_stats_panel(real_money_summary)
-
-st.caption("Bovenste kleine donuts: links = algemene winrate over alle gesloten trades. Midden = euro-simulatie over alle gesloten trades met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
 
 # ==========================================================
 # MAIN LAYOUT
