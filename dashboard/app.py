@@ -287,6 +287,192 @@ st.markdown(
             margin-bottom: 12px;
         }
 
+        
+        .top-hero-grid {
+            display:grid;
+            grid-template-columns: 0.92fr 1.9fr 1.0fr;
+            gap: 18px;
+            align-items: stretch;
+            margin-top: 10px;
+            margin-bottom: 18px;
+        }
+        .top-left-stack {
+            display:flex;
+            flex-direction:column;
+            gap:16px;
+            height:100%;
+        }
+        .top-mini-card, .top-main-card, .top-stats-panel {
+            background:
+                radial-gradient(circle at top center, rgba(83,19,80,0.18), rgba(0,0,0,0) 42%),
+                linear-gradient(180deg, rgba(10,13,22,0.98), rgba(8,11,18,0.98));
+            border:1px solid rgba(255,255,255,0.07);
+            border-radius:22px;
+            box-shadow: 0 18px 45px rgba(0,0,0,0.28);
+            position: relative;
+            overflow: hidden;
+        }
+        .top-mini-card::before, .top-main-card::before, .top-stats-panel::before {
+            content:'';
+            position:absolute;
+            inset:0;
+            border-radius:22px;
+            pointer-events:none;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+        .top-mini-card { padding: 18px; min-height: 254px; }
+        .top-main-card { padding: 20px 20px 10px 20px; min-height: 520px; }
+        .top-main-card::after {
+            content:'';
+            position:absolute;
+            left:10%;
+            right:10%;
+            top:8%;
+            height:110px;
+            border-radius:999px;
+            background: radial-gradient(circle, rgba(239,68,68,0.18) 0%, rgba(239,68,68,0.06) 32%, rgba(0,0,0,0) 72%);
+            filter: blur(16px);
+            pointer-events:none;
+        }
+        .top-stats-panel { padding: 18px; min-height: 520px; }
+        .mini-title {
+            font-size: 19px;
+            font-weight: 900;
+            margin-bottom: 10px;
+            color:#ffffff;
+        }
+        .mini-title .green { color:#34d399; }
+        .mini-title .red { color:#ef4444; }
+        .top-main-caption {
+            font-size: 34px;
+            line-height: 1;
+            font-weight: 900;
+            color:#ffffff;
+            margin-bottom:8px;
+        }
+        .top-main-kicker {
+            font-size: 18px;
+            color:#ffffff;
+            margin-bottom: 10px;
+        }
+        .top-legend {
+            display:flex;
+            align-items:center;
+            gap:28px;
+            justify-content:center;
+            margin-top: -8px;
+            margin-bottom: 8px;
+            color:#ffffff;
+            font-size:15px;
+            font-weight:800;
+        }
+        .top-legend-dot {
+            display:inline-block;
+            width:12px;
+            height:12px;
+            border-radius:50%;
+            margin-right:8px;
+            box-shadow: 0 0 12px rgba(255,255,255,0.18);
+        }
+        .dominance-pill {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:10px 16px;
+            border-radius:999px;
+            font-size:14px;
+            font-weight:900;
+            letter-spacing:0.02em;
+            margin-bottom:16px;
+            border:1px solid rgba(255,255,255,0.10);
+            width: fit-content;
+        }
+        .dominance-pill.red {
+            color:#ffffff;
+            background: linear-gradient(90deg, rgba(127, 29, 29, 0.35), rgba(239,68,68,0.12));
+            box-shadow: 0 0 24px rgba(239,68,68,0.18);
+        }
+        .dominance-pill.green {
+            color:#ffffff;
+            background: linear-gradient(90deg, rgba(6, 78, 59, 0.35), rgba(52,211,153,0.12));
+            box-shadow: 0 0 24px rgba(52,211,153,0.18);
+        }
+
+        .mini-kicker {
+            font-size: 13px;
+            color:#cbd5e1;
+            margin-top:-4px;
+            margin-bottom:8px;
+        }
+        .stats-row {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding: 11px 0;
+            border-bottom:1px solid rgba(255,255,255,0.06);
+        }
+        .stats-label {
+            color:#e2e8f0;
+            font-size:15px;
+            font-weight:700;
+        }
+        .stats-value {
+            color:#ffffff;
+            font-size:15px;
+            font-weight:900;
+            text-align:right;
+        }
+        .metric-badge {
+            display:inline-flex;
+            margin-left:10px;
+            padding:4px 9px;
+            border-radius:999px;
+            background: rgba(255,255,255,0.08);
+            font-size: 12px;
+            font-weight: 900;
+            color:#f8fafc;
+        }
+        .top-legend {
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            gap:26px;
+            margin-top:8px;
+            margin-bottom:4px;
+            color:#f8fafc;
+            font-size:14px;
+            font-weight:800;
+        }
+        .top-legend-dot {
+            display:inline-block;
+            width:12px;
+            height:12px;
+            border-radius:999px;
+            margin-right:8px;
+        }
+        .dominance-pill {
+            display:inline-flex;
+            align-items:center;
+            padding:8px 14px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:900;
+            letter-spacing:0.03em;
+            margin-bottom:16px;
+        }
+        .dominance-pill.green {
+            color:#34d399;
+            background: rgba(52,211,153,0.12);
+            border:1px solid rgba(52,211,153,0.32);
+            box-shadow: 0 0 18px rgba(52,211,153,0.10);
+        }
+        .dominance-pill.red {
+            color:#ef4444;
+            background: rgba(239,68,68,0.12);
+            border:1px solid rgba(239,68,68,0.32);
+            box-shadow: 0 0 18px rgba(239,68,68,0.12);
+        }
+
         .small-muted {
             color: var(--muted);
             font-size: 12px;
@@ -739,148 +925,35 @@ def get_status_badge(status: str) -> str:
     return f'<span class="status-bad">{status_u}</span>'
 
 
-def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 160) -> go.Figure:
+def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 210) -> go.Figure:
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
     loss_value = max(0.0, 100.0 - value)
-
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                values=[value, loss_value],
-                labels=["Win", "Loss"],
-                hole=0.78,
-                sort=False,
-                direction="clockwise",
-                rotation=270,
-                textinfo="none",
-                marker=dict(
-                    colors=["#34d399", "#ef4444"],
-                    line=dict(color="rgba(255,255,255,0)", width=0),
-                ),
-                showlegend=False,
-            )
-        ]
-    )
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=height,
-        width=height,
-        showlegend=False,
-        annotations=[
-            dict(
-                text=f"<b>{value:.1f}%</b>",
-                x=0.5,
-                y=0.60,
-                showarrow=False,
-                font=dict(color="#ffffff", size=24),
-            ),
-            dict(
-                text=f"<span style='font-size:13px;color:#ffffff;font-weight:800'>{title}</span>",
-                x=0.5,
-                y=0.41,
-                showarrow=False,
-                font=dict(color="#ffffff", size=13),
-            ),
-            dict(
-                text=f"<span style='font-size:11px;color:#cbd5e1'>{subtitle}</span>" if subtitle else "",
-                x=0.5,
-                y=0.24,
-                showarrow=False,
-                font=dict(color="#cbd5e1", size=11),
-            ),
-        ],
-    )
-    return fig
-
-def render_win_loss_donut(win_pct: float, loss_pct: float, net_eur: float) -> go.Figure:
-    win_pct = max(0.0, min(100.0, safe_float(win_pct, 0.0)))
-    loss_pct = max(0.0, min(100.0, safe_float(loss_pct, 0.0)))
-    total = win_pct + loss_pct
-    if total <= 0:
-        win_pct = 0.0
-        loss_pct = 100.0
-    else:
-        scale = 100.0 / total
-        win_pct *= scale
-        loss_pct *= scale
-
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                values=[win_pct, loss_pct],
-                labels=["Win", "Loss"],
-                hole=0.78,
-                sort=False,
-                direction="clockwise",
-                rotation=270,
-                textinfo="none",
-                marker=dict(
-                    colors=["#34d399", "#ef4444"],
-                    line=dict(color="rgba(255,255,255,0)", width=0),
-                ),
-                showlegend=False,
-            )
-        ]
-    )
-
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=182,
-        showlegend=False,
-        annotations=[
-            dict(
-                text=f"<b>{win_pct:.1f}%</b>",
-                x=0.5,
-                y=0.60,
-                showarrow=False,
-                font=dict(color="#ffffff", size=24),
-            ),
-            dict(
-                text="<span style='font-size:14px;color:#dbe4f0;font-weight:700'>Win Rate</span>",
-                x=0.5,
-                y=0.43,
-                showarrow=False,
-                font=dict(color="#dbe4f0", size=14),
-            ),
-            dict(
-                text=f"<span style='font-size:14px;color:#ffffff'><b>{format_money(net_eur)}</b></span>",
-                x=0.5,
-                y=0.29,
-                showarrow=False,
-                font=dict(color="#ffffff", size=14),
-            ),
-        ],
-    )
-    return fig
-
-
-
-def downsample_dataframe(df: pd.DataFrame, max_points: int = 1200) -> pd.DataFrame:
-    if df.empty or len(df) <= max_points:
-        return df
-    step = max(1, math.ceil(len(df) / max_points))
-    return df.iloc[::step].copy()
-
-
-def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Performance") -> go.Figure:
-    summary = real_trade_money_summary(df)
-    win_pct = safe_float(summary["winrate"], 0.0)
-    loss_pct = safe_float(summary["lossrate"], 0.0)
-    net_eur = safe_float(summary["net_eur"], 0.0)
-    dominant = safe_str(summary["dominant"], "red")
-    glow_rgb = "52,211,153" if dominant == "green" else "239,68,68"
+    dominant_red = loss_value > value
+    glow_rgb = "239,68,68" if dominant_red else "52,211,153"
 
     fig = go.Figure()
+    # soft outer glow ring
     fig.add_trace(
         go.Pie(
-            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
+            values=[max(value, 0.0001), max(loss_value, 0.0001)],
+            hole=0.62,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(
+                colors=[f"rgba({glow_rgb},0.18)", f"rgba({glow_rgb},0.06)"],
+                line=dict(color="rgba(255,255,255,0)", width=0),
+            ),
+            showlegend=False,
+        )
+    )
+    # actual ring
+    fig.add_trace(
+        go.Pie(
+            values=[max(value, 0.0001), max(loss_value, 0.0001)],
             labels=["Win", "Loss"],
-            hole=0.79,
+            hole=0.76,
             sort=False,
             direction="clockwise",
             rotation=270,
@@ -892,988 +965,169 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
             showlegend=False,
         )
     )
+
+    annotations = [
+        dict(text=f"<b>{value:.1f}%</b>", x=0.5, y=0.60, showarrow=False, font=dict(color="#ffffff", size=24)),
+        dict(text=f"<span style='font-size:14px;color:#ffffff'><b>{title}</b></span>", x=0.5, y=0.41, showarrow=False, font=dict(color="#ffffff", size=14)),
+    ]
+    if subtitle:
+        annotations.append(dict(text=f"<span style='font-size:11px;color:#cbd5e1'>{subtitle}</span>", x=0.5, y=0.23, showarrow=False, font=dict(color="#cbd5e1", size=11)))
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=440,
-        width=440,
-        margin=dict(l=2, r=2, t=2, b=2),
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=height,
+        width=height,
+        showlegend=False,
+        annotations=annotations,
+    )
+    return fig
+
+
+def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Performance") -> go.Figure:
+    summary = real_trade_money_summary(df)
+    win_pct = safe_float(summary["winrate"], 0.0)
+    loss_pct = safe_float(summary["lossrate"], 0.0)
+    net_eur = safe_float(summary["net_eur"], 0.0)
+    dominant = safe_str(summary["dominant"], "red")
+
+    is_win_dominant = dominant == "green"
+    dominant_glow = "52,211,153" if is_win_dominant else "239,68,68"
+    secondary_glow = "239,68,68" if is_win_dominant else "52,211,153"
+
+    fig = go.Figure()
+
+    # Soft outer halo with dominant glow clearly stronger than the secondary side
+    fig.add_trace(
+        go.Pie(
+            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
+            hole=0.56,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(
+                colors=[
+                    f"rgba({dominant_glow},0.34)",
+                    f"rgba({secondary_glow},0.08)",
+                ],
+                line=dict(color="rgba(255,255,255,0)", width=0),
+            ),
+            showlegend=False,
+        )
+    )
+
+    # Main visible ring stays green/red
+    fig.add_trace(
+        go.Pie(
+            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
+            labels=["Win", "Loss"],
+            hole=0.78,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(
+                colors=["#34d399", "#ef4444"],
+                line=dict(color="rgba(255,255,255,0)", width=0),
+            ),
+            showlegend=False,
+        )
+    )
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        width=700,
+        height=620,
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
         annotations=[
-            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.62, showarrow=False, font=dict(color="#ffffff", size=38)),
-            dict(text="<span style='font-size:18px;color:#ffffff;font-weight:800'>Win Rate</span>", x=0.5, y=0.46, showarrow=False, font=dict(color="#ffffff", size=18)),
-            dict(text=f"<span style='font-size:26px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.31, showarrow=False, font=dict(color="#ffffff", size=26)),
-            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.18, showarrow=False, font=dict(color="#94a3b8", size=12)),
+            dict(
+                text=f"<b>{format_money(net_eur)}</b>",
+                x=0.5,
+                y=0.63,
+                showarrow=False,
+                font=dict(color="#ffffff", size=38),
+            ),
+            dict(
+                text="<span style='font-size:22px;color:#ffffff'>Win Rate</span>",
+                x=0.5,
+                y=0.48,
+                showarrow=False,
+                font=dict(color="#ffffff", size=22),
+            ),
+            dict(
+                text=f"<span style='font-size:20px;color:#ffffff'><b>{win_pct:.1f}%</b></span>",
+                x=0.5,
+                y=0.34,
+                showarrow=False,
+                font=dict(color="#ffffff", size=20),
+            ),
+            dict(
+                text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>",
+                x=0.5,
+                y=0.20,
+                showarrow=False,
+                font=dict(color="#94a3b8", size=12),
+            ),
         ],
         shapes=[
-            dict(type="circle", xref="paper", yref="paper", x0=0.08, y0=0.08, x1=0.92, y1=0.92, line=dict(color=f"rgba({glow_rgb},0.26)", width=18)),
-            dict(type="circle", xref="paper", yref="paper", x0=0.13, y0=0.13, x1=0.87, y1=0.87, line=dict(color=f"rgba({glow_rgb},0.12)", width=8)),
+            dict(
+                type="line",
+                xref="paper",
+                yref="paper",
+                x0=0.30,
+                x1=0.70,
+                y0=0.43,
+                y1=0.43,
+                line=dict(color=f"rgba({dominant_glow},0.90)", width=3),
+            ),
+            dict(
+                type="circle",
+                xref="paper",
+                yref="paper",
+                x0=0.08,
+                y0=0.08,
+                x1=0.92,
+                y1=0.92,
+                line=dict(color=f"rgba({dominant_glow},0.38)", width=24),
+            ),
+            dict(
+                type="circle",
+                xref="paper",
+                yref="paper",
+                x0=0.14,
+                y0=0.14,
+                x1=0.86,
+                y1=0.86,
+                line=dict(color=f"rgba({dominant_glow},0.14)", width=12),
+            ),
         ],
     )
     return fig
 
-def prepare_portfolio_table(assets_df: pd.DataFrame, total_portfolio_eur: float) -> pd.DataFrame:
-    if assets_df.empty:
-        return pd.DataFrame([])
-    work = assets_df.copy()
-    work = work[work["symbol"] != "EUR"].copy()
-    if work.empty:
-        return pd.DataFrame([])
-    total_base = max(float(total_portfolio_eur), 1e-9)
-    work["share_pct"] = (pd.to_numeric(work["eur_value"], errors="coerce").fillna(0.0) / total_base) * 100.0
-    return work.sort_values("eur_value", ascending=False).reset_index(drop=True)
-
-def trade_reason_text(row: pd.Series) -> str:
-    trade_type = safe_str(row.get("trade_type")).upper()
-    outcome = safe_str(row.get("outcome")).upper()
-    setup = safe_str(row.get("setup_type"), "-")
-    regime = safe_str(row.get("regime"), "-")
-    symbol = safe_str(row.get("symbol"), "-")
-    pnl = safe_float(row.get("pnl_r"), 0.0)
-    pnl_txt = format_compact_r(pnl)
-
-    if trade_type == "SHADOW":
-        if outcome == "WIN":
-            return (
-                f"Deze shadow trade laat zien dat {symbol} binnen setup '{setup}' en regime '{regime}' "
-                f"waarschijnlijk een gemiste kans was. Het resultaat van {pnl_txt} suggereert dat dit type signaal "
-                f"in vergelijkbare contexten mogelijk minder streng gefilterd moet worden."
-            )
-        if outcome == "LOSS":
-            return (
-                f"Deze shadow trade bevestigt dat het overslaan van {symbol} binnen setup '{setup}' en regime '{regime}' "
-                f"waarschijnlijk de juiste beslissing was. Het niet uitvoeren voorkwam mogelijk een resultaat van {pnl_txt}."
-            )
-        return (
-            f"Deze shadow trade voor {symbol} geeft aanvullende context rond setup '{setup}' binnen regime '{regime}'. "
-            f"Gebruik dit als kwalitatieve feedback bij het aanscherpen van je filters."
-        )
-
-    if trade_type == "SIM":
-        if outcome == "WIN":
-            return (
-                f"De simulator beoordeelt deze {symbol}-trade positief. Binnen setup '{setup}' en regime '{regime}' "
-                f"liet het patroon historisch een uitkomst van {pnl_txt} zien. Dat vergroot vertrouwen in de setup, "
-                f"maar blijft simulatie en geen live bevestiging."
-            )
-        if outcome == "LOSS":
-            return (
-                f"De simulator toont hier zwakte voor {symbol} binnen setup '{setup}' en regime '{regime}'. "
-                f"Het resultaat van {pnl_txt} suggereert dat dit patroon extra selectiviteit vraagt voor live gebruik."
-            )
-        return (
-            f"De simulator geeft aanvullende historische context voor {symbol} binnen setup '{setup}'. "
-            f"Zie dit als ondersteunende data voor patroonherkenning."
-        )
-
-    if outcome == "WIN":
-        return (
-            f"Dit is een live trade op {symbol} die positief is gesloten met {pnl_txt}. De combinatie van setup '{setup}' "
-            f"en regime '{regime}' werkte in echte marktomstandigheden. Dit valideert niet alleen het signaal, maar ook "
-            f"je uitvoering, timing en discipline."
-        )
-
-    if outcome == "LOSS":
-        return (
-            f"Dit is een live trade op {symbol} die eindigde op {pnl_txt}. Binnen setup '{setup}' en regime '{regime}' "
-            f"geeft deze uitkomst belangrijke feedback over zwakkere marktomstandigheden, timing of filterkwaliteit."
-        )
-
-    return (
-        f"Dit is een trade op {symbol} binnen setup '{setup}' en regime '{regime}', maar zonder duidelijke win/loss-uitkomst. "
-        f"Gebruik dit vooral als operationele context bij de evaluatie van je systeem."
-    )
-
-
-# ==========================================================
-# DEMO / FALLBACK DATA
-# ==========================================================
-def demo_trades() -> pd.DataFrame:
-    rows = [
-        {"trade_id": "r1", "symbol": "BTCUSDT", "setup_type": "BREAKOUT", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 84, "raw_score": 84, "chance": 77, "confidence": 82, "entry": 67200, "stop": 66500, "target": 68800, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-15T09:10:00Z", "closed_at": "2026-03-15T13:40:00Z"},
-        {"trade_id": "r2", "symbol": "ETHUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "4H", "regime": "BULL", "label": "B", "score": 73, "raw_score": 73, "chance": 69, "confidence": 70, "entry": 3550, "stop": 3488, "target": 3660, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-16T08:20:00Z", "closed_at": "2026-03-16T11:15:00Z"},
-        {"trade_id": "r3", "symbol": "DOGEUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 79, "raw_score": 79, "chance": 75, "confidence": 78, "entry": 0.212, "stop": 0.207, "target": 0.225, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-17T13:10:00Z", "closed_at": "2026-03-17T18:20:00Z"},
-        {"trade_id": "r4", "symbol": "XRPUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 66, "raw_score": 66, "chance": 63, "confidence": 65, "entry": 0.62, "stop": 0.605, "target": 0.655, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-18T09:10:00Z", "closed_at": "2026-03-18T12:05:00Z"},
-        {"trade_id": "s1", "symbol": "SOLUSDT", "setup_type": "BREAKOUT", "timeframe": "4H", "regime": "BULL", "label": "A", "score": 88, "raw_score": 88, "chance": 82, "confidence": 86, "entry": 168, "stop": 162, "target": 182, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-15T10:00:00Z", "closed_at": "2026-03-15T22:20:00Z"},
-        {"trade_id": "s2", "symbol": "AVAXUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 62, "raw_score": 62, "chance": 58, "confidence": 61, "entry": 39.1, "stop": 37.9, "target": 41.8, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-16T11:45:00Z", "closed_at": "2026-03-16T15:05:00Z"},
-        {"trade_id": "s3", "symbol": "FETUSDT", "setup_type": "BREAKOUT_RETEST", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 81, "raw_score": 81, "chance": 78, "confidence": 79, "entry": 2.19, "stop": 2.10, "target": 2.35, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-17T14:10:00Z", "closed_at": "2026-03-17T19:40:00Z"},
-        {"trade_id": "sh1", "symbol": "STORJUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "C", "score": 57, "raw_score": 57, "chance": 55, "confidence": 58, "entry": 0.79, "stop": 0.76, "target": 0.86, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-18T08:10:00Z", "closed_at": "2026-03-18T16:25:00Z"},
-        {"trade_id": "sh2", "symbol": "DOGEUSDT", "setup_type": "BREAKOUT", "timeframe": "15M", "regime": "CHOPPY", "label": "C", "score": 49, "raw_score": 49, "chance": 46, "confidence": 50, "entry": 0.204, "stop": 0.199, "target": 0.214, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-19T09:10:00Z", "closed_at": "2026-03-19T11:15:00Z"},
-    ]
-    return normalize_trade_df(pd.DataFrame(rows))
-
-
-def demo_snapshot() -> dict:
-    return {
-        "status": "DEMO",
-        "ts": now_iso(),
-        "eur_available": 100.04,
-        "crypto_assets_eur": 18.96,
-        "total_portfolio_eur": 119.00,
-        "assets": [
-            {"symbol": "BTC", "available": 0.00012, "inOrder": 0.0, "total": 0.00012, "price_eur": 62000.0, "eur_value": 7.44, "price_route": "BTC-EUR"},
-            {"symbol": "ETH", "available": 0.0023, "inOrder": 0.0, "total": 0.0023, "price_eur": 3200.0, "eur_value": 7.36, "price_route": "ETH-EUR"},
-            {"symbol": "DOGE", "available": 20.0, "inOrder": 0.0, "total": 20.0, "price_eur": 0.18, "eur_value": 3.60, "price_route": "DOGE-EUR"},
-            {"symbol": "EUR", "available": 100.04, "inOrder": 0.0, "total": 100.04, "price_eur": 1.0, "eur_value": 100.04, "price_route": "EUR"},
-            {"symbol": "SOL", "available": 0.02, "inOrder": 0.0, "total": 0.02, "price_eur": 28.0, "eur_value": 0.56, "price_route": "SOL-EUR"},
-        ],
-    }
-
-
-# ==========================================================
-# BITVAVO / SNAPSHOT
-# ==========================================================
-def bitvavo_request(method: str, path: str, body: str = "") -> Any:
-    if not API_KEY or not API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
-
-    method_u = method.upper()
-    timestamp = str(int(time.time() * 1000))
-    body = body or ""
-    message = f"{timestamp}{method_u}{path}{body}"
-    signature = hmac.new(
-        API_SECRET.encode("utf-8"),
-        message.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-
-    headers = {
-        "Bitvavo-Access-Key": API_KEY,
-        "Bitvavo-Access-Signature": signature,
-        "Bitvavo-Access-Timestamp": timestamp,
-        "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
-        "Content-Type": "application/json",
-    }
-    url = f"{BASE_URL}{path}"
-
-    if method_u == "GET":
-        response = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-    elif method_u == "POST":
-        response = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
-    else:
-        raise ValueError("Alleen GET en POST worden ondersteund.")
-
-    if response.status_code >= 400:
-        try:
-            payload = response.json()
-        except Exception:
-            payload = {"error": response.text}
-        raise RuntimeError(f"Bitvavo error {response.status_code}: {payload}")
-
-    return response.json()
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def fetch_all_market_prices() -> Dict[str, float]:
-    try:
-        response = requests.get(f"{BASE_URL}/v2/ticker/price", timeout=HTTP_TIMEOUT)
-        response.raise_for_status()
-        data = response.json()
-        prices: Dict[str, float] = {}
-        for row in data:
-            market = row.get("market")
-            price = row.get("price")
-            if market and price is not None:
-                try:
-                    prices[market] = float(price)
-                except Exception:
-                    pass
-        return prices
-    except Exception as exc:
-        capture_exception("fetch_all_market_prices", exc)
-        return {}
-
-
-def price_in_eur(symbol: str, prices: Dict[str, float]) -> Tuple[Optional[float], str]:
-    if symbol == "EUR":
-        return 1.0, "EUR"
-    direct = f"{symbol}-EUR"
-    if direct in prices:
-        return prices[direct], direct
-    a = f"{symbol}-USDT"
-    b = "USDT-EUR"
-    if a in prices and b in prices:
-        return prices[a] * prices[b], f"{a}*{b}"
-    a = f"{symbol}-BTC"
-    b = "BTC-EUR"
-    if a in prices and b in prices:
-        return prices[a] * prices[b], f"{a}*{b}"
-    return None, "NO_ROUTE"
-
-
-def build_snapshot_with_eur_values() -> dict:
-    balances = bitvavo_request("GET", "/v2/balance")
-    prices = fetch_all_market_prices()
-    assets: List[Dict[str, Any]] = []
-    eur_available = 0.0
-
-    for row in balances:
-        symbol = row.get("symbol")
-        available = safe_float(row.get("available"), 0.0)
-        in_order = safe_float(row.get("inOrder"), 0.0)
-        total = available + in_order
-
-        if symbol == "EUR":
-            eur_available = available
-
-        if total > 0:
-            p_eur, route = price_in_eur(symbol, prices)
-            eur_value = float(total) * float(p_eur) if p_eur is not None else None
-            assets.append(
-                {
-                    "symbol": symbol,
-                    "available": available,
-                    "inOrder": in_order,
-                    "total": total,
-                    "price_eur": p_eur,
-                    "eur_value": eur_value,
-                    "price_route": route,
-                }
-            )
-
-    crypto_assets_eur = sum(
-        safe_float(a.get("eur_value"), 0.0)
-        for a in assets
-        if a.get("symbol") != "EUR"
-    )
-    total_portfolio_eur = eur_available + crypto_assets_eur
-
-    snapshot = {
-        "status": "OK",
-        "ts": now_iso(),
-        "eur_available": eur_available,
-        "crypto_assets_eur": crypto_assets_eur,
-        "total_portfolio_eur": total_portfolio_eur,
-        "assets": sorted(assets, key=lambda x: (x.get("symbol") != "EUR", x.get("symbol", ""))),
-    }
-
-    ensure_parent_dir(SNAPSHOT_PATH)
-    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as handle:
-        json.dump(snapshot, handle, indent=2, ensure_ascii=False)
-
-    append_debug_event("Snapshot succesvol opgebouwd.")
-    return snapshot
-
-
-def read_snapshot_with_fallback() -> Tuple[dict, str]:
-    snapshot, err = safe_read_json(SNAPSHOT_PATH)
-    if snapshot is not None:
-        return snapshot, "SNAPSHOT"
-    if API_KEY and API_SECRET:
-        try:
-            snapshot = build_snapshot_with_eur_values()
-            return snapshot, "LIVE_API"
-        except Exception as exc:
-            capture_exception("build_snapshot_with_eur_values", exc)
-    return demo_snapshot(), "DEMO"
-
-
-# ==========================================================
-# DATABASE
-# ==========================================================
-def db_ready() -> bool:
-    return bool(DATABASE_URL)
-
-
-def get_db_conn():
-    if not DATABASE_URL:
-        return None
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        connect_timeout=DB_CONNECT_TIMEOUT,
-        options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
-    )
-
-
-def run_df_query(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
-    if not db_ready():
-        return pd.DataFrame([])
-    conn = None
-    try:
-        conn = get_db_conn()
-        if conn is None:
-            return pd.DataFrame([])
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql, params or ())
-                rows = cur.fetchall()
-                cols = [desc[0] for desc in cur.description]
-        return pd.DataFrame(rows, columns=cols)
-    except Exception as exc:
-        sql_preview = " ".join(str(sql).split())[:700]
-        capture_exception("run_df_query", Exception(f"{exc} | SQL: {sql_preview}"))
-        return pd.DataFrame([])
-    finally:
-        try:
-            if conn is not None:
-                conn.close()
-        except Exception:
-            pass
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def get_table_columns(table_name: str) -> List[str]:
-    if not db_ready():
-        return []
-    sql = """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = %s
-        ORDER BY ordinal_position
-    """
-    df = run_df_query(sql, (table_name,))
-    if df.empty or "column_name" not in df.columns:
-        return []
-    return [safe_str(x) for x in df["column_name"].tolist()]
-
-
-def has_columns(table_name: str) -> bool:
-    return len(get_table_columns(table_name)) > 0
-
-
-def sql_col(cols: List[str], name: str, cast: str = "text") -> str:
-    if name in cols:
-        return f'"{name}"'
-    return f"NULL::{cast}"
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def table_count(table_name: str) -> int:
-    if not has_columns(table_name):
-        return 0
-    df = run_df_query(f"SELECT COUNT(*) AS n FROM public.{table_name}")
-    if df.empty or "n" not in df.columns:
-        return 0
-    return safe_int(df.iloc[0]["n"], 0)
-
-
-def normalize_trade_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return empty_trade_df()
-
-    out = df.copy()
-
-    numeric_cols = ["score", "raw_score", "chance", "confidence", "entry", "stop", "target", "pnl_r", "pnl_eur"]
-    for col in numeric_cols:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
-        else:
-            out[col] = 0.0
-
-    for col in ["created_at", "closed_at"]:
-        if col in out.columns:
-            out[col] = pd.to_datetime(out[col], errors="coerce", utc=True)
-        else:
-            out[col] = pd.NaT
-
-    text_cols = ["trade_id", "symbol", "setup_type", "timeframe", "regime", "label", "outcome", "source", "trade_type"]
-    for col in text_cols:
-        if col not in out.columns:
-            out[col] = "-"
-        out[col] = out[col].fillna("-").astype(str)
-
-    if "is_shadow" not in out.columns:
-        out["is_shadow"] = False
-    out["is_shadow"] = out["is_shadow"].fillna(False)
-
-    out["trade_type"] = out["trade_type"].str.upper()
-    out["source"] = out["source"].str.upper()
-    out["outcome"] = out["outcome"].str.upper()
-
-    out["datetime_raw"] = out["closed_at"].where(~out["closed_at"].isna(), out["created_at"])
-    out["datetime"] = out["datetime_raw"].apply(format_dt_short)
-    out["entry_price"] = out["entry"]
-    out["exit_price"] = out["target"]
-    out["day"] = pd.to_datetime(out["datetime_raw"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d")
-    if "pnl_eur" not in out.columns:
-        out["pnl_eur"] = out["pnl_r"] * 25.0
-    out["pnl_eur"] = pd.to_numeric(out["pnl_eur"], errors="coerce").fillna(out["pnl_r"] * 25.0)
-    return out
-
-
-def build_experience_trades_sql(kind: str, limit: int) -> str:
-    cols = get_table_columns("experience_trades")
-    if not cols:
-        return ""
-
-    def first_existing(*names: str) -> Optional[str]:
-        for name in names:
-            if name in cols:
-                return name
-        return None
-
-    def txt_expr(*names: str) -> str:
-        name = first_existing(*names)
-        return f'"{name}"::text' if name else "NULL::text"
-
-    def num_expr(*names: str) -> str:
-        name = first_existing(*names)
-        return f'"{name}"::double precision' if name else "NULL::double precision"
-
-    def bool_expr(*names: str) -> str:
-        name = first_existing(*names)
-        return f'COALESCE("{name}", FALSE)' if name else "FALSE"
-
-    trade_id_expr = txt_expr("trade_key", "id")
-    symbol_expr = txt_expr("coin", "symbol")
-    timeframe_expr = txt_expr("entry_timeframe", "timeframe", "regime_timeframe")
-    regime_expr = txt_expr("market_regime", "regime")
-    label_expr = txt_expr("grade", "label")
-    setup_expr = txt_expr("setup_type")
-    outcome_expr = txt_expr("outcome")
-    source_expr = txt_expr("source")
-
-    created_candidates = [name for name in ["entry_time", "timestamp", "created_at"] if name in cols]
-    if created_candidates:
-        created_expr = "COALESCE(" + ", ".join([f'"{name}"' for name in created_candidates]) + ")"
-    else:
-        created_expr = "NULL::timestamptz"
-
-    closed_candidates = [name for name in ["exit_time", "closed_at"] if name in cols]
-    if closed_candidates:
-        closed_expr = "COALESCE(" + ", ".join([f'"{name}"' for name in closed_candidates]) + ")"
-    else:
-        closed_expr = "NULL::timestamptz"
-
-    entry_expr = num_expr("entry")
-    stop_expr = num_expr("stop")
-    target_expr = num_expr("target")
-    mfe_expr = num_expr("mfe")
-    mae_expr = num_expr("mae")
-    score_expr = num_expr("score", "bot_confidence", "confidence")
-    raw_score_expr = num_expr("raw_score", "score", "bot_confidence")
-    chance_expr = num_expr("chance")
-    confidence_expr = num_expr("confidence", "bot_confidence")
-    is_shadow_expr = bool_expr("is_shadow")
-
-    result_r_col = first_existing("result_r", "pnl_r", "r_multiple", "realized_r")
-    pnl_r_calc_expr = f'"{result_r_col}"::double precision' if result_r_col else "NULL::double precision"
-
-    pnl_eur_col = first_existing("pnl_eur", "result_eur", "realized_pnl_eur", "profit_eur", "net_pnl_eur", "realized_eur")
-    pnl_eur_calc_expr = f'"{pnl_eur_col}"::double precision' if pnl_eur_col else "NULL::double precision"
-
-    kind_u = kind.upper()
-    where = "1=1"
-    if "source" in cols:
-        if kind_u == "SIM":
-            where = "UPPER(COALESCE(source_calc, '')) = 'SIM'"
-        elif kind_u == "SHADOW":
-            where = "UPPER(COALESCE(source_calc, '')) = 'SHADOW'"
-        elif kind_u == "REAL":
-            where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW')"
-        elif kind_u in ("ALL", "RAWALL"):
-            where = "1=1"
-    elif "is_shadow" in cols:
-        if kind_u == "SHADOW":
-            where = "COALESCE(is_shadow_calc, FALSE) = TRUE"
-        elif kind_u == "REAL":
-            where = "COALESCE(is_shadow_calc, FALSE) = FALSE"
-        elif kind_u == "SIM":
-            where = "1=0"
-
-    order_expr = "COALESCE(closed_at, created_at) DESC NULLS LAST"
-
-    return f"""
-        WITH base AS (
-            SELECT
-                {trade_id_expr} AS trade_id,
-                {symbol_expr} AS symbol,
-                {setup_expr} AS setup_type,
-                {timeframe_expr} AS timeframe,
-                {regime_expr} AS regime,
-                {label_expr} AS label,
-                COALESCE({score_expr}, 0) AS score,
-                COALESCE({raw_score_expr}, 0) AS raw_score,
-                COALESCE({chance_expr}, 0) AS chance,
-                COALESCE({confidence_expr}, 0) AS confidence,
-                {entry_expr} AS entry,
-                {stop_expr} AS stop,
-                {target_expr} AS target,
-                {mfe_expr} AS mfe,
-                {mae_expr} AS mae,
-                {pnl_r_calc_expr} AS pnl_r_calc,
-                {pnl_eur_calc_expr} AS pnl_eur_calc,
-                {outcome_expr} AS outcome_calc,
-                {source_expr} AS source_calc,
-                {is_shadow_expr} AS is_shadow_calc,
-                {created_expr} AS created_at,
-                {closed_expr} AS closed_at
-            FROM public.experience_trades
-        )
-        SELECT
-            trade_id,
-            symbol,
-            setup_type,
-            timeframe,
-            regime,
-            label,
-            score,
-            raw_score,
-            chance,
-            confidence,
-            entry,
-            stop,
-            target,
-            mfe,
-            mae,
-            COALESCE(
-                pnl_r_calc,
-                CASE
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
-                    ELSE 0.0
-                END
-            ) AS pnl_r,
-            COALESCE(
-                pnl_eur_calc,
-                CASE
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 50.0
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -25.0
-                    ELSE 0.0
-                END
-            ) AS pnl_eur,
-            COALESCE(outcome_calc, 'UNKNOWN') AS outcome,
-            COALESCE(source_calc, 'UNKNOWN') AS source,
-            CASE
-                WHEN UPPER(COALESCE(source_calc, '')) = 'SIM' THEN 'SIM'
-                WHEN UPPER(COALESCE(source_calc, '')) = 'SHADOW' THEN 'SHADOW'
-                WHEN UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
-                WHEN COALESCE(is_shadow_calc, FALSE) THEN 'SHADOW'
-                ELSE 'OTHER'
-            END AS trade_type,
-            COALESCE(is_shadow_calc, FALSE) AS is_shadow,
-            created_at,
-            closed_at
-        FROM base
-        WHERE {where}
-        ORDER BY {order_expr}
-        LIMIT {int(limit)}
-    """
-
-
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_real_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("REAL", REAL_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_sim_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("SIM", SIM_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_shadow_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("SHADOW", SHADOW_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_history_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("ALL", HISTORY_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_history_trades_db_raw() -> pd.DataFrame:
-    sql = build_experience_trades_sql("RAWALL", HISTORY_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_pending_orders_db() -> pd.DataFrame:
-    cols = get_table_columns("pending_approvals")
-    if not cols:
-        return pd.DataFrame([])
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    sql = f"""
-        SELECT
-            {c("id")} AS id,
-            COALESCE({c("symbol")}, {c("coin")}) AS symbol,
-            COALESCE({c("coin")}, {c("symbol")}) AS coin,
-            {c("status")} AS status,
-            {c("setup_type")} AS setup_type,
-            COALESCE({c("regime")}, {c("market_regime")}) AS regime,
-            COALESCE({c("market_regime")}, {c("regime")}) AS market_regime,
-            COALESCE({c("score", "double precision")}, 0) AS score,
-            COALESCE({c("chance", "double precision")}, 0) AS chance,
-            COALESCE({c("confidence", "double precision")}, 0) AS confidence,
-            {c("entry", "double precision")} AS entry,
-            {c("stop", "double precision")} AS stop,
-            {c("target", "double precision")} AS target,
-            COALESCE({c("timeframe")}, {c("entry_timeframe")}) AS timeframe,
-            COALESCE({c("entry_timeframe")}, {c("timeframe")}) AS entry_timeframe,
-            COALESCE({c("created_at", "timestamptz")}, {c("timestamp", "timestamptz")}) AS created_at,
-            {c("timestamp", "timestamptz")} AS timestamp,
-            {c("expires_at", "timestamptz")} AS expires_at
-        FROM public.pending_approvals
-        ORDER BY COALESCE({c("created_at", "timestamptz")}, {c("timestamp", "timestamptz")}) DESC NULLS LAST
-        LIMIT {PENDING_LIMIT}
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return df
-
-    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    for col in ["created_at", "timestamp", "expires_at"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_scoreboard_db() -> pd.DataFrame:
-    cols = get_table_columns("experience_scoreboard")
-    if not cols:
-        return pd.DataFrame([])
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    regime_expr = (
-        'COALESCE("market_regime", "regime")'
-        if "market_regime" in cols and "regime" in cols
-        else '"market_regime"'
-        if "market_regime" in cols
-        else '"regime"'
-        if "regime" in cols
-        else "NULL::text"
-    )
-
-    sql = f"""
-        SELECT
-            {c("score_key")} AS score_key,
-            {c("setup_type")} AS setup_type,
-            {regime_expr} AS market_regime,
-            {c("grade")} AS grade,
-            COALESCE({c("n", "double precision")}, 0) AS n,
-            COALESCE({c("wins", "double precision")}, 0) AS wins,
-            COALESCE({c("losses", "double precision")}, 0) AS losses,
-            COALESCE({c("timeouts", "double precision")}, 0) AS timeouts,
-            COALESCE({c("win_rate", "double precision")}, 0) AS win_rate,
-            COALESCE({c("avg_mfe", "double precision")}, 0) AS avg_mfe,
-            COALESCE({c("avg_mae", "double precision")}, 0) AS avg_mae,
-            COALESCE({c("avg_time_minutes", "double precision")}, 0) AS avg_time_minutes,
-            {c("updated_at", "timestamptz")} AS updated_at
-        FROM public.experience_scoreboard
-        ORDER BY COALESCE({c("n", "double precision")}, 0) DESC NULLS LAST
-        LIMIT {SCOREBOARD_LIMIT}
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return df
-
-    for col in ["n", "wins", "losses", "timeouts", "win_rate", "avg_mfe", "avg_mae", "avg_time_minutes"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-    if "updated_at" in df.columns:
-        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True)
-
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_source_counts() -> pd.DataFrame:
-    cols = get_table_columns("experience_trades")
-    if not cols:
-        return pd.DataFrame([])
-
-    if "source" not in cols:
-        return pd.DataFrame([])
-
-    sql = """
-        SELECT
-            CASE
-                WHEN UPPER(COALESCE(source, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
-                WHEN UPPER(COALESCE(source, '')) = 'SIM' THEN 'SIM'
-                WHEN UPPER(COALESCE(source, '')) = 'SHADOW' THEN 'SHADOW'
-                ELSE 'OTHER'
-            END AS source,
-            COUNT(*) AS n
-        FROM public.experience_trades
-        GROUP BY 1
-        ORDER BY n DESC
-    """
-    return run_df_query(sql)
-
-
-def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
-    table_rows = table_count("experience_trades") if db_ready() else 0
-
-    real_df = load_real_trades_db()
-    sim_df = load_sim_trades_db()
-    shadow_df = load_shadow_trades_db()
-    history_df = load_history_trades_db()
-
-    frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
-    combined = normalize_trade_df(pd.concat(frames, ignore_index=True)) if frames else empty_trade_df()
-
-    if len(combined) > len(history_df):
-        history_df = combined
-
-    if history_df.empty and table_rows > 0:
-        history_df = load_history_trades_db_raw()
-
-    if not history_df.empty:
-        return real_df, sim_df, shadow_df, history_df, "DB_PRIORITY"
-
-    if table_rows > 0:
-        return real_df, sim_df, shadow_df, history_df, "DB_MAP_ISSUE"
-
-    demo = demo_trades()
-    real_df = demo[demo["trade_type"] == "REAL"].copy()
-    sim_df = demo[demo["trade_type"] == "SIM"].copy()
-    shadow_df = demo[demo["trade_type"] == "SHADOW"].copy()
-    history_df = demo.copy()
-    return real_df, sim_df, shadow_df, history_df, "DEMO_NOODMODUS"
-
-
-# ==========================================================
-# DATA PREP / FILTERS
-# ==========================================================
-def prepare_assets_df(snapshot: dict) -> pd.DataFrame:
-    assets = pd.DataFrame((snapshot or {}).get("assets", []))
-    if assets.empty:
-        return pd.DataFrame([])
-    for col in ["available", "inOrder", "total", "price_eur", "eur_value"]:
-        if col in assets.columns:
-            assets[col] = pd.to_numeric(assets[col], errors="coerce").fillna(0.0)
-    assets["symbol"] = assets["symbol"].astype(str)
-    assets = assets.sort_values("eur_value", ascending=False)
-    assets["display_amount"] = assets["total"].apply(lambda x: f"{x:.8f}".rstrip("0").rstrip("."))
-    assets["display_price"] = assets["price_eur"].apply(format_money)
-    assets["display_value"] = assets["eur_value"].apply(format_money)
-    return assets.reset_index(drop=True)
-
-
-def build_activity_feed(orders_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame) -> List[Dict[str, Any]]:
-    feed: List[Dict[str, Any]] = []
-
-    if not orders_df.empty:
-        for _, row in orders_df.head(6).iterrows():
-            feed.append(
-                {
-                    "ts": row.get("created_at"),
-                    "title": "PRE-BUY SIGNAL",
-                    "sub": f"{safe_str(row.get('symbol'), '-')} | {safe_str(row.get('setup_type'), '-')} | {safe_str(row.get('regime'), '-')}",
-                    "color": "#34d399",
-                }
-            )
-
-    for title, color, df in [
-        ("LIVE TRADE CLOSED", "#60a5fa", real_df),
-        ("SIM RESULT", "#c084fc", sim_df),
-        ("SHADOW REVIEW", "#fbbf24", shadow_df),
-    ]:
-        if not df.empty:
-            for _, row in df.head(4).iterrows():
-                feed.append(
-                    {
-                        "ts": row.get("datetime_raw"),
-                        "title": title,
-                        "sub": f"{safe_str(row.get('symbol'), '-')} | {safe_str(row.get('outcome'), '-')} | {format_compact_r(row.get('pnl_r'))}",
-                        "color": color,
-                    }
-                )
-
-    def sort_key(item: Dict[str, Any]):
-        ts = item.get("ts")
-        if ts is None or pd.isna(ts):
-            return pd.Timestamp("1970-01-01", tz="UTC")
-        return ts
-
-    feed = sorted(feed, key=sort_key, reverse=True)
-    return feed[:8]
-
-
-def apply_trade_filters(
-    df: pd.DataFrame,
-    search_text: str = "",
-    days_filter: str = "ALLES",
-    trade_type_filter: str = "ALLES",
-    setup_filter: str = "ALLES",
-    regime_filter: str = "ALLES",
-    outcome_filter: str = "ALLES",
-    symbol_filter: str = "ALLES",
-) -> pd.DataFrame:
-    if df.empty:
-        return df
-
-    out = df.copy()
-
-    if trade_type_filter != "ALLES" and "trade_type" in out.columns:
-        out = out[out["trade_type"] == trade_type_filter]
-
-    if setup_filter != "ALLES":
-        out = out[out["setup_type"] == setup_filter]
-
-    if regime_filter != "ALLES":
-        out = out[out["regime"] == regime_filter]
-
-    if outcome_filter != "ALLES":
-        out = out[out["outcome"] == outcome_filter]
-
-    if symbol_filter != "ALLES":
-        out = out[out["symbol"] == symbol_filter]
-
-    if days_filter != "ALLES":
-        days_map = {"7D": 7, "30D": 30, "90D": 90, "180D": 180, "365D": 365}
-        days = days_map.get(days_filter)
-        if days:
-            cutoff = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=days)
-            out = out[out["datetime_raw"] >= cutoff]
-
-    search = safe_str(search_text).lower()
-    if search:
-        mask = (
-            out["trade_id"].astype(str).str.lower().str.contains(search, na=False)
-            | out["symbol"].astype(str).str.lower().str.contains(search, na=False)
-            | out["setup_type"].astype(str).str.lower().str.contains(search, na=False)
-            | out["regime"].astype(str).str.lower().str.contains(search, na=False)
-            | out["outcome"].astype(str).str.lower().str.contains(search, na=False)
-        )
-        out = out[mask]
-
-    out = out.sort_values("datetime_raw", ascending=False).reset_index(drop=True)
-    return out
-
-
-def performance_summary(df: pd.DataFrame) -> Dict[str, float]:
-    if df.empty:
-        return {
-            "count": 0,
-            "winrate": 0.0,
-            "money_winrate": 0.0,
-            "total_r": 0.0,
-            "avg_r": 0.0,
-            "expectancy": 0.0,
-            "max_drawdown": 0.0,
-            "total_eur": 0.0,
-            "avg_eur": 0.0,
-            "gross_profit_eur": 0.0,
-            "gross_loss_eur": 0.0,
-        }
-
-    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy()
-    if work.empty:
-        return {
-            "count": float(len(df)),
-            "winrate": 0.0,
-            "money_winrate": 0.0,
-            "total_r": 0.0,
-            "avg_r": 0.0,
-            "expectancy": 0.0,
-            "max_drawdown": 0.0,
-            "total_eur": 0.0,
-            "avg_eur": 0.0,
-            "gross_profit_eur": 0.0,
-            "gross_loss_eur": 0.0,
-        }
-
-    pnl = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
-    pnl_eur = pd.to_numeric(work["pnl_eur"], errors="coerce").fillna(pnl * 25.0)
-
-    total_r = float(pnl.sum())
-    avg_r = float(pnl.mean())
-    winrate = float((pnl > 0).mean() * 100.0)
-    expectancy = float((winrate / 100.0 * 2.0) + ((1 - winrate / 100.0) * -1.0))
-
-    gross_profit_eur = float(pnl_eur[pnl_eur > 0].sum())
-    gross_loss_eur = float(abs(pnl_eur[pnl_eur < 0].sum()))
-    money_base = gross_profit_eur + gross_loss_eur
-    money_winrate = float((gross_profit_eur / money_base) * 100.0) if money_base > 0 else 0.0
-    total_eur = float(pnl_eur.sum())
-    avg_eur = float(pnl_eur.mean())
-
-    curve = pnl.cumsum()
-    peak = curve.cummax()
-    drawdown = curve - peak
-    max_drawdown = float(drawdown.min()) if len(drawdown) else 0.0
-
-    return {
-        "count": float(len(work)),
-        "winrate": winrate,
-        "money_winrate": money_winrate,
-        "total_r": total_r,
-        "avg_r": avg_r,
-        "expectancy": expectancy,
-        "max_drawdown": max_drawdown,
-        "total_eur": total_eur,
-        "avg_eur": avg_eur,
-        "gross_profit_eur": gross_profit_eur,
-        "gross_loss_eur": gross_loss_eur,
-    }
-
-
 
 def overall_trade_win_summary(df: pd.DataFrame) -> Dict[str, float]:
-    if df.empty:
-        return {
-            "wins": 0,
-            "losses": 0,
-            "count": 0,
-            "resolved_count": 0,
-            "open_count": 0,
-            "winrate": 0.0,
-            "lossrate": 0.0,
-        }
-
-    work = df.copy()
-    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
-    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce")
-    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
-
-    is_win = outcome.eq("WIN")
-    is_loss = outcome.eq("LOSS")
-    infer_win = (~is_win) & (~is_loss) & (pnl_eur > 0)
-    infer_loss = (~is_win) & (~is_loss) & (pnl_eur < 0)
-    infer_win_r = (~is_win) & (~is_loss) & (~infer_win) & (~infer_loss) & (pnl_r > 0)
-    infer_loss_r = (~is_win) & (~is_loss) & (~infer_win) & (~infer_loss) & (pnl_r < 0)
-
-    is_win = is_win | infer_win | infer_win_r
-    is_loss = is_loss | infer_loss | infer_loss_r
-
-    wins = int(is_win.sum())
-    losses = int(is_loss.sum())
-    resolved = wins + losses
-    open_count = int(len(work) - resolved)
-    winrate = float((wins / resolved) * 100.0) if resolved > 0 else 0.0
-    lossrate = 100.0 - winrate if resolved > 0 else 0.0
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    wins = int((work["outcome"] == "WIN").sum()) if not work.empty else 0
+    losses = int((work["outcome"] == "LOSS").sum()) if not work.empty else 0
+    total = wins + losses
+    winrate = float((wins / total) * 100.0) if total > 0 else 0.0
+    lossrate = 100.0 - winrate if total > 0 else 0.0
     return {
         "wins": wins,
         "losses": losses,
-        "count": int(len(work)),
-        "resolved_count": resolved,
-        "open_count": open_count,
+        "count": total,
         "winrate": winrate,
         "lossrate": lossrate,
     }
 
+
 def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str, float]:
-    if df.empty:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    if work.empty:
         return {
             "stake_eur": stake_eur,
             "total_eur": 0.0,
@@ -1882,40 +1136,32 @@ def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str,
             "money_winrate": 0.0,
             "wins": 0,
             "losses": 0,
-            "resolved_count": 0,
-            "open_count": 0,
         }
 
-    work = df.copy()
-    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
     entry = pd.to_numeric(work.get("entry", pd.Series(index=work.index, dtype=float)), errors="coerce")
     target = pd.to_numeric(work.get("target", pd.Series(index=work.index, dtype=float)), errors="coerce")
     stop = pd.to_numeric(work.get("stop", pd.Series(index=work.index, dtype=float)), errors="coerce")
-    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce")
-    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
 
     sim_eur = pd.Series(0.0, index=work.index, dtype=float)
-    valid_win = outcome.eq("WIN") & entry.gt(0) & target.notna()
+
+    valid_win = (work["outcome"] == "WIN") & entry.gt(0) & target.notna()
     sim_eur.loc[valid_win] = stake_eur * ((target[valid_win] - entry[valid_win]) / entry[valid_win])
 
-    valid_loss = outcome.eq("LOSS") & entry.gt(0) & stop.notna()
+    valid_loss = (work["outcome"] == "LOSS") & entry.gt(0) & stop.notna()
     sim_eur.loc[valid_loss] = stake_eur * ((stop[valid_loss] - entry[valid_loss]) / entry[valid_loss])
 
-    unresolved = sim_eur.eq(0.0) & pnl_r.notna() & pnl_r.ne(0.0)
+    unresolved = sim_eur.eq(0.0) & pnl_r.ne(0.0)
     sim_eur.loc[unresolved] = pnl_r[unresolved] * stake_eur
-
-    unresolved2 = sim_eur.eq(0.0) & pnl_eur.notna() & pnl_eur.ne(0.0)
-    sim_eur.loc[unresolved2] = pnl_eur[unresolved2].apply(lambda x: stake_eur if x > 0 else -stake_eur)
 
     gross_profit = float(sim_eur[sim_eur > 0].sum())
     gross_loss = float(abs(sim_eur[sim_eur < 0].sum()))
     total_net = float(sim_eur.sum())
     base = gross_profit + gross_loss
     money_winrate = float((gross_profit / base) * 100.0) if base > 0 else 0.0
+
     wins = int((sim_eur > 0).sum())
     losses = int((sim_eur < 0).sum())
-    resolved = wins + losses
-    open_count = int(len(work) - resolved)
 
     return {
         "stake_eur": stake_eur,
@@ -1925,37 +1171,21 @@ def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str,
         "money_winrate": money_winrate,
         "wins": wins,
         "losses": losses,
-        "resolved_count": resolved,
-        "open_count": open_count,
     }
 
-def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
-    if df.empty:
-        return {
-            "wins": 0,
-            "losses": 0,
-            "count": 0,
-            "winrate": 0.0,
-            "lossrate": 0.0,
-            "gross_profit_eur": 0.0,
-            "gross_loss_eur": 0.0,
-            "net_eur": 0.0,
-            "dominant": "neutral",
-        }
 
-    work = df.copy()
-    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
+def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    if work.empty:
+        return {
+            "wins": 0, "losses": 0, "count": 0, "winrate": 0.0, "lossrate": 0.0,
+            "gross_profit_eur": 0.0, "gross_loss_eur": 0.0, "net_eur": 0.0, "dominant": "neutral",
+        }
     pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
     pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
     pnl_eur = pnl_eur.fillna(pnl_r * 25.0)
-
-    is_win = outcome.eq("WIN") | (pnl_eur > 0)
-    is_loss = outcome.eq("LOSS") | (pnl_eur < 0)
-    resolved = is_win | is_loss
-    pnl_eur = pnl_eur[resolved]
-
-    wins = int((pnl_eur > 0).sum())
-    losses = int((pnl_eur < 0).sum())
+    wins = int((work["outcome"] == "WIN").sum())
+    losses = int((work["outcome"] == "LOSS").sum())
     total = wins + losses
     winrate = float((wins / total) * 100.0) if total > 0 else 0.0
     lossrate = 100.0 - winrate if total > 0 else 0.0
@@ -1963,28 +1193,17 @@ def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
     gross_loss = float(abs(pnl_eur[pnl_eur < 0].sum()))
     net = float(pnl_eur.sum())
     dominant = "green" if winrate >= lossrate else "red"
-
     return {
-        "wins": wins,
-        "losses": losses,
-        "count": total,
-        "winrate": winrate,
-        "lossrate": lossrate,
-        "gross_profit_eur": gross_profit,
-        "gross_loss_eur": gross_loss,
-        "net_eur": net,
-        "dominant": dominant,
+        "wins": wins, "losses": losses, "count": total, "winrate": winrate, "lossrate": lossrate,
+        "gross_profit_eur": gross_profit, "gross_loss_eur": gross_loss, "net_eur": net, "dominant": dominant,
     }
 
 def render_real_stats_panel(summary: Dict[str, float]) -> None:
     dominant_label = "WINST DOMINEERT" if safe_str(summary.get("dominant")) == "green" else "VERLIES DOMINEERT"
     dominant_cls = "green" if safe_str(summary.get("dominant")) == "green" else "red"
 
-    st.markdown('<div class="panel-tight">', unsafe_allow_html=True)
-    st.markdown(
-        f'<div class="dominance-pill {dominant_cls}">{dominant_label}</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="top-stats-panel">', unsafe_allow_html=True)
+    st.markdown(f'<div class="dominance-pill {dominant_cls}">{dominant_label}</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Statistieken</div>', unsafe_allow_html=True)
 
     rows = [
@@ -1992,20 +1211,12 @@ def render_real_stats_panel(summary: Dict[str, float]) -> None:
         ("Winst Trades", str(int(summary.get("wins", 0))), f'{safe_float(summary.get("winrate"), 0.0):.1f}%'),
         ("Verlies Trades", str(int(summary.get("losses", 0))), f'{safe_float(summary.get("lossrate"), 0.0):.1f}%'),
         ("Totale Winst", format_money(summary.get("gross_profit_eur", 0.0)), ""),
-        ("Totale Verlies", "-" + format_money(summary.get("gross_loss_eur", 0.0)) if safe_float(summary.get("gross_loss_eur", 0.0)) > 0 else "€0,00", ""),
+        ("Totale Verlies", f'-{format_money(summary.get("gross_loss_eur", 0.0)).replace("€", "€")}' if safe_float(summary.get("gross_loss_eur", 0.0)) > 0 else "€0,00", ""),
         ("Netto Resultaat", format_money(summary.get("net_eur", 0.0)), ""),
     ]
     for label, value, badge in rows:
-        badge_html = f'<span class="stat-badge">{badge}</span>' if badge else ""
-        st.markdown(
-            f"""
-            <div class="real-stat-row">
-                <div class="real-stat-left">{label}</div>
-                <div class="real-stat-right">{value}{badge_html}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        badge_html = f'<span class="metric-badge">{badge}</span>' if badge else ""
+        st.markdown(f'<div class="stats-row"><div class="stats-label">{label}</div><div class="stats-value">{value} {badge_html}</div></div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
 def get_selected_trade(df: pd.DataFrame, state_key: str = "selected_page_trade_id") -> Optional[pd.Series]:
@@ -2644,10 +1855,7 @@ def chart_source_distribution(df: pd.DataFrame, title: str) -> go.Figure:
 def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, scoreboard_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Dashboard</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Dit scherm is opnieuw ingedeeld als een pro terminal: minder verticale rommel, duidelijkere blokken en snellere navigatie. De twee kleine top-cirkels blijven zichtbaar, met daaronder de grote gecombineerde performance-cirkel.</div>',
-        unsafe_allow_html=True,
-    )
+    st.markdown('<div class="section-subtitle">Bovenste sectie opgebouwd als hero-layout: twee kleine donuts links onder elkaar, een grote performance-donut centraal en statistieken rechts, met neon glow zoals in je referentiebeeld.</div>', unsafe_allow_html=True)
 
     filtered = render_filters(history_df, include_trade_type=True)
     summary = performance_summary(filtered)
@@ -2663,6 +1871,66 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
         st.markdown(metric_card_html("Expectancy", f"{summary['expectancy']:.2f} R", "yellow"), unsafe_allow_html=True)
     with m5:
         st.markdown(metric_card_html("Totaal verdiend (€)", format_money(summary["total_eur"]), "blue"), unsafe_allow_html=True)
+
+    overall_trade_summary = overall_trade_win_summary(history_df if history_df is not None else pd.DataFrame([]))
+    euro_sim5_summary = euro_five_sim_summary(history_df if history_df is not None else pd.DataFrame([]), stake_eur=5.0)
+    real_money_summary = real_trade_money_summary(real_df if real_df is not None else pd.DataFrame([]))
+
+    left_col, main_col, right_col = st.columns([0.84, 1.78, 0.92], gap="small")
+
+    with left_col:
+        st.markdown('<div class="top-left-stack">', unsafe_allow_html=True)
+
+        st.markdown('<div class="top-mini-card">', unsafe_allow_html=True)
+        st.markdown('<div class="mini-title"><span class="green">Trade</span> Win Rate</div>', unsafe_allow_html=True)
+        st.plotly_chart(
+            render_donut(
+                safe_float(overall_trade_summary["winrate"], 0.0),
+                "Trade Win Rate",
+                "#34d399",
+                subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss",
+                height=190,
+            ),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+        st.markdown(f'<div class="small-muted">{int(overall_trade_summary["wins"])} win / {int(overall_trade_summary["losses"])} loss / {max(0, int(len(history_df) - overall_trade_summary["count"])) if history_df is not None and not history_df.empty else 0} open</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('<div class="top-mini-card">', unsafe_allow_html=True)
+        st.markdown('<div class="mini-title"><span class="green">Euro</span> Win Rate</div>', unsafe_allow_html=True)
+        st.plotly_chart(
+            render_donut(
+                safe_float(euro_sim5_summary["money_winrate"], 0.0),
+                "Euro Win Rate",
+                "#34d399",
+                subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade",
+                height=190,
+            ),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+        st.markdown(f'<div class="small-muted">{format_money(euro_sim5_summary["gross_profit_eur"])} / €-{safe_float(euro_sim5_summary["gross_loss_eur"],0.0):,.2f}'.replace(",", "X").replace(".", ",").replace("X", ".") + '</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with main_col:
+        st.markdown('<div class="top-main-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="top-main-caption">{format_money(real_money_summary.get("net_eur", 0.0))}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="top-main-kicker">Win Rate</div>', unsafe_allow_html=True)
+        st.plotly_chart(
+            chart_combined_performance_donut(real_df if real_df is not None else pd.DataFrame([]), "REAL Performance"),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+        st.markdown('<div class="top-legend"><span><span class="top-legend-dot" style="background:#34d399;"></span>Win</span><span><span class="top-legend-dot" style="background:#ef4444;"></span>Loss</span></div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with right_col:
+        render_real_stats_panel(real_money_summary)
+
+    st.caption("Links: alle trades samen. Midden: euro-simulatie over alle trades samen met €5 vaste inzet per trade. Grote hero-donut en statistieken rechts: alleen echte live trades.")
 
     tab_overview, tab_analytics, tab_tapelist = st.tabs(["Overview", "Analytics", "Trade Tape"])
 
@@ -2691,10 +1959,10 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
             st.markdown(
                 f"""
                 <div class="trade-note">
-                    <b>1. Setup-first analyse</b><br>
-                    De beste setup-combinatie staat centraal, niet alleen ruwe winrate.<br><br>
-                    <b>2. Minder scroll, meer focus</b><br>
-                    Overview toont alleen de belangrijkste charts tegelijk.<br><br>
+                    <b>1. Hero-section met duidelijke hiërarchie</b><br>
+                    Kleine context links, hoofdperformance in het midden, details rechts.<br><br>
+                    <b>2. Glow alleen waar het telt</b><br>
+                    De hoofdperformance krijgt alle nadruk.<br><br>
                     <b>3. Beste setup nu:</b> {best_setup}
                 </div>
                 """,
@@ -2724,7 +1992,6 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
             render_trade_detail(selected)
 
     st.markdown("</div>", unsafe_allow_html=True)
-
 
 def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool = False) -> None:
     title_map = {
@@ -3019,7 +2286,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.88], gap="small")
+metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.62, 0.62, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -3029,44 +2296,43 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
-    st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
-
-performance_row = st.columns([0.90, 0.90, 1.55, 1.05], gap="small")
-with performance_row[0]:
     st.plotly_chart(
         render_donut(
             safe_float(overall_trade_summary["winrate"], 0.0),
             "Trade Win Rate",
             "#34d399",
-            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss | {int(overall_trade_summary.get('open_count', 0))} open",
-            height=205,
+            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss",
+            height=118,
         ),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with performance_row[1]:
+with metric_cols[5]:
     st.plotly_chart(
         render_donut(
             safe_float(euro_sim5_summary["money_winrate"], 0.0),
             "Euro Win Rate",
-            "#34d399",
-            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade | {int(euro_sim5_summary.get('resolved_count', 0))} resolved",
-            height=205,
+            "#60a5fa",
+            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade",
+            height=118,
         ),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with performance_row[2]:
+with metric_cols[6]:
+    st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
+
+combined_row = st.columns([0.42, 1.35, 0.95], gap="small")
+with combined_row[1]:
     st.plotly_chart(
         chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with performance_row[3]:
+with combined_row[2]:
     render_real_stats_panel(real_money_summary)
 
-st.caption("Bovenste kleine donuts: links = algemene winrate over alle trades samen. Midden = euro-simulatie over alle trades samen met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
-
+st.caption("Bovenste kleine donuts: links = algemene winrate over alle gesloten trades. Midden = euro-simulatie over alle gesloten trades met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
 
 # ==========================================================
 # MAIN LAYOUT
