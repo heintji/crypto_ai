@@ -739,7 +739,7 @@ def get_status_badge(status: str) -> str:
     return f'<span class="status-bad">{status_u}</span>'
 
 
-def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "") -> go.Figure:
+def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 126) -> go.Figure:
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
     fig = go.Figure(
         data=[
@@ -783,7 +783,7 @@ def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
-        height=138,
+        height=height,
         showlegend=False,
         annotations=annotations,
     )
@@ -864,8 +864,48 @@ def downsample_dataframe(df: pd.DataFrame, max_points: int = 1200) -> pd.DataFra
 
 
 def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Performance") -> go.Figure:
-    stats = get_real_performance_stats(df)
-    return chart_main_real_glow_donut(stats, title=title)
+    summary = real_trade_money_summary(df)
+    win_pct = safe_float(summary["winrate"], 0.0)
+    loss_pct = safe_float(summary["lossrate"], 0.0)
+    net_eur = safe_float(summary["net_eur"], 0.0)
+    dominant = safe_str(summary["dominant"], "red")
+    glow_color = "rgba(52,211,153,0.24)" if dominant == "green" else "rgba(239,68,68,0.24)"
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Pie(
+            values=[win_pct, loss_pct],
+            labels=["Win", "Loss"],
+            hole=0.79,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(
+                colors=["#34d399", "#ef4444"],
+                line=dict(color="rgba(255,255,255,0.0)", width=0),
+            ),
+            showlegend=False,
+        )
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=360,
+        margin=dict(l=4, r=4, t=6, b=6),
+        showlegend=False,
+        annotations=[
+            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=34)),
+            dict(text="<span style='font-size:18px;color:#dbe4f0;font-weight:800'>Win Rate</span>", x=0.5, y=0.49, showarrow=False, font=dict(color="#dbe4f0", size=18)),
+            dict(text=f"<span style='font-size:22px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.32, showarrow=False, font=dict(color="#ffffff", size=22)),
+            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.19, showarrow=False, font=dict(color="#94a3b8", size=12)),
+        ],
+        shapes=[
+            dict(type="circle", xref="paper", yref="paper", x0=0.10, y0=0.10, x1=0.90, y1=0.90, line=dict(color=glow_color, width=16)),
+            dict(type="circle", xref="paper", yref="paper", x0=0.15, y0=0.15, x1=0.85, y1=0.85, line=dict(color=glow_color, width=8)),
+        ],
+    )
+    return fig
 
 
 def prepare_portfolio_table(assets_df: pd.DataFrame, total_portfolio_eur: float) -> pd.DataFrame:
@@ -1785,187 +1825,145 @@ def performance_summary(df: pd.DataFrame) -> Dict[str, float]:
 
 
 
+def overall_trade_win_summary(df: pd.DataFrame) -> Dict[str, float]:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    wins = int((work["outcome"] == "WIN").sum()) if not work.empty else 0
+    losses = int((work["outcome"] == "LOSS").sum()) if not work.empty else 0
+    total = wins + losses
+    winrate = float((wins / total) * 100.0) if total > 0 else 0.0
+    lossrate = 100.0 - winrate if total > 0 else 0.0
+    return {
+        "wins": wins,
+        "losses": losses,
+        "count": total,
+        "winrate": winrate,
+        "lossrate": lossrate,
+    }
 
-def get_real_performance_stats(df: pd.DataFrame) -> Dict[str, float]:
-    if df.empty:
+
+def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str, float]:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    if work.empty:
         return {
-            "wins": 0,
-            "losses": 0,
-            "total": 0,
-            "win_pct": 0.0,
-            "loss_pct": 100.0,
+            "stake_eur": stake_eur,
+            "total_eur": 0.0,
             "gross_profit_eur": 0.0,
             "gross_loss_eur": 0.0,
-            "net_eur": 0.0,
             "money_winrate": 0.0,
-            "dominant": "red",
+            "wins": 0,
+            "losses": 0,
         }
 
-    work = df.copy()
-    if "trade_type" in work.columns:
-        work = work[work["trade_type"].isin(["REAL"])]
-    elif "source" in work.columns:
-        work = work[work["source"].isin(["REAL", "REAL_REVIEW"])]
-    work = work[work["outcome"].isin(["WIN", "LOSS"])].copy()
+    entry = pd.to_numeric(work.get("entry", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    target = pd.to_numeric(work.get("target", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    stop = pd.to_numeric(work.get("stop", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
 
+    sim_eur = pd.Series(0.0, index=work.index, dtype=float)
+
+    valid_win = (work["outcome"] == "WIN") & entry.gt(0) & target.notna()
+    sim_eur.loc[valid_win] = stake_eur * ((target[valid_win] - entry[valid_win]) / entry[valid_win])
+
+    valid_loss = (work["outcome"] == "LOSS") & entry.gt(0) & stop.notna()
+    sim_eur.loc[valid_loss] = stake_eur * ((stop[valid_loss] - entry[valid_loss]) / entry[valid_loss])
+
+    unresolved = sim_eur.eq(0.0) & pnl_r.ne(0.0)
+    sim_eur.loc[unresolved] = pnl_r[unresolved] * stake_eur
+
+    gross_profit = float(sim_eur[sim_eur > 0].sum())
+    gross_loss = float(abs(sim_eur[sim_eur < 0].sum()))
+    total_net = float(sim_eur.sum())
+    base = gross_profit + gross_loss
+    money_winrate = float((gross_profit / base) * 100.0) if base > 0 else 0.0
+
+    wins = int((sim_eur > 0).sum())
+    losses = int((sim_eur < 0).sum())
+
+    return {
+        "stake_eur": stake_eur,
+        "total_eur": total_net,
+        "gross_profit_eur": gross_profit,
+        "gross_loss_eur": gross_loss,
+        "money_winrate": money_winrate,
+        "wins": wins,
+        "losses": losses,
+    }
+
+
+def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
     if work.empty:
         return {
             "wins": 0,
             "losses": 0,
-            "total": 0,
-            "win_pct": 0.0,
-            "loss_pct": 100.0,
+            "count": 0,
+            "winrate": 0.0,
+            "lossrate": 0.0,
             "gross_profit_eur": 0.0,
             "gross_loss_eur": 0.0,
             "net_eur": 0.0,
-            "money_winrate": 0.0,
-            "dominant": "red",
+            "dominant": "neutral",
         }
 
-    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
-    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(dtype=float)), errors="coerce").fillna(0.0)
+    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
+    pnl_eur = pnl_eur.fillna(pnl_r * 25.0)
 
-    wins = int((pnl_r > 0).sum())
-    losses = int((pnl_r < 0).sum())
+    wins = int((work["outcome"] == "WIN").sum())
+    losses = int((work["outcome"] == "LOSS").sum())
     total = wins + losses
-    win_pct = (wins / total * 100.0) if total > 0 else 0.0
-    loss_pct = 100.0 - win_pct if total > 0 else 100.0
+    winrate = float((wins / total) * 100.0) if total > 0 else 0.0
+    lossrate = 100.0 - winrate if total > 0 else 0.0
 
-    gross_profit_eur = float(pnl_eur[pnl_eur > 0].sum())
-    gross_loss_eur = float(abs(pnl_eur[pnl_eur < 0].sum()))
-    money_base = gross_profit_eur + gross_loss_eur
-    money_winrate = (gross_profit_eur / money_base * 100.0) if money_base > 0 else 0.0
-    net_eur = float(gross_profit_eur - gross_loss_eur)
+    gross_profit = float(pnl_eur[pnl_eur > 0].sum())
+    gross_loss = float(abs(pnl_eur[pnl_eur < 0].sum()))
+    net = float(pnl_eur.sum())
+    dominant = "green" if winrate >= lossrate else "red"
 
     return {
         "wins": wins,
         "losses": losses,
-        "total": total,
-        "win_pct": win_pct,
-        "loss_pct": loss_pct,
-        "gross_profit_eur": gross_profit_eur,
-        "gross_loss_eur": gross_loss_eur,
-        "net_eur": net_eur,
-        "money_winrate": money_winrate,
-        "dominant": "green" if win_pct >= loss_pct else "red",
+        "count": total,
+        "winrate": winrate,
+        "lossrate": lossrate,
+        "gross_profit_eur": gross_profit,
+        "gross_loss_eur": gross_loss,
+        "net_eur": net,
+        "dominant": dominant,
     }
 
 
-def chart_small_stat_donut(percent_value: float, title: str, subtitle: str = "", color: str = "#34d399") -> go.Figure:
-    percent_value = max(0.0, min(100.0, safe_float(percent_value, 0.0)))
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                values=[percent_value, 100.0 - percent_value],
-                labels=["Active", "Rest"],
-                hole=0.76,
-                sort=False,
-                direction="clockwise",
-                rotation=270,
-                textinfo="none",
-                marker=dict(
-                    colors=[color, "rgba(255,255,255,0.08)"],
-                    line=dict(color="rgba(255,255,255,0.0)", width=0),
-                ),
-                showlegend=False,
-            )
-        ]
-    )
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        height=220,
-        margin=dict(l=0, r=0, t=0, b=0),
-        showlegend=False,
-        annotations=[
-            dict(text=f"<b>{percent_value:.1f}%</b>", x=0.5, y=0.58, showarrow=False, font=dict(color="#ffffff", size=20)),
-            dict(text=f"<span style='font-size:13px;color:#dbe4f0'>{title}</span>", x=0.5, y=0.40, showarrow=False, font=dict(color="#dbe4f0", size=13)),
-            dict(text=f"<span style='font-size:12px;color:#cbd5e1'>{subtitle}</span>", x=0.5, y=0.26, showarrow=False, font=dict(color="#cbd5e1", size=12)),
-        ],
-    )
-    return fig
+def render_real_stats_panel(summary: Dict[str, float]) -> None:
+    dominant_label = "WINST DOMINEERT" if safe_str(summary.get("dominant")) == "green" else "VERLIES DOMINEERT"
+    dominant_cls = "green" if safe_str(summary.get("dominant")) == "green" else "red"
 
-
-def chart_main_real_glow_donut(stats: Dict[str, float], title: str = "REAL Win Rate") -> go.Figure:
-    win_pct = max(0.0, min(100.0, safe_float(stats.get("win_pct"), 0.0)))
-    loss_pct = max(0.0, min(100.0, safe_float(stats.get("loss_pct"), 100.0)))
-    dominant = safe_str(stats.get("dominant"), "red").lower()
-    glow_color = "#34d399" if dominant == "green" else "#ef4444"
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Pie(
-            values=[win_pct, loss_pct],
-            hole=0.70,
-            sort=False,
-            direction="clockwise",
-            rotation=270,
-            textinfo="none",
-            marker=dict(
-                colors=["rgba(52,211,153,0.16)", "rgba(239,68,68,0.16)"],
-                line=dict(color="rgba(255,255,255,0.0)", width=0),
-            ),
-            showlegend=False,
-            domain=dict(x=[0.06, 0.94], y=[0.06, 0.94]),
-        )
-    )
-    fig.add_trace(
-        go.Pie(
-            values=[win_pct, loss_pct],
-            hole=0.78,
-            sort=False,
-            direction="clockwise",
-            rotation=270,
-            textinfo="none",
-            marker=dict(
-                colors=["#34d399", "#ef4444"],
-                line=dict(color="rgba(255,255,255,0.0)", width=0),
-            ),
-            showlegend=False,
-            domain=dict(x=[0.10, 0.90], y=[0.10, 0.90]),
-        )
-    )
-
-    glow = "0 0 18px rgba(52,211,153,0.45)" if dominant == "green" else "0 0 18px rgba(239,68,68,0.48)"
-    fig.update_layout(
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        height=360,
-        margin=dict(l=0, r=0, t=0, b=0),
-        showlegend=False,
-        annotations=[
-            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.60, showarrow=False, font=dict(color="#ffffff", size=34)),
-            dict(text=f"<span style='font-size:18px;color:#dbe4f0'>{title}</span>", x=0.5, y=0.46, showarrow=False, font=dict(color="#dbe4f0", size=18)),
-            dict(text=f"<span style='font-size:20px;color:#ffffff'><b>{format_money(stats.get('net_eur', 0.0))}</b></span>", x=0.5, y=0.31, showarrow=False, font=dict(color="#ffffff", size=20)),
-            dict(text=f"<span style='font-size:12px;color:{glow_color}'>Real trades only</span>", x=0.5, y=0.19, showarrow=False, font=dict(color=glow_color, size=12)),
-        ],
-    )
-    return fig
-
-
-def render_real_stats_panel(stats: Dict[str, float]) -> None:
     st.markdown('<div class="panel-tight">', unsafe_allow_html=True)
-    dom = safe_str(stats.get("dominant"), "red").lower()
-    badge = "WIN DOMINEERT" if dom == "green" else "VERLIES DOMINEERT"
-    badge_cls = "status-ok" if dom == "green" else "status-bad"
-    st.markdown(f'<div class="section-title">Statistieken</div>', unsafe_allow_html=True)
-    st.markdown(f'<span class="{badge_cls}">{badge}</span>', unsafe_allow_html=True)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        f'<div class="dominance-pill {dominant_cls}">{dominant_label}</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="section-title">Statistieken</div>', unsafe_allow_html=True)
 
     rows = [
-        ("Winst trades", str(safe_int(stats.get("wins"), 0)), pct_str(stats.get("win_pct", 0.0)), "#34d399"),
-        ("Verlies trades", str(safe_int(stats.get("losses"), 0)), pct_str(stats.get("loss_pct", 0.0)), "#ef4444"),
-        ("Totale winst", format_money(stats.get("gross_profit_eur", 0.0)), "", "#34d399"),
-        ("Totale verlies", "-" + format_money(stats.get("gross_loss_eur", 0.0)).replace("-", ""), "", "#ef4444"),
-        ("Netto resultaat", format_money(stats.get("net_eur", 0.0)), "", "#ffffff"),
+        ("Winst Trades", str(int(summary.get("wins", 0))), f'{safe_float(summary.get("winrate"), 0.0):.1f}%'),
+        ("Verlies Trades", str(int(summary.get("losses", 0))), f'{safe_float(summary.get("lossrate"), 0.0):.1f}%'),
+        ("Totale Winst", format_money(summary.get("gross_profit_eur", 0.0)), ""),
+        ("Totale Verlies", f'-{format_money(summary.get("gross_loss_eur", 0.0)).replace("€", "€")}' if safe_float(summary.get("gross_loss_eur", 0.0)) > 0 else "€0,00", ""),
+        ("Netto Resultaat", format_money(summary.get("net_eur", 0.0)), ""),
     ]
-    for label, value, extra, color in rows:
-        right = value if not extra else f"{value} · {extra}"
+    for label, value, badge in rows:
+        badge_html = f'<span class="stat-badge">{badge}</span>' if badge else ""
         st.markdown(
-            f'<div class="list-row"><div class="list-left">{label}</div><div class="list-right" style="color:{color};">{right}</div></div>',
+            f"""
+            <div class="real-stat-row">
+                <div class="real-stat-left">{label}</div>
+                <div class="real-stat-right">{value}{badge_html}</div>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
 
 def get_selected_trade(df: pd.DataFrame, state_key: str = "selected_page_trade_id") -> Optional[pd.Series]:
     if df.empty:
@@ -2948,6 +2946,9 @@ feed = build_activity_feed(orders_df, real_df, sim_df, shadow_df)
 
 history_summary = performance_summary(history_df)
 live_summary = performance_summary(real_df)
+overall_trade_summary = overall_trade_win_summary(history_df)
+euro_sim5_summary = euro_five_sim_summary(history_df, stake_eur=5.0)
+real_money_summary = real_trade_money_summary(real_df)
 
 eur_available = safe_float(snapshot.get("eur_available"), 0.0)
 total_portfolio_eur = safe_float(snapshot.get("total_portfolio_eur"), 0.0)
@@ -2975,8 +2976,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-live_real_stats = get_real_performance_stats(real_df)
-metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.88], gap="small")
+metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.62, 0.62, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -2986,46 +2986,44 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
+    st.plotly_chart(
+        render_donut(
+            safe_float(overall_trade_summary["winrate"], 0.0),
+            "Trade Win Rate",
+            "#34d399",
+            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss",
+            height=118,
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+with metric_cols[5]:
+    st.plotly_chart(
+        render_donut(
+            safe_float(euro_sim5_summary["money_winrate"], 0.0),
+            "Euro Win Rate",
+            "#60a5fa",
+            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade",
+            height=118,
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+with metric_cols[6]:
     st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
 
-st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-
-donut_cols = st.columns([0.72, 0.72, 1.35, 0.95], gap="small")
-with donut_cols[0]:
+combined_row = st.columns([0.42, 1.35, 0.95], gap="small")
+with combined_row[1]:
     st.plotly_chart(
-        chart_small_stat_donut(
-            live_real_stats["win_pct"],
-            "Trade Win Rate",
-            subtitle=f"{live_real_stats['wins']} win / {live_real_stats['losses']} loss",
-            color="#34d399",
-        ),
+        chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with donut_cols[1]:
-    st.plotly_chart(
-        chart_small_stat_donut(
-            live_real_stats["money_winrate"],
-            "Euro Win Rate",
-            subtitle=format_money(live_real_stats["gross_profit_eur"]),
-            color="#34d399",
-        ),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-with donut_cols[2]:
-    st.plotly_chart(
-        chart_main_real_glow_donut(live_real_stats, title="Win Rate"),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-with donut_cols[3]:
-    render_real_stats_panel(live_real_stats)
+with combined_row[2]:
+    render_real_stats_panel(real_money_summary)
 
-st.caption("De twee kleine donuts links tonen Trade Win Rate en Euro Win Rate. De grote donut en het statistiekpaneel rechts gebruiken alleen echte live trades.")
+st.caption("Bovenste kleine donuts: links = algemene winrate over alle gesloten trades. Midden = euro-simulatie over alle gesloten trades met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
 
-# ==========================================================
-# MAIN LAYOUT
 # ==========================================================
 # MAIN LAYOUT
 # ==========================================================
