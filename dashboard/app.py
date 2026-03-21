@@ -423,10 +423,107 @@ st.markdown(
             opacity: 1 !important;
         }
 
-        .nav-button-active div.stButton > button {
-            background: linear-gradient(90deg, rgba(244,114,182,0.22), rgba(96,165,250,0.22)) !important;
-            border-color: rgba(255,255,255,0.18) !important;
+        
+        .page-chip {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:8px 12px;
+            border-radius:999px;
+            background: linear-gradient(90deg, rgba(52,211,153,0.16), rgba(96,165,250,0.16));
+            border:1px solid rgba(255,255,255,0.12);
+            color:#ffffff;
+            font-size:12px;
+            font-weight:900;
+            margin-bottom:14px;
+            letter-spacing:0.02em;
+            text-transform:uppercase;
+        }
+
+        .nav-button-active {
+            margin-bottom: 10px;
+        }
+
+.nav-button-active div.stButton > button {
+            background: linear-gradient(90deg, rgba(52,211,153,0.22), rgba(96,165,250,0.24), rgba(244,114,182,0.18)) !important;
+            border-color: rgba(255,255,255,0.26) !important;
             color: #ffffff !important;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.05), 0 0 34px rgba(96,165,250,0.18) !important;
+            transform: translateY(-1px) scale(1.01);
+        }
+
+        .nav-button-active div.stButton > button::before {
+            content: "";
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            bottom: 10px;
+            width: 4px;
+            border-radius: 999px;
+            background: linear-gradient(180deg, #34d399, #60a5fa);
+        }
+
+        .nav-button-active div.stButton > button {
+            position: relative !important;
+            padding-left: 20px !important;
+        }
+
+        .portfolio-kicker {
+            color: #cbd5e1;
+            font-size: 12px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 6px;
+        }
+
+        .portfolio-explain {
+            color: #94a3b8;
+            font-size: 13px;
+            line-height: 1.55;
+            margin-bottom: 12px;
+        }
+
+        .holding-row {
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:10px;
+            padding:10px 0;
+            border-bottom:1px solid rgba(255,255,255,0.06);
+        }
+
+        .holding-left {
+            display:flex;
+            flex-direction:column;
+            gap:2px;
+        }
+
+        .holding-symbol {
+            color:#ffffff;
+            font-size:14px;
+            font-weight:900;
+        }
+
+        .holding-sub {
+            color:#94a3b8;
+            font-size:12px;
+        }
+
+        .holding-right {
+            text-align:right;
+        }
+
+        .holding-value {
+            color:#e2e8f0;
+            font-size:14px;
+            font-weight:900;
+        }
+
+        .holding-share {
+            color:#60a5fa;
+            font-size:12px;
+            font-weight:700;
         }
 
         .tiny-button div.stButton > button {
@@ -755,6 +852,65 @@ def render_win_loss_donut(win_pct: float, loss_pct: float, net_eur: float) -> go
         ],
     )
     return fig
+
+
+
+def downsample_dataframe(df: pd.DataFrame, max_points: int = 1200) -> pd.DataFrame:
+    if df.empty or len(df) <= max_points:
+        return df
+    step = max(1, math.ceil(len(df) / max_points))
+    return df.iloc[::step].copy()
+
+
+def chart_combined_performance_donut(df: pd.DataFrame, title: str = "Gecombineerde Performance") -> go.Figure:
+    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
+    wins = int((work["outcome"] == "WIN").sum()) if not work.empty else 0
+    losses = int((work["outcome"] == "LOSS").sum()) if not work.empty else 0
+    total = wins + losses
+    win_pct = (wins / total * 100.0) if total > 0 else 0.0
+    loss_pct = 100.0 - win_pct if total > 0 else 100.0
+    net_eur = float(pd.to_numeric(work.get("pnl_eur", pd.Series(dtype=float)), errors="coerce").fillna(0.0).sum()) if not work.empty else 0.0
+
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                values=[win_pct, loss_pct],
+                labels=["Win", "Loss"],
+                hole=0.78,
+                sort=False,
+                direction="clockwise",
+                rotation=270,
+                textinfo="none",
+                marker=dict(colors=["#34d399", "#ef4444"], line=dict(color="rgba(255,255,255,0)", width=0)),
+                showlegend=False,
+            )
+        ]
+    )
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=320,
+        margin=dict(l=10, r=10, t=10, b=10),
+        showlegend=False,
+        annotations=[
+            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=30)),
+            dict(text="<span style='font-size:18px;color:#dbe4f0;font-weight:800'>Win Rate</span>", x=0.5, y=0.48, showarrow=False, font=dict(color="#dbe4f0", size=18)),
+            dict(text=f"<span style='font-size:18px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.32, showarrow=False, font=dict(color="#ffffff", size=18)),
+        ],
+    )
+    return fig
+
+
+def prepare_portfolio_table(assets_df: pd.DataFrame, total_portfolio_eur: float) -> pd.DataFrame:
+    if assets_df.empty:
+        return pd.DataFrame([])
+    work = assets_df.copy()
+    work = work[work["symbol"] != "EUR"].copy()
+    if work.empty:
+        return pd.DataFrame([])
+    total_base = max(float(total_portfolio_eur), 1e-9)
+    work["share_pct"] = (pd.to_numeric(work["eur_value"], errors="coerce").fillna(0.0) / total_base) * 100.0
+    return work.sort_values("eur_value", ascending=False).reset_index(drop=True)
 
 def trade_reason_text(row: pd.Series) -> str:
     trade_type = safe_str(row.get("trade_type")).upper()
@@ -1730,6 +1886,7 @@ def chart_equity_curve(df: pd.DataFrame, title: str) -> go.Figure:
 
     work = work.sort_values("datetime_raw").copy()
     work["cum_r"] = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0).cumsum()
+    work = downsample_dataframe(work, 900)
 
     fig = go.Figure()
     fig.add_trace(
@@ -1802,6 +1959,7 @@ def chart_trade_timeline(df: pd.DataFrame, title: str) -> go.Figure:
     if df.empty:
         return empty_figure("Geen trade-data beschikbaar voor de trade timeline.")
     work = df.copy().sort_values("datetime_raw")
+    work = downsample_dataframe(work, 650)
     if work.empty:
         return empty_figure("Geen timeline-data beschikbaar.")
 
@@ -1871,6 +2029,13 @@ def chart_portfolio_allocation(assets_df: pd.DataFrame, title: str) -> go.Figure
     work = work[work["eur_value"] > 0].copy()
     if work.empty:
         return empty_figure("Geen portfolio-waardes beschikbaar.")
+    work = work.sort_values("eur_value", ascending=False).reset_index(drop=True)
+    if len(work) > 8:
+        top = work.head(8).copy()
+        rest_value = float(work.iloc[8:]["eur_value"].sum())
+        if rest_value > 0:
+            top = pd.concat([top, pd.DataFrame([{"symbol": "OVERIG", "eur_value": rest_value}])], ignore_index=True)
+        work = top
     fig = go.Figure(
         data=[
             go.Pie(
@@ -1961,6 +2126,18 @@ def build_trade_detail_chart(row: pd.Series) -> go.Figure:
 # ==========================================================
 # PAGE HELPERS
 # ==========================================================
+def page_display_name(page_key: str) -> str:
+    names = {
+        "dashboard": "Dashboard",
+        "live": "Live Performance",
+        "sim": "Simulator",
+        "shadow": "Shadow Review",
+        "portfolio": "Portfolio",
+        "help": "Help & Data Mapping",
+    }
+    return names.get(page_key, page_key.title())
+
+
 def nav_button(label: str, page_key: str) -> None:
     active = st.session_state.page == page_key
     wrapper = "nav-button-active" if active else ""
@@ -1974,7 +2151,7 @@ def nav_button(label: str, page_key: str) -> None:
 
 def reset_global_filters() -> None:
     st.session_state.search_text = ""
-    st.session_state.global_days_filter = "30D"
+    st.session_state.global_days_filter = "ALLES"
     st.session_state.global_trade_type_filter = "ALLES"
     st.session_state.global_setup_filter = "ALLES"
     st.session_state.global_regime_filter = "ALLES"
@@ -2048,7 +2225,7 @@ def render_trade_list(df: pd.DataFrame, state_key: str = "selected_page_trade_id
         st.info("Geen trades gevonden voor deze selectie.")
         return
 
-    list_df = df.head(12).copy()
+    list_df = df.head(10).copy()
     for _, row in list_df.iterrows():
         trade_id = safe_str(row.get("trade_id"))
         label = (
@@ -2277,12 +2454,11 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Dashboard</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-subtitle">Dit scherm gebruikt history_df als hoofdbron. Hier komen REAL + SIM + SHADOW samen voor totaaloverzicht, equity curve, win/loss, setup performance en timeline. De periode staat standaard op ALLES en de loader geeft nu prioriteit aan echte PostgreSQL-data boven demo-data.</div>',
+        '<div class="section-subtitle">Dit scherm is opnieuw ingedeeld als een pro terminal: minder verticale rommel, duidelijkere blokken en snellere navigatie. De twee kleine top-cirkels blijven zichtbaar, met daaronder de grote gecombineerde performance-cirkel.</div>',
         unsafe_allow_html=True,
     )
 
     filtered = render_filters(history_df, include_trade_type=True)
-    st.caption("Trades in selectie toont nu alles uit de opgehaalde history na jouw filters. Standaard staat de periode op ALLES.")
     summary = performance_summary(filtered)
 
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
@@ -2297,38 +2473,65 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     with m5:
         st.markdown(metric_card_html("Totaal verdiend (€)", format_money(summary["total_eur"]), "blue"), unsafe_allow_html=True)
 
-    r1c1, r1c2 = st.columns([1.55, 1.0], gap="small")
-    with r1c1:
-        st.plotly_chart(chart_equity_curve(filtered, "Equity Curve (gefilterde history)"), use_container_width=True, config={"displayModeBar": False})
-    with r1c2:
-        st.plotly_chart(chart_win_loss(filtered, "Win / Loss Verdeling"), use_container_width=True, config={"displayModeBar": False})
+    tab_overview, tab_analytics, tab_tapelist = st.tabs(["Overview", "Analytics", "Trade Tape"])
 
-    r2c1, r2c2 = st.columns([1.0, 1.0], gap="small")
-    with r2c1:
-        st.plotly_chart(chart_setup_performance(filtered, "Setup Performance"), use_container_width=True, config={"displayModeBar": False})
-    with r2c2:
-        st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R"), use_container_width=True, config={"displayModeBar": False})
+    with tab_overview:
+        row1_left, row1_right = st.columns([1.45, 1.0], gap="small")
+        with row1_left:
+            st.plotly_chart(chart_equity_curve(filtered, "Equity Curve"), use_container_width=True, config={"displayModeBar": False})
+        with row1_right:
+            st.plotly_chart(chart_win_loss(filtered, "Win / Loss Verdeling"), use_container_width=True, config={"displayModeBar": False})
 
-    st.plotly_chart(chart_trade_timeline(filtered, "Trade Timeline"), use_container_width=True, config={"displayModeBar": False})
+        row2_left, row2_right = st.columns([1.05, 1.0], gap="small")
+        with row2_left:
+            st.plotly_chart(chart_setup_performance(filtered, "Setup Performance"), use_container_width=True, config={"displayModeBar": False})
+        with row2_right:
+            best_setup = "-"
+            if not scoreboard_df.empty and "setup_type" in scoreboard_df.columns:
+                tmp = scoreboard_df.copy()
+                tmp["win_rate"] = pd.to_numeric(tmp["win_rate"], errors="coerce").fillna(0.0)
+                tmp["n"] = pd.to_numeric(tmp["n"], errors="coerce").fillna(0.0)
+                tmp = tmp.sort_values(["win_rate", "n"], ascending=[False, False])
+                if not tmp.empty:
+                    top = tmp.iloc[0]
+                    best_setup = f"{safe_str(top.get('setup_type'), '-')} | {safe_str(top.get('market_regime'), '-')}"
+            st.markdown('<div class="panel-tight">', unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Wat hier pro voelt</div>', unsafe_allow_html=True)
+            st.markdown(
+                f"""
+                <div class="trade-note">
+                    <b>1. Setup-first analyse</b><br>
+                    De beste setup-combinatie staat centraal, niet alleen ruwe winrate.<br><br>
+                    <b>2. Minder scroll, meer focus</b><br>
+                    Overview toont alleen de belangrijkste charts tegelijk.<br><br>
+                    <b>3. Beste setup nu:</b> {best_setup}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    extra1, extra2 = st.columns([1.0, 1.0], gap="small")
-    with extra1:
-        st.plotly_chart(chart_source_distribution(filtered, "Bronverdeling in selectie"), use_container_width=True, config={"displayModeBar": False})
-    with extra2:
-        st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R (detail)"), use_container_width=True, config={"displayModeBar": False})
+    with tab_analytics:
+        a1, a2 = st.columns([1.0, 1.0], gap="small")
+        with a1:
+            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R"), use_container_width=True, config={"displayModeBar": False})
+        with a2:
+            st.plotly_chart(chart_trade_timeline(filtered, "Trade Timeline"), use_container_width=True, config={"displayModeBar": False})
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Scoreboard snapshot</div>', unsafe_allow_html=True)
-    if scoreboard_df.empty:
-        st.info("Geen scoreboard-data gevonden.")
-    else:
-        show = scoreboard_df.copy()
-        if "updated_at" in show.columns:
-            show["updated_at"] = show["updated_at"].dt.strftime("%Y-%m-%d %H:%M:%S")
-        st.dataframe(show.head(12), use_container_width=True, hide_index=True)
+        b1, b2 = st.columns([1.0, 1.0], gap="small")
+        with b1:
+            st.plotly_chart(chart_source_distribution(filtered, "Bronverdeling in selectie"), use_container_width=True, config={"displayModeBar": False})
+        with b2:
+            st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R (detail)"), use_container_width=True, config={"displayModeBar": False})
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    render_table_export(filtered, "dashboard_history_export.csv")
+    with tab_tapelist:
+        t1, t2 = st.columns([1.15, 0.95], gap="small")
+        with t1:
+            render_trade_list(filtered, state_key="selected_page_trade_id", title="Dashboard trade tape")
+        with t2:
+            selected = get_selected_trade(filtered, state_key="selected_page_trade_id")
+            render_trade_detail(selected)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2385,64 +2588,76 @@ def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+
 def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snapshot_mode: str) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="portfolio-kicker">Portfolio Overzicht</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Portfolio</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-subtitle">Deze pagina gebruikt alleen snapshot en assets_df. Trade-data hoort hier bewust niet thuis, zodat portefeuillewaarde en allocatie correct blijven.</div>',
+        '<div class="portfolio-explain">Deze pagina is duidelijker opgebouwd zoals je van een pro dashboard verwacht: eerst totaalbeeld, daarna cash-vs-crypto, daarna top holdings en een simpele holdings-tabel.</div>',
         unsafe_allow_html=True,
     )
 
     eur_available = safe_float(snapshot.get("eur_available"), 0.0)
     crypto_assets_eur = safe_float(snapshot.get("crypto_assets_eur"), 0.0)
     total_portfolio_eur = safe_float(snapshot.get("total_portfolio_eur"), 0.0)
+    holdings_df = prepare_portfolio_table(assets_df, total_portfolio_eur)
 
-    m1, m2, m3 = st.columns(3, gap="small")
+    m1, m2, m3, m4 = st.columns(4, gap="small")
     with m1:
         st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
     with m2:
         st.markdown(metric_card_html("Available EUR Balance", format_money(eur_available), "green"), unsafe_allow_html=True)
     with m3:
         st.markdown(metric_card_html("Crypto Assets Value", format_money(crypto_assets_eur), "purple"), unsafe_allow_html=True)
+    with m4:
+        cash_pct = (eur_available / total_portfolio_eur * 100.0) if total_portfolio_eur > 0 else 0.0
+        st.markdown(metric_card_html("Cash aandeel", f"{cash_pct:.1f}%", "yellow"), unsafe_allow_html=True)
 
-    c1, c2 = st.columns([1.05, 1.0], gap="small")
-    with c1:
-        st.plotly_chart(chart_portfolio_allocation(assets_df[assets_df["symbol"] != "EUR"], "Portfolio Allocation"), use_container_width=True, config={"displayModeBar": False})
-    with c2:
+    top_left, top_right = st.columns([1.08, 0.92], gap="small")
+    with top_left:
+        st.plotly_chart(chart_portfolio_allocation(holdings_df, "Portfolio Allocation"), use_container_width=True, config={"displayModeBar": False})
+    with top_right:
         st.markdown('<div class="panel-tight">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Snapshot status</div>', unsafe_allow_html=True)
+        st.markdown(get_status_badge(snapshot_mode) + get_status_badge(safe_str(snapshot.get("status"), snapshot_mode)), unsafe_allow_html=True)
+        st.markdown(f'<div class="small-muted">Laatste snapshot: {format_dt_short(snapshot.get("ts"))}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        if holdings_df.empty:
+            st.markdown('<div class="small-muted">Geen holdings gevonden.</div>', unsafe_allow_html=True)
+        else:
+            top_symbol = safe_str(holdings_df.iloc[0].get("symbol"), "-")
+            top_share = safe_float(holdings_df.iloc[0].get("share_pct"), 0.0)
+            st.markdown(f'<div class="small-muted">Grootste holding: <b>{top_symbol}</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="small-muted">Aandeel grootste holding: <b>{top_share:.1f}%</b></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="small-muted">Aantal zichtbare holdings: <b>{len(holdings_df)}</b></div>', unsafe_allow_html=True)
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown(
-            get_status_badge(snapshot_mode) + get_status_badge(safe_str(snapshot.get("status"), snapshot_mode)),
+            '<div class="trade-note"><b>Leeswijzer</b><br>Links zie je de verdeling over coins. Boven zie je cash vs crypto. Onder staat een compacte holdings-tabel met aandeel per coin.</div>',
             unsafe_allow_html=True,
         )
-        st.markdown(f'<div class="small-muted">Laatste snapshot: {format_dt_short(snapshot.get("ts"))}</div>', unsafe_allow_html=True)
-
-        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("Nieuwe snapshot ophalen", key="portfolio_snapshot_refresh", use_container_width=True):
-            try:
-                build_snapshot_with_eur_values()
-                st.cache_data.clear()
-                st.session_state.status_notice = "Snapshot succesvol vernieuwd."
-                st.rerun()
-            except Exception as exc:
-                capture_exception("Nieuwe snapshot ophalen", exc)
-                st.session_state.status_notice = f"Snapshot refresh mislukt: {exc}"
-                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
 
-    st.session_state.portfolio_search = st.text_input("Zoek asset", value=st.session_state.portfolio_search, placeholder="bijv. BTC of DOGE")
-    filtered_assets = assets_df.copy()
-    search = safe_str(st.session_state.portfolio_search).lower()
-    if search:
-        filtered_assets = filtered_assets[filtered_assets["symbol"].astype(str).str.lower().str.contains(search, na=False)]
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Top holdings</div>', unsafe_allow_html=True)
 
-    display_cols = [c for c in ["symbol", "display_amount", "display_price", "display_value", "price_route"] if c in filtered_assets.columns]
-    if display_cols:
-        st.dataframe(filtered_assets[display_cols].head(ASSET_LIMIT), use_container_width=True, hide_index=True)
+    if holdings_df.empty:
+        st.info("Geen portfolio-data beschikbaar.")
     else:
-        st.info("Geen portfolio-assets gevonden.")
+        table_df = holdings_df.copy().head(12)
+        keep_cols = [c for c in ["symbol", "display_amount", "display_price", "display_value", "share_pct"] if c in table_df.columns]
+        rename_map = {
+            "symbol": "Coin",
+            "display_amount": "Amount",
+            "display_price": "Prijs",
+            "display_value": "Waarde",
+            "share_pct": "Aandeel %",
+        }
+        table_df = table_df[keep_cols].rename(columns=rename_map)
+        if "Aandeel %" in table_df.columns:
+            table_df["Aandeel %"] = pd.to_numeric(table_df["Aandeel %"], errors="coerce").fillna(0.0).map(lambda x: f"{x:.1f}%")
+        st.dataframe(table_df, use_container_width=True, hide_index=True)
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2610,7 +2825,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.10, 0.98, 0.92, 0.92, 1.45, 0.88], gap="small")
+metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.78, 0.78, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -2620,20 +2835,42 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
-    loss_pct = max(0.0, 100.0 - safe_float(live_summary["winrate"], 0.0))
     st.plotly_chart(
-        render_win_loss_donut(
+        render_donut(
             safe_float(live_summary["winrate"], 0.0),
-            loss_pct,
-            safe_float(live_summary["total_eur"], 0.0),
+            "Trade Win Rate",
+            "#34d399",
         ),
         use_container_width=True,
         config={"displayModeBar": False},
     )
 with metric_cols[5]:
+    st.plotly_chart(
+        render_donut(
+            safe_float(live_summary["money_winrate"], 0.0),
+            "Euro Win Rate",
+            "#60a5fa",
+            subtitle=format_money(safe_float(live_summary["total_eur"], 0.0)),
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+with metric_cols[6]:
     st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
 
-st.caption("De grote cirkel combineert nu winstpercentage, verliespercentage en totaal verdiend in euro in één overzicht.")
+combined_row = st.columns([0.9, 1.25, 0.9], gap="small")
+with combined_row[1]:
+    loss_pct = max(0.0, 100.0 - safe_float(live_summary["winrate"], 0.0))
+    st.plotly_chart(
+        chart_combined_performance_donut(
+            real_df if not real_df.empty else history_df,
+            "Gecombineerde Performance",
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
+
+st.caption("Boven zie je nu de twee losse cirkels behouden én daaronder één gecombineerde premium cirkel met win%, loss% en netto euroresultaat.")
 
 # ==========================================================
 # MAIN LAYOUT
@@ -2642,8 +2879,9 @@ left_col, main_col, right_col = st.columns([0.78, 2.12, 0.98], gap="small")
 
 with left_col:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="page-chip">Nu actief: {}</div>'.format(page_display_name(st.session_state.page)), unsafe_allow_html=True)
     st.markdown('<div class="nav-header">Trading Overview</div>', unsafe_allow_html=True)
-    st.markdown('<div class="nav-caption">Klikbare navigatie. Elke knop opent een echte pagina met bijbehorende data.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="nav-caption">Klikbare navigatie. De actieve pagina krijgt een duidelijke highlight zodat je altijd ziet waar je zit.</div>', unsafe_allow_html=True)
 
     hk1, hk2 = st.columns(2, gap="small")
     with hk1:
@@ -2719,7 +2957,7 @@ with right_col:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-st.caption("Bovenste cirkels: links = percentage winnende trades, rechts = percentage euro-resultaat uit winsten t.o.v. totale bruto winsten + verliezen.")
+st.caption("Links zie je Trade Win Rate, daarnaast Euro Win Rate, en daaronder de gecombineerde premium performance-cirkel.")
 
 status_text = (
     f"Data mode: {source_mode} | "
