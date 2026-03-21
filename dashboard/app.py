@@ -1,16 +1,4 @@
-Hier is de **nieuwe volledige aangepaste versie** in **2 delen**, als **echte Python code**, zonder markdown-rommel in het bestand.
-
-**Belangrijk:**
-
-* plak **DEEL 1** bovenaan in `app.py`
-* plak **DEEL 2** daar direct onder
-* plak **geen extra tekst** zoals “DEEL 1/2” of hotkeys in je `app.py`
-* alleen de codeblokken zelf
-
-## DEEL 1/2
-
-````python
-from __future__ import annotations
+rom __future__ import annotations
 
 import os
 import json
@@ -312,6 +300,7 @@ st.markdown(
             align-items:center;
             padding: 8px 0;
             border-bottom: 1px solid rgba(255,255,255,0.05);
+            gap: 10px;
         }
 
         .info-left {
@@ -417,6 +406,7 @@ st.markdown(
             align-items:center;
             padding: 10px 0;
             border-bottom:1px solid rgba(255,255,255,0.05);
+            gap: 10px;
         }
 
         .score-left {
@@ -503,6 +493,7 @@ st.markdown(
             align-items:center;
             padding:10px 0;
             border-bottom:1px solid rgba(255,255,255,0.05);
+            gap: 10px;
         }
 
         .mini-stat-label {
@@ -830,607 +821,608 @@ CREATE INDEX IF NOT EXISTS idx_experience_trades_symbol ON experience_trades(sym
 CREATE INDEX IF NOT EXISTS idx_experience_trades_setup_type ON experience_trades(setup_type);
 CREATE INDEX IF NOT EXISTS idx_experience_trades_created_at ON experience_trades(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_experience_trades_closed_at ON experience_trades(closed_at DESC);
-````
-
+```
 """
 
+
 def trade_reason_text(row: pd.Series) -> str:
-trade_type = safe_str(row.get("trade_type")).upper()
-outcome = safe_str(row.get("outcome")).upper()
-setup = safe_str(row.get("setup_type"), "-")
-regime = safe_str(row.get("regime"), "-")
-symbol = safe_str(row.get("symbol"), "-")
-pnl = safe_float(row.get("pnl_r"), 0.0)
+    trade_type = safe_str(row.get("trade_type")).upper()
+    outcome = safe_str(row.get("outcome")).upper()
+    setup = safe_str(row.get("setup_type"), "-")
+    regime = safe_str(row.get("regime"), "-")
+    symbol = safe_str(row.get("symbol"), "-")
+    pnl = safe_float(row.get("pnl_r"), 0.0)
 
-```
-pnl_txt = format_compact_r(pnl)
+    pnl_txt = format_compact_r(pnl)
 
-if trade_type == "SHADOW":
+    if trade_type == "SHADOW":
+        if outcome == "WIN":
+            return (
+                f"Deze shadow trade laat zien dat {symbol} binnen de setup '{setup}' en het regime '{regime}' waarschijnlijk "
+                f"een sterke kansrijke entry was. Omdat deze trade niet live is uitgevoerd, fungeert dit resultaat als een "
+                f"gemiste opportuniteit. De uitkomst van {pnl_txt} suggereert dat deze combinatie in vergelijkbare contexten "
+                f"meer vertrouwen kan verdienen of minder streng gefilterd hoeft te worden."
+            )
+        if outcome == "LOSS":
+            return (
+                f"Deze shadow trade bevestigt dat het overslaan van {symbol} binnen de setup '{setup}' en het regime '{regime}' "
+                f"waarschijnlijk de juiste beslissing was. De niet-uitgevoerde trade eindigde op {pnl_txt}, wat erop wijst dat "
+                f"deze marktcontext extra voorzichtigheid vraagt. Dit soort shadow-resultaten zijn waardevol om zwakke entries "
+                f"structureel uit live trading te filteren."
+            )
+        return (
+            f"Deze shadow trade voor {symbol} geeft extra context over hoe de setup '{setup}' zich gedroeg binnen het regime "
+            f"'{regime}', maar eindigde zonder duidelijke win/loss-classificatie. Gebruik dit resultaat vooral als aanvullende "
+            f"kwalitatieve feedback voor setup-validatie."
+        )
+
+    if trade_type == "SIM":
+        if outcome == "WIN":
+            return (
+                f"De History Simulator classificeert deze {symbol}-trade als een positieve historische uitkomst binnen de setup "
+                f"'{setup}' en het regime '{regime}'. Met een resultaat van {pnl_txt} ondersteunt deze simulatie dat dit type "
+                f"signaal in vergelijkbare marktomstandigheden robuust kan presteren. Dit vergroot het vertrouwen in de kwaliteit "
+                f"van de setup, maar blijft een simulatie en geen live bevestiging."
+            )
+        if outcome == "LOSS":
+            return (
+                f"De History Simulator laat zien dat deze {symbol}-trade historisch zwakker presteerde binnen de setup "
+                f"'{setup}' en het regime '{regime}'. Het resultaat van {pnl_txt} suggereert dat deze combinatie extra selectiviteit "
+                f"vraagt voordat een vergelijkbaar signaal live wordt toegestaan. Dit soort simulaties helpen om zwakke patronen "
+                f"vroeg te herkennen en live risico te beperken."
+            )
+        return (
+            f"De History Simulator geeft voor {symbol} aanvullende historische context rond de setup '{setup}' binnen het regime "
+            f"'{regime}', maar zonder duidelijke win/loss-uitkomst. Zie dit als ondersteunende informatie voor patroonherkenning, "
+            f"niet als directe live-validatie."
+        )
+
     if outcome == "WIN":
         return (
-            f"Deze shadow trade laat zien dat {symbol} binnen de setup '{setup}' en het regime '{regime}' waarschijnlijk "
-            f"een sterke kansrijke entry was. Omdat deze trade niet live is uitgevoerd, fungeert dit resultaat als een "
-            f"gemiste opportuniteit. De uitkomst van {pnl_txt} suggereert dat deze combinatie in vergelijkbare contexten "
-            f"meer vertrouwen kan verdienen of minder streng gefilterd hoeft te worden."
+            f"Dit is een live uitgevoerde trade op {symbol} die positief is afgesloten met {pnl_txt}. De combinatie van setup "
+            f"'{setup}' en regime '{regime}' heeft in echte marktomstandigheden gewerkt. Dit resultaat is belangrijk omdat live "
+            f"uitvoering niet alleen de setup test, maar ook timing, discipline en operationele betrouwbaarheid van het systeem bevestigt."
         )
+
     if outcome == "LOSS":
         return (
-            f"Deze shadow trade bevestigt dat het overslaan van {symbol} binnen de setup '{setup}' en het regime '{regime}' "
-            f"waarschijnlijk de juiste beslissing was. De niet-uitgevoerde trade eindigde op {pnl_txt}, wat erop wijst dat "
-            f"deze marktcontext extra voorzichtigheid vraagt. Dit soort shadow-resultaten zijn waardevol om zwakke entries "
-            f"structureel uit live trading te filteren."
+            f"Dit is een live trade op {symbol} die negatief is afgesloten met {pnl_txt}. Binnen de combinatie van setup '{setup}' "
+            f"en regime '{regime}' geeft dit verlies waardevolle feedback over waar het model, de timing of de marktomgeving minder "
+            f"gunstig was. Juist deze trades zijn nodig om filters, drempels en risicoregels verder aan te scherpen."
         )
+
     return (
-        f"Deze shadow trade voor {symbol} geeft extra context over hoe de setup '{setup}' zich gedroeg binnen het regime "
-        f"'{regime}', maar eindigde zonder duidelijke win/loss-classificatie. Gebruik dit resultaat vooral als aanvullende "
-        f"kwalitatieve feedback voor setup-validatie."
+        f"Dit is een live trade op {symbol} binnen de setup '{setup}' en het regime '{regime}', maar zonder duidelijke win/loss-uitkomst. "
+        f"Gebruik deze trade vooral als operationele en contextuele feedback binnen de evaluatie van het systeem."
     )
 
-if trade_type == "SIM":
-    if outcome == "WIN":
-        return (
-            f"De History Simulator classificeert deze {symbol}-trade als een positieve historische uitkomst binnen de setup "
-            f"'{setup}' en het regime '{regime}'. Met een resultaat van {pnl_txt} ondersteunt deze simulatie dat dit type "
-            f"signaal in vergelijkbare marktomstandigheden robuust kan presteren. Dit vergroot het vertrouwen in de kwaliteit "
-            f"van de setup, maar blijft een simulatie en geen live bevestiging."
-        )
-    if outcome == "LOSS":
-        return (
-            f"De History Simulator laat zien dat deze {symbol}-trade historisch zwakker presteerde binnen de setup "
-            f"'{setup}' en het regime '{regime}'. Het resultaat van {pnl_txt} suggereert dat deze combinatie extra selectiviteit "
-            f"vraagt voordat een vergelijkbaar signaal live wordt toegestaan. Dit soort simulaties helpen om zwakke patronen "
-            f"vroeg te herkennen en live risico te beperken."
-        )
-    return (
-        f"De History Simulator geeft voor {symbol} aanvullende historische context rond de setup '{setup}' binnen het regime "
-        f"'{regime}', maar zonder duidelijke win/loss-uitkomst. Zie dit als ondersteunende informatie voor patroonherkenning, "
-        f"niet als directe live-validatie."
-    )
-
-if outcome == "WIN":
-    return (
-        f"Dit is een live uitgevoerde trade op {symbol} die positief is afgesloten met {pnl_txt}. De combinatie van setup "
-        f"'{setup}' en regime '{regime}' heeft in echte marktomstandigheden gewerkt. Dit resultaat is belangrijk omdat live "
-        f"uitvoering niet alleen de setup test, maar ook timing, discipline en operationele betrouwbaarheid van het systeem bevestigt."
-    )
-
-if outcome == "LOSS":
-    return (
-        f"Dit is een live trade op {symbol} die negatief is afgesloten met {pnl_txt}. Binnen de combinatie van setup '{setup}' "
-        f"en regime '{regime}' geeft dit verlies waardevolle feedback over waar het model, de timing of de marktomgeving minder "
-        f"gunstig was. Juist deze trades zijn nodig om filters, drempels en risicoregels verder aan te scherpen."
-    )
-
-return (
-    f"Dit is een live trade op {symbol} binnen de setup '{setup}' en het regime '{regime}', maar zonder duidelijke win/loss-uitkomst. "
-    f"Gebruik deze trade vooral als operationele en contextuele feedback binnen de evaluatie van het systeem."
-)
-```
 
 # ==========================================================
-
 # SNAPSHOT / BITVAVO
-
 # ==========================================================
-
 def bitvavo_request(method: str, path: str, body: str = ""):
-if not API_KEY or not API_SECRET:
-raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
+    if not API_KEY or not API_SECRET:
+        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
 
-```
-method_u = method.upper()
-timestamp = str(int(time.time() * 1000))
-body = body or ""
-message = f"{timestamp}{method_u}{path}{body}"
-signature = hmac.new(
-    API_SECRET.encode("utf-8"),
-    message.encode("utf-8"),
-    hashlib.sha256,
-).hexdigest()
+    method_u = method.upper()
+    timestamp = str(int(time.time() * 1000))
+    body = body or ""
+    message = f"{timestamp}{method_u}{path}{body}"
+    signature = hmac.new(
+        API_SECRET.encode("utf-8"),
+        message.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
-headers = {
-    "Bitvavo-Access-Key": API_KEY,
-    "Bitvavo-Access-Signature": signature,
-    "Bitvavo-Access-Timestamp": timestamp,
-    "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
-    "Content-Type": "application/json",
-}
-url = f"{BASE_URL}{path}"
+    headers = {
+        "Bitvavo-Access-Key": API_KEY,
+        "Bitvavo-Access-Signature": signature,
+        "Bitvavo-Access-Timestamp": timestamp,
+        "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
+        "Content-Type": "application/json",
+    }
+    url = f"{BASE_URL}{path}"
 
-if method_u == "GET":
-    r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-elif method_u == "POST":
-    r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
-else:
-    raise ValueError("Alleen GET/POST ondersteund.")
+    if method_u == "GET":
+        r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+    elif method_u == "POST":
+        r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
+    else:
+        raise ValueError("Alleen GET/POST ondersteund.")
 
-if r.status_code >= 400:
-    try:
-        err = r.json()
-    except Exception:
-        err = {"error": r.text}
-    raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
-return r.json()
-```
+    if r.status_code >= 400:
+        try:
+            err = r.json()
+        except Exception:
+            err = {"error": r.text}
+        raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
+    return r.json()
+
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_all_market_prices() -> Dict[str, float]:
-try:
-url = f"{BASE_URL}/v2/ticker/price"
-r = requests.get(url, timeout=HTTP_TIMEOUT)
-r.raise_for_status()
-data = r.json()
+    try:
+        url = f"{BASE_URL}/v2/ticker/price"
+        r = requests.get(url, timeout=HTTP_TIMEOUT)
+        r.raise_for_status()
+        data = r.json()
 
-```
-    prices: Dict[str, float] = {}
-    for row in data:
-        market = row.get("market")
-        price = row.get("price")
-        if market and price is not None:
-            try:
-                prices[market] = float(price)
-            except Exception:
-                pass
-    return prices
-except Exception as e:
-    capture_exception("fetch_all_market_prices", e)
-    return {}
-```
+        prices: Dict[str, float] = {}
+        for row in data:
+            market = row.get("market")
+            price = row.get("price")
+            if market and price is not None:
+                try:
+                    prices[market] = float(price)
+                except Exception:
+                    pass
+        return prices
+    except Exception as e:
+        capture_exception("fetch_all_market_prices", e)
+        return {}
+
 
 def price_in_eur(symbol: str, prices: Dict[str, float]) -> Tuple[Optional[float], str]:
-if symbol == "EUR":
-return 1.0, "EUR"
-direct = f"{symbol}-EUR"
-if direct in prices:
-return prices[direct], direct
-a = f"{symbol}-USDT"
-b = "USDT-EUR"
-if a in prices and b in prices:
-return prices[a] * prices[b], f"{a}*{b}"
-a = f"{symbol}-BTC"
-b = "BTC-EUR"
-if a in prices and b in prices:
-return prices[a] * prices[b], f"{a}*{b}"
-return None, "NO_ROUTE"
+    if symbol == "EUR":
+        return 1.0, "EUR"
+    direct = f"{symbol}-EUR"
+    if direct in prices:
+        return prices[direct], direct
+    a = f"{symbol}-USDT"
+    b = "USDT-EUR"
+    if a in prices and b in prices:
+        return prices[a] * prices[b], f"{a}*{b}"
+    a = f"{symbol}-BTC"
+    b = "BTC-EUR"
+    if a in prices and b in prices:
+        return prices[a] * prices[b], f"{a}*{b}"
+    return None, "NO_ROUTE"
+
 
 def build_snapshot_with_eur_values() -> dict:
-balances = bitvavo_request("GET", "/v2/balance")
-prices = fetch_all_market_prices()
-assets: List[Dict[str, Any]] = []
-eur_available = 0.0
+    balances = bitvavo_request("GET", "/v2/balance")
+    prices = fetch_all_market_prices()
+    assets: List[Dict[str, Any]] = []
+    eur_available = 0.0
 
-```
-for row in balances:
-    symbol = row.get("symbol")
-    available = float(row.get("available", 0) or 0)
-    in_order = float(row.get("inOrder", 0) or 0)
-    total = available + in_order
+    for row in balances:
+        symbol = row.get("symbol")
+        available = float(row.get("available", 0) or 0)
+        in_order = float(row.get("inOrder", 0) or 0)
+        total = available + in_order
 
-    if symbol == "EUR":
-        eur_available = available
+        if symbol == "EUR":
+            eur_available = available
 
-    if total > 0:
-        p_eur, route = price_in_eur(symbol, prices)
-        eur_value = float(total) * float(p_eur) if p_eur is not None else None
-        assets.append(
-            {
-                "symbol": symbol,
-                "available": available,
-                "inOrder": in_order,
-                "total": total,
-                "price_eur": p_eur,
-                "eur_value": eur_value,
-                "price_route": route,
-            }
-        )
+        if total > 0:
+            p_eur, route = price_in_eur(symbol, prices)
+            eur_value = float(total) * float(p_eur) if p_eur is not None else None
+            assets.append(
+                {
+                    "symbol": symbol,
+                    "available": available,
+                    "inOrder": in_order,
+                    "total": total,
+                    "price_eur": p_eur,
+                    "eur_value": eur_value,
+                    "price_route": route,
+                }
+            )
 
-crypto_assets_eur = sum(
-    float(a["eur_value"])
-    for a in assets
-    if a["symbol"] != "EUR" and a.get("eur_value") is not None
-)
-total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
+    crypto_assets_eur = sum(
+        float(a["eur_value"])
+        for a in assets
+        if a["symbol"] != "EUR" and a.get("eur_value") is not None
+    )
+    total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
 
-snapshot = {
-    "status": "OK",
-    "ts": now_iso(),
-    "eur_available": float(eur_available),
-    "crypto_assets_eur": float(crypto_assets_eur),
-    "total_portfolio_eur": float(total_portfolio_eur),
-    "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
-}
+    snapshot = {
+        "status": "OK",
+        "ts": now_iso(),
+        "eur_available": float(eur_available),
+        "crypto_assets_eur": float(crypto_assets_eur),
+        "total_portfolio_eur": float(total_portfolio_eur),
+        "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
+    }
 
-ensure_parent_dir(SNAPSHOT_PATH)
-with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-    json.dump(snapshot, f, indent=2, ensure_ascii=False)
+    ensure_parent_dir(SNAPSHOT_PATH)
+    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+        json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
-append_debug_event("Snapshot succesvol opgebouwd.")
-return snapshot
-```
+    append_debug_event("Snapshot succesvol opgebouwd.")
+    return snapshot
+
 
 def read_snapshot_only() -> Tuple[dict, str]:
-snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
-if snapshot is None:
-snapshot = {
-"status": "MISSING",
-"ts": None,
-"eur_available": 0.0,
-"crypto_assets_eur": 0.0,
-"total_portfolio_eur": 0.0,
-"assets": [],
-}
-return snapshot, snapshot_err or "Snapshot niet gevonden"
-return snapshot, "read-only snapshot"
+    snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
+    if snapshot is None:
+        snapshot = {
+            "status": "MISSING",
+            "ts": None,
+            "eur_available": 0.0,
+            "crypto_assets_eur": 0.0,
+            "total_portfolio_eur": 0.0,
+            "assets": [],
+        }
+        return snapshot, snapshot_err or "Snapshot niet gevonden"
+    return snapshot, "read-only snapshot"
+
 
 # ==========================================================
-
 # DATABASE
-
 # ==========================================================
-
 def db_ready() -> bool:
-return bool(DATABASE_URL)
+    return bool(DATABASE_URL)
+
 
 def get_db_conn():
-if not DATABASE_URL:
-return None
-return psycopg2.connect(
-DATABASE_URL,
-sslmode="require",
-connect_timeout=DB_CONNECT_TIMEOUT,
-options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
-)
+    if not DATABASE_URL:
+        return None
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        connect_timeout=DB_CONNECT_TIMEOUT,
+        options=f"-c statement_timeout={DB_STATEMENT_TIMEOUT_MS}",
+    )
+
 
 def run_df_query(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
-if not db_ready():
-return pd.DataFrame([])
-try:
-conn = get_db_conn()
-if conn is None:
-return pd.DataFrame([])
-with conn:
-with conn.cursor() as cur:
-cur.execute(sql, params or ())
-rows = cur.fetchall()
-cols = [desc[0] for desc in cur.description]
-conn.close()
-return pd.DataFrame(rows, columns=cols)
-except Exception as e:
-capture_exception("run_df_query", e)
-return pd.DataFrame([])
+    if not db_ready():
+        return pd.DataFrame([])
+    conn = None
+    try:
+        conn = get_db_conn()
+        if conn is None:
+            return pd.DataFrame([])
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params or ())
+                rows = cur.fetchall()
+                cols = [desc[0] for desc in cur.description]
+        return pd.DataFrame(rows, columns=cols)
+    except Exception as e:
+        capture_exception("run_df_query", e)
+        return pd.DataFrame([])
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 
 @st.cache_data(ttl=20, show_spinner=False)
 def get_table_columns(table_name: str) -> List[str]:
-sql = """
-SELECT column_name
-FROM information_schema.columns
-WHERE table_schema = 'public'
-AND table_name = %s
-ORDER BY ordinal_position
-"""
-df = run_df_query(sql, (table_name,))
-if df.empty or "column_name" not in df.columns:
-return []
-return [str(x) for x in df["column_name"].tolist()]
+    sql = """
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = %s
+    ORDER BY ordinal_position
+    """
+    df = run_df_query(sql, (table_name,))
+    if df.empty or "column_name" not in df.columns:
+        return []
+    return [str(x) for x in df["column_name"].tolist()]
+
 
 def has_columns(table_name: str) -> bool:
-return len(get_table_columns(table_name)) > 0
+    return len(get_table_columns(table_name)) > 0
+
 
 def sql_col(cols: List[str], name: str, cast: str = "text") -> str:
-if name in cols:
-return f'"{name}"'
-return f"NULL::{cast}"
+    if name in cols:
+        return f'"{name}"'
+    return f"NULL::{cast}"
+
 
 @st.cache_data(ttl=20, show_spinner=False)
 def table_count(table_name: str) -> int:
-if not has_columns(table_name):
-return 0
-df = run_df_query(f"SELECT COUNT(*) AS n FROM public.{table_name}")
-if df.empty or "n" not in df.columns:
-return 0
-return safe_int(df.iloc[0]["n"], 0)
+    if not has_columns(table_name):
+        return 0
+    df = run_df_query(f"SELECT COUNT(*) AS n FROM public.{table_name}")
+    if df.empty or "n" not in df.columns:
+        return 0
+    return safe_int(df.iloc[0]["n"], 0)
+
 
 @st.cache_data(ttl=20, show_spinner=False)
 def load_pending_orders_db() -> pd.DataFrame:
-if not has_columns("pending_approvals"):
-return pd.DataFrame([])
-cols = get_table_columns("pending_approvals")
+    if not has_columns("pending_approvals"):
+        return pd.DataFrame([])
+    cols = get_table_columns("pending_approvals")
 
-```
-def c(name: str, cast: str = "text") -> str:
-    return sql_col(cols, name, cast)
+    def c(name: str, cast: str = "text") -> str:
+        return sql_col(cols, name, cast)
 
-sql = f"""
-    SELECT
-        {c("id")} AS id,
-        {c("symbol")} AS symbol,
-        {c("status")} AS status,
-        {c("setup_type")} AS setup_type,
-        {c("regime")} AS regime,
-        {c("score", "double precision")} AS score,
-        {c("chance", "double precision")} AS chance,
-        {c("confidence", "double precision")} AS confidence,
-        {c("entry", "double precision")} AS entry,
-        {c("stop", "double precision")} AS stop,
-        {c("target", "double precision")} AS target,
-        {c("timeframe")} AS timeframe,
-        {c("created_at", "timestamptz")} AS created_at,
-        {c("expires_at", "timestamptz")} AS expires_at
-    FROM public.pending_approvals
-    WHERE COALESCE({c("status")}, 'PENDING') IN ('PENDING', 'APPROVED')
-    ORDER BY COALESCE({c("chance", "double precision")}, 0) DESC,
-             COALESCE({c("score", "double precision")}, 0) DESC,
-             {c("created_at", "timestamptz")} DESC NULLS LAST
-    LIMIT {PENDING_LIMIT}
-"""
-df = run_df_query(sql)
-if df.empty:
+    sql = f"""
+        SELECT
+            {c("id")} AS id,
+            {c("symbol")} AS symbol,
+            {c("status")} AS status,
+            {c("setup_type")} AS setup_type,
+            {c("regime")} AS regime,
+            {c("score", "double precision")} AS score,
+            {c("chance", "double precision")} AS chance,
+            {c("confidence", "double precision")} AS confidence,
+            {c("entry", "double precision")} AS entry,
+            {c("stop", "double precision")} AS stop,
+            {c("target", "double precision")} AS target,
+            {c("timeframe")} AS timeframe,
+            {c("created_at", "timestamptz")} AS created_at,
+            {c("expires_at", "timestamptz")} AS expires_at
+        FROM public.pending_approvals
+        WHERE COALESCE({c("status")}, 'PENDING') IN ('PENDING', 'APPROVED')
+        ORDER BY COALESCE({c("chance", "double precision")}, 0) DESC,
+                 COALESCE({c("score", "double precision")}, 0) DESC,
+                 {c("created_at", "timestamptz")} DESC NULLS LAST
+        LIMIT {PENDING_LIMIT}
+    """
+    df = run_df_query(sql)
+    if df.empty:
+        return df
+
+    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    if "created_at" in df.columns:
+        df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
+    if "expires_at" in df.columns:
+        df["expires_at"] = pd.to_datetime(df["expires_at"], errors="coerce", utc=True)
     return df
 
-for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
-    if col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-
-if "created_at" in df.columns:
-    df["created_at"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True)
-if "expires_at" in df.columns:
-    df["expires_at"] = pd.to_datetime(df["expires_at"], errors="coerce", utc=True)
-return df
-```
 
 def build_experience_trades_sql(kind: str, limit: int) -> str:
-cols = get_table_columns("experience_trades")
-if not cols:
-return ""
+    cols = get_table_columns("experience_trades")
+    if not cols:
+        return ""
 
-```
-trade_id_expr = "NULL::text"
-if "trade_key" in cols and "id" in cols:
-    trade_id_expr = 'COALESCE("trade_key"::text, "id"::text)'
-elif "trade_key" in cols:
-    trade_id_expr = '"trade_key"::text'
-elif "id" in cols:
-    trade_id_expr = '"id"::text'
+    trade_id_expr = "NULL::text"
+    if "trade_key" in cols and "id" in cols:
+        trade_id_expr = 'COALESCE("trade_key"::text, "id"::text)'
+    elif "trade_key" in cols:
+        trade_id_expr = '"trade_key"::text'
+    elif "id" in cols:
+        trade_id_expr = '"id"::text'
 
-symbol_expr = "NULL::text"
-if "coin" in cols and "symbol" in cols:
-    symbol_expr = 'COALESCE("coin", "symbol")'
-elif "coin" in cols:
-    symbol_expr = '"coin"'
-elif "symbol" in cols:
-    symbol_expr = '"symbol"'
+    symbol_expr = "NULL::text"
+    if "coin" in cols and "symbol" in cols:
+        symbol_expr = 'COALESCE("coin", "symbol")'
+    elif "coin" in cols:
+        symbol_expr = '"coin"'
+    elif "symbol" in cols:
+        symbol_expr = '"symbol"'
 
-timeframe_expr = "NULL::text"
-if "entry_timeframe" in cols and "timeframe" in cols:
-    timeframe_expr = 'COALESCE("entry_timeframe", "timeframe")'
-elif "entry_timeframe" in cols:
-    timeframe_expr = '"entry_timeframe"'
-elif "timeframe" in cols:
-    timeframe_expr = '"timeframe"'
+    timeframe_expr = "NULL::text"
+    if "entry_timeframe" in cols and "timeframe" in cols:
+        timeframe_expr = 'COALESCE("entry_timeframe", "timeframe")'
+    elif "entry_timeframe" in cols:
+        timeframe_expr = '"entry_timeframe"'
+    elif "timeframe" in cols:
+        timeframe_expr = '"timeframe"'
 
-regime_expr = "NULL::text"
-if "market_regime" in cols and "regime" in cols:
-    regime_expr = 'COALESCE("market_regime", "regime")'
-elif "market_regime" in cols:
-    regime_expr = '"market_regime"'
-elif "regime" in cols:
-    regime_expr = '"regime"'
+    regime_expr = "NULL::text"
+    if "market_regime" in cols and "regime" in cols:
+        regime_expr = 'COALESCE("market_regime", "regime")'
+    elif "market_regime" in cols:
+        regime_expr = '"market_regime"'
+    elif "regime" in cols:
+        regime_expr = '"regime"'
 
-label_expr = "NULL::text"
-if "label" in cols and "grade" in cols:
-    label_expr = 'COALESCE("label", "grade")'
-elif "label" in cols:
-    label_expr = '"label"'
-elif "grade" in cols:
-    label_expr = '"grade"'
+    label_expr = "NULL::text"
+    if "label" in cols and "grade" in cols:
+        label_expr = 'COALESCE("label", "grade")'
+    elif "label" in cols:
+        label_expr = '"label"'
+    elif "grade" in cols:
+        label_expr = '"grade"'
 
-score_expr = "0::double precision"
-if "score" in cols and "bot_confidence" in cols:
-    score_expr = 'COALESCE("score"::double precision, "bot_confidence"::double precision, 0)'
-elif "score" in cols:
-    score_expr = 'COALESCE("score"::double precision, 0)'
-elif "bot_confidence" in cols:
-    score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    score_expr = "0::double precision"
+    if "score" in cols and "bot_confidence" in cols:
+        score_expr = 'COALESCE("score"::double precision, "bot_confidence"::double precision, 0)'
+    elif "score" in cols:
+        score_expr = 'COALESCE("score"::double precision, 0)'
+    elif "bot_confidence" in cols:
+        score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
 
-raw_score_expr = "0::double precision"
-if "raw_score" in cols:
-    raw_score_expr = 'COALESCE("raw_score"::double precision, 0)'
-elif "score" in cols:
-    raw_score_expr = 'COALESCE("score"::double precision, 0)'
-elif "bot_confidence" in cols:
-    raw_score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    raw_score_expr = "0::double precision"
+    if "raw_score" in cols:
+        raw_score_expr = 'COALESCE("raw_score"::double precision, 0)'
+    elif "score" in cols:
+        raw_score_expr = 'COALESCE("score"::double precision, 0)'
+    elif "bot_confidence" in cols:
+        raw_score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
 
-chance_expr = 'COALESCE("chance"::double precision, 0)' if "chance" in cols else "0::double precision"
+    chance_expr = 'COALESCE("chance"::double precision, 0)' if "chance" in cols else "0::double precision"
 
-confidence_expr = "0::double precision"
-if "confidence" in cols and "bot_confidence" in cols:
-    confidence_expr = 'COALESCE("confidence"::double precision, "bot_confidence"::double precision, 0)'
-elif "confidence" in cols:
-    confidence_expr = 'COALESCE("confidence"::double precision, 0)'
-elif "bot_confidence" in cols:
-    confidence_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    confidence_expr = "0::double precision"
+    if "confidence" in cols and "bot_confidence" in cols:
+        confidence_expr = 'COALESCE("confidence"::double precision, "bot_confidence"::double precision, 0)'
+    elif "confidence" in cols:
+        confidence_expr = 'COALESCE("confidence"::double precision, 0)'
+    elif "bot_confidence" in cols:
+        confidence_expr = 'COALESCE("bot_confidence"::double precision, 0)'
 
-entry_expr = sql_col(cols, "entry", "double precision")
-stop_expr = sql_col(cols, "stop", "double precision")
-target_expr = sql_col(cols, "target", "double precision")
-outcome_expr = sql_col(cols, "outcome")
+    entry_expr = sql_col(cols, "entry", "double precision")
+    stop_expr = sql_col(cols, "stop", "double precision")
+    target_expr = sql_col(cols, "target", "double precision")
+    outcome_expr = sql_col(cols, "outcome")
 
-created_expr = "NULL::timestamptz"
-if "created_at" in cols and "entry_time" in cols and "timestamp" in cols:
-    created_expr = 'COALESCE("created_at", "entry_time", "timestamp")'
-elif "created_at" in cols and "entry_time" in cols:
-    created_expr = 'COALESCE("created_at", "entry_time")'
-elif "created_at" in cols and "timestamp" in cols:
-    created_expr = 'COALESCE("created_at", "timestamp")'
-elif "created_at" in cols:
-    created_expr = '"created_at"'
-elif "entry_time" in cols:
-    created_expr = '"entry_time"'
-elif "timestamp" in cols:
-    created_expr = '"timestamp"'
+    created_expr = "NULL::timestamptz"
+    if "created_at" in cols and "entry_time" in cols and "timestamp" in cols:
+        created_expr = 'COALESCE("created_at", "entry_time", "timestamp")'
+    elif "created_at" in cols and "entry_time" in cols:
+        created_expr = 'COALESCE("created_at", "entry_time")'
+    elif "created_at" in cols and "timestamp" in cols:
+        created_expr = 'COALESCE("created_at", "timestamp")'
+    elif "created_at" in cols:
+        created_expr = '"created_at"'
+    elif "entry_time" in cols:
+        created_expr = '"entry_time"'
+    elif "timestamp" in cols:
+        created_expr = '"timestamp"'
 
-closed_expr = "NULL::timestamptz"
-if "closed_at" in cols and "exit_time" in cols:
-    closed_expr = 'COALESCE("closed_at", "exit_time")'
-elif "closed_at" in cols:
-    closed_expr = '"closed_at"'
-elif "exit_time" in cols:
-    closed_expr = '"exit_time"'
+    closed_expr = "NULL::timestamptz"
+    if "closed_at" in cols and "exit_time" in cols:
+        closed_expr = 'COALESCE("closed_at", "exit_time")'
+    elif "closed_at" in cols:
+        closed_expr = '"closed_at"'
+    elif "exit_time" in cols:
+        closed_expr = '"exit_time"'
 
-source_expr = "'UNKNOWN'::text"
-if "source" in cols and "is_shadow" in cols:
-    source_expr = """
-        COALESCE(
-            UPPER("source"),
-            CASE WHEN COALESCE("is_shadow", FALSE) THEN 'SHADOW' ELSE 'REAL' END
-        )
-    """
-elif "source" in cols:
-    source_expr = 'COALESCE(UPPER("source"), \'UNKNOWN\')'
-elif "is_shadow" in cols:
-    source_expr = "CASE WHEN COALESCE(\"is_shadow\", FALSE) THEN 'SHADOW' ELSE 'REAL' END"
+    source_expr = "'UNKNOWN'::text"
+    if "source" in cols and "is_shadow" in cols:
+        source_expr = """
+            COALESCE(
+                UPPER("source"),
+                CASE WHEN COALESCE("is_shadow", FALSE) THEN 'SHADOW' ELSE 'REAL' END
+            )
+        """
+    elif "source" in cols:
+        source_expr = "COALESCE(UPPER(\"source\"), 'UNKNOWN')"
+    elif "is_shadow" in cols:
+        source_expr = "CASE WHEN COALESCE(\"is_shadow\", FALSE) THEN 'SHADOW' ELSE 'REAL' END"
 
-is_shadow_expr = "FALSE"
-if "is_shadow" in cols:
-    is_shadow_expr = 'COALESCE("is_shadow", FALSE)'
-elif "source" in cols:
-    is_shadow_expr = "CASE WHEN UPPER(COALESCE(\"source\", '')) = 'SHADOW' THEN TRUE ELSE FALSE END"
+    is_shadow_expr = "FALSE"
+    if "is_shadow" in cols:
+        is_shadow_expr = 'COALESCE("is_shadow", FALSE)'
+    elif "source" in cols:
+        is_shadow_expr = "CASE WHEN UPPER(COALESCE(\"source\", '')) = 'SHADOW' THEN TRUE ELSE FALSE END"
 
-pnl_expr = """
-    CASE
-        WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
-        WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
-        ELSE 0.0
-    END
-"""
-if "result_r" in cols:
     pnl_expr = """
-        COALESCE(
-            "result_r"::double precision,
-            CASE
-                WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
-                WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
-                ELSE 0.0
-            END
-        )
-    """
-
-kind_u = kind.upper()
-where = "1=1"
-if "source" in cols:
-    if kind_u == "SIM":
-        where = "UPPER(COALESCE(source_calc, '')) = 'SIM'"
-    elif kind_u == "SHADOW":
-        where = "UPPER(COALESCE(source_calc, '')) = 'SHADOW'"
-    elif kind_u == "REAL":
-        where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW')"
-    elif kind_u == "ALL":
-        where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW', 'SIM', 'SHADOW')"
-elif "is_shadow" in cols:
-    if kind_u == "SHADOW":
-        where = "COALESCE(is_shadow_calc, FALSE) = TRUE"
-    elif kind_u == "REAL":
-        where = "COALESCE(is_shadow_calc, FALSE) = FALSE"
-    elif kind_u == "SIM":
-        where = "1=0"
-
-sql = f"""
-    WITH base AS (
-        SELECT
-            {trade_id_expr} AS trade_id,
-            {symbol_expr} AS symbol,
-            {sql_col(cols, "setup_type")} AS setup_type,
-            {timeframe_expr} AS timeframe,
-            {regime_expr} AS regime,
-            {label_expr} AS label,
-            {score_expr} AS score,
-            {raw_score_expr} AS raw_score,
-            {chance_expr} AS chance,
-            {confidence_expr} AS confidence,
-            {entry_expr} AS entry,
-            {stop_expr} AS stop,
-            {target_expr} AS target,
-            {outcome_expr} AS outcome_calc,
-            {source_expr} AS source_calc,
-            {is_shadow_expr} AS is_shadow_calc,
-            {created_expr} AS created_at,
-            {closed_expr} AS closed_at
-        FROM public.experience_trades
-    )
-    SELECT
-        trade_id,
-        symbol,
-        setup_type,
-        timeframe,
-        regime,
-        label,
-        score,
-        raw_score,
-        chance,
-        confidence,
-        entry,
-        stop,
-        target,
-        {pnl_expr} AS pnl_r,
-        COALESCE(outcome_calc, 'UNKNOWN') AS outcome,
-        COALESCE(source_calc, 'UNKNOWN') AS source,
         CASE
-            WHEN UPPER(COALESCE(source_calc, '')) = 'SIM' THEN 'SIM'
-            WHEN UPPER(COALESCE(source_calc, '')) = 'SHADOW' THEN 'SHADOW'
-            WHEN UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
-            WHEN COALESCE(is_shadow_calc, FALSE) THEN 'SHADOW'
-            ELSE 'REAL'
-        END AS trade_type,
-        COALESCE(is_shadow_calc, FALSE) AS is_shadow,
-        created_at,
-        closed_at
-    FROM base
-    WHERE {where}
-    ORDER BY COALESCE(closed_at, created_at) DESC NULLS LAST
-    LIMIT {limit}
-"""
-return sql
-```
+            WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
+            WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
+            ELSE 0.0
+        END
+    """
+    if "result_r" in cols:
+        pnl_expr = """
+            COALESCE(
+                "result_r"::double precision,
+                CASE
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
+                    ELSE 0.0
+                END
+            )
+        """
+
+    kind_u = kind.upper()
+    where = "1=1"
+    if "source" in cols:
+        if kind_u == "SIM":
+            where = "UPPER(COALESCE(source_calc, '')) = 'SIM'"
+        elif kind_u == "SHADOW":
+            where = "UPPER(COALESCE(source_calc, '')) = 'SHADOW'"
+        elif kind_u == "REAL":
+            where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW')"
+        elif kind_u == "ALL":
+            where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW', 'SIM', 'SHADOW')"
+    elif "is_shadow" in cols:
+        if kind_u == "SHADOW":
+            where = "COALESCE(is_shadow_calc, FALSE) = TRUE"
+        elif kind_u == "REAL":
+            where = "COALESCE(is_shadow_calc, FALSE) = FALSE"
+        elif kind_u == "SIM":
+            where = "1=0"
+
+    sql = f"""
+        WITH base AS (
+            SELECT
+                {trade_id_expr} AS trade_id,
+                {symbol_expr} AS symbol,
+                {sql_col(cols, "setup_type")} AS setup_type,
+                {timeframe_expr} AS timeframe,
+                {regime_expr} AS regime,
+                {label_expr} AS label,
+                {score_expr} AS score,
+                {raw_score_expr} AS raw_score,
+                {chance_expr} AS chance,
+                {confidence_expr} AS confidence,
+                {entry_expr} AS entry,
+                {stop_expr} AS stop,
+                {target_expr} AS target,
+                {outcome_expr} AS outcome_calc,
+                {source_expr} AS source_calc,
+                {is_shadow_expr} AS is_shadow_calc,
+                {created_expr} AS created_at,
+                {closed_expr} AS closed_at
+                {',' if 'result_r' in cols else ''}
+                {"\"result_r\"::double precision AS result_r_raw" if 'result_r' in cols else ''}
+            FROM public.experience_trades
+        )
+        SELECT
+            trade_id,
+            symbol,
+            setup_type,
+            timeframe,
+            regime,
+            label,
+            score,
+            raw_score,
+            chance,
+            confidence,
+            entry,
+            stop,
+            target,
+            {('COALESCE(result_r_raw, ' + pnl_expr.strip() + ')') if 'result_r' in cols else pnl_expr} AS pnl_r,
+            COALESCE(outcome_calc, 'UNKNOWN') AS outcome,
+            COALESCE(source_calc, 'UNKNOWN') AS source,
+            CASE
+                WHEN UPPER(COALESCE(source_calc, '')) = 'SIM' THEN 'SIM'
+                WHEN UPPER(COALESCE(source_calc, '')) = 'SHADOW' THEN 'SHADOW'
+                WHEN UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
+                WHEN COALESCE(is_shadow_calc, FALSE) THEN 'SHADOW'
+                ELSE 'REAL'
+            END AS trade_type,
+            COALESCE(is_shadow_calc, FALSE) AS is_shadow,
+            created_at,
+            closed_at
+        FROM base
+        WHERE {where}
+        ORDER BY COALESCE(closed_at, created_at) DESC NULLS LAST
+        LIMIT {limit}
+    """
+    return sql
+
 
 def normalize_trade_df(df: pd.DataFrame) -> pd.DataFrame:
-if df.empty:
-return empty_trade_df()
+    if df.empty:
+        return empty_trade_df()
 
-```
-out = df.copy()
-numeric_cols = ["score", "raw_score", "chance", "confidence", "entry", "stop", "target", "pnl_r"]
-for col in numeric_cols:
-    if col in out.columns:
-        out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
-    else:
-        out[col] = 0.0
+    out = df.copy()
+    numeric_cols = ["score", "raw_score", "chance", "confidence", "entry", "stop", "target", "pnl_r"]
+    for col in numeric_cols:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+        else:
+            out[col] = 0.0
 
-for col in ["created_at", "closed_at"]:
-    if col in out.columns:
-        out[col] = pd.to_datetime(out[col], errors="coerce", utc=True)
-    else:
-        out[col] = pd.NaT
+    for col in ["created_at", "closed_at"]:
+        if col in out.columns:
+            out[col] = pd.to_datetime(out[col], errors="coerce", utc=True)
+        else:
+            out[col] = pd.NaT
 
-out["datetime_raw"] = out["closed_at"].where(~out["closed_at"].isna(), out["created_at"])
-out["datetime"] = out["datetime_raw"].apply(format_dt_short)
-out["entry_price"] = out["entry"]
-out["exit_price"] = out["target"]
-out["trade_type"] = out["trade_type"].fillna("UNKNOWN").astype(str).str.upper()
-out["source"] = out["source"].fillna("UNKNOWN").astype(str).str.upper()
-out["outcome"] = out["outcome"].fillna("UNKNOWN").astype(str).str.upper()
-out["label"] = out["label"].fillna("-").astype(str)
-out["symbol"] = out["symbol"].fillna("-").astype(str)
-out["setup_type"] = out["setup_type"].fillna("-").astype(str)
-out["regime"] = out["regime"].fillna("-").astype(str)
-out["timeframe"] = out["timeframe"].fillna("-").astype(str)
-return out
-```
+    out["datetime_raw"] = out["closed_at"].where(~out["closed_at"].isna(), out["created_at"])
+    out["datetime"] = out["datetime_raw"].apply(format_dt_short)
+    out["entry_price"] = out["entry"]
+    out["exit_price"] = out["target"]
+    out["trade_type"] = out["trade_type"].fillna("UNKNOWN").astype(str).str.upper()
+    out["source"] = out["source"].fillna("UNKNOWN").astype(str).str.upper()
+    out["outcome"] = out["outcome"].fillna("UNKNOWN").astype(str).str.upper()
+    out["label"] = out["label"].fillna("-").astype(str)
+    out["symbol"] = out["symbol"].fillna("-").astype(str)
+    out["setup_type"] = out["setup_type"].fillna("-").astype(str)
+    out["regime"] = out["regime"].fillna("-").astype(str)
+    out["timeframe"] = out["timeframe"].fillna("-").astype(str)
+    if "trade_id" not in out.columns:
+        out["trade_id"] = out.index.astype(str)
+    return out
 
-````
 
-## DEEL 2/2
-
-```python
 @st.cache_data(ttl=20, show_spinner=False)
 def load_real_trades_db() -> pd.DataFrame:
     sql = build_experience_trades_sql("REAL", REAL_LIMIT)
@@ -1952,6 +1944,7 @@ with shell_cols[0]:
             st.session_state.hotkey_show_debug = not st.session_state.hotkey_show_debug
             st.session_state.hotkey_show_pg_structure = not st.session_state.hotkey_show_pg_structure
             st.session_state.hotkey_notice = "D toegepast: debug-sectie en PostgreSQL structuur bijgewerkt."
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     hk3, hk4 = st.columns(2, gap="small")
@@ -1961,12 +1954,14 @@ with shell_cols[0]:
             st.session_state.hotkey_advanced_mode = not st.session_state.hotkey_advanced_mode
             mode_txt = "AAN" if st.session_state.hotkey_advanced_mode else "UIT"
             st.session_state.hotkey_notice = f"A toegepast: Advanced AI Mode staat nu {mode_txt}."
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with hk4:
         st.markdown('<div class="hotkey-button">', unsafe_allow_html=True)
         if st.button("S 📖", use_container_width=True):
             st.session_state.hotkey_show_pg_help = not st.session_state.hotkey_show_pg_help
             st.session_state.hotkey_notice = "S toegepast: uitlegblokken bijgewerkt."
+            st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state.hotkey_notice:
@@ -2139,6 +2134,7 @@ with shell_cols[1]:
                     setup_opts,
                     index=max(0, setup_opts.index(st.session_state.trade_setup_filter)) if st.session_state.trade_setup_filter in setup_opts else 0,
                     label_visibility="collapsed",
+                    key="trade_setup_filter_box",
                 )
             with filter_top[1]:
                 outcome_opts = ["ALLES"] + sorted(active_all_df["outcome"].dropna().astype(str).unique().tolist()) if not active_all_df.empty else ["ALLES"]
@@ -2147,6 +2143,7 @@ with shell_cols[1]:
                     outcome_opts,
                     index=max(0, outcome_opts.index(st.session_state.trade_outcome_filter)) if st.session_state.trade_outcome_filter in outcome_opts else 0,
                     label_visibility="collapsed",
+                    key="trade_outcome_filter_box",
                 )
             with filter_top[2]:
                 regime_opts = ["ALLES"] + sorted(active_all_df["regime"].dropna().astype(str).unique().tolist()) if not active_all_df.empty else ["ALLES"]
@@ -2155,13 +2152,16 @@ with shell_cols[1]:
                     regime_opts,
                     index=max(0, regime_opts.index(st.session_state.trade_regime_filter)) if st.session_state.trade_regime_filter in regime_opts else 0,
                     label_visibility="collapsed",
+                    key="trade_regime_filter_box",
                 )
             with filter_top[3]:
+                period_options = ["ALLES", "7D", "30D", "90D", "180D"]
                 st.session_state.trade_days_filter = st.selectbox(
                     "Period",
-                    ["ALLES", "7D", "30D", "90D", "180D"],
-                    index=["ALLES", "7D", "30D", "90D", "180D"].index(st.session_state.trade_days_filter) if st.session_state.trade_days_filter in ["ALLES", "7D", "30D", "90D", "180D"] else 2,
+                    period_options,
+                    index=period_options.index(st.session_state.trade_days_filter) if st.session_state.trade_days_filter in period_options else 2,
                     label_visibility="collapsed",
+                    key="trade_days_filter_box",
                 )
             with filter_top[4]:
                 coin_opts = ["ALLES"] + sorted(active_all_df["symbol"].dropna().astype(str).unique().tolist()) if not active_all_df.empty else ["ALLES"]
@@ -2170,6 +2170,7 @@ with shell_cols[1]:
                     coin_opts,
                     index=max(0, coin_opts.index(st.session_state.trade_coin_filter)) if st.session_state.trade_coin_filter in coin_opts else 0,
                     label_visibility="collapsed",
+                    key="trade_coin_filter_box",
                 )
 
             trade_reason = trade_reason_text(selected_trade)
@@ -2417,26 +2418,26 @@ with st.expander("Volledige trade-geschiedenis / filters", expanded=False):
         f1, f2, f3, f4 = st.columns(4)
         with f1:
             type_opts = ["ALLES"] + sorted(hist_df["trade_type"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            type_filter = st.selectbox("Type", type_opts, index=0)
+            type_filter = st.selectbox("Type", type_opts, index=0, key="hist_type")
         with f2:
             outcome_opts = ["ALLES"] + sorted(hist_df["outcome"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            outcome_filter = st.selectbox("Outcome", outcome_opts, index=0)
+            outcome_filter = st.selectbox("Outcome", outcome_opts, index=0, key="hist_outcome")
         with f3:
             coin_opts = ["ALLES"] + sorted(hist_df["symbol"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            coin_filter = st.selectbox("Coin", coin_opts, index=0)
+            coin_filter = st.selectbox("Coin", coin_opts, index=0, key="hist_coin")
         with f4:
-            days_filter = st.selectbox("Periode", ["ALLES", "7D", "30D", "90D", "180D"], index=0)
+            days_filter = st.selectbox("Periode", ["ALLES", "7D", "30D", "90D", "180D"], index=0, key="hist_days")
 
         f5, f6, f7 = st.columns(3)
         with f5:
             setup_opts = ["ALLES"] + sorted(hist_df["setup_type"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            setup_filter = st.selectbox("Setup", setup_opts, index=0)
+            setup_filter = st.selectbox("Setup", setup_opts, index=0, key="hist_setup")
         with f6:
             regime_opts = ["ALLES"] + sorted(hist_df["regime"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            regime_filter = st.selectbox("Regime", regime_opts, index=0)
+            regime_filter = st.selectbox("Regime", regime_opts, index=0, key="hist_regime")
         with f7:
             timeframe_opts = ["ALLES"] + sorted(hist_df["timeframe"].dropna().astype(str).unique().tolist()) if not hist_df.empty else ["ALLES"]
-            timeframe_filter = st.selectbox("Timeframe", timeframe_opts, index=0)
+            timeframe_filter = st.selectbox("Timeframe", timeframe_opts, index=0, key="hist_timeframe")
 
         filtered_hist = filter_history_df(
             hist_df,
@@ -2497,9 +2498,3 @@ status_text = (
 st.caption(status_text)
 
 st.markdown("</div>", unsafe_allow_html=True)
-````
-
-De vorige versie crashte vooral doordat er **gewone tekst tussen de Python-code stond**, plus eerder ook **kapotte inspringing** en **onafgesloten strings/codeblokken**.
-
-
-
