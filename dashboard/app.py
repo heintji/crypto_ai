@@ -739,57 +739,61 @@ def get_status_badge(status: str) -> str:
     return f'<span class="status-bad">{status_u}</span>'
 
 
-def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 126) -> go.Figure:
+def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 160) -> go.Figure:
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
+    loss_value = max(0.0, 100.0 - value)
+
     fig = go.Figure(
         data=[
             go.Pie(
-                values=[value, 100 - value],
-                hole=0.76,
+                values=[value, loss_value],
+                labels=["Win", "Loss"],
+                hole=0.78,
                 sort=False,
+                direction="clockwise",
+                rotation=270,
                 textinfo="none",
-                marker=dict(colors=[color, "rgba(255,255,255,0.08)"], line=dict(width=0)),
+                marker=dict(
+                    colors=["#34d399", "#ef4444"],
+                    line=dict(color="rgba(255,255,255,0)", width=0),
+                ),
                 showlegend=False,
             )
         ]
     )
-    annotations = [
-        dict(
-            text=f"<b>{value:.1f}%</b>",
-            x=0.5,
-            y=0.56,
-            showarrow=False,
-            font=dict(color="#ffffff", size=18),
-        ),
-        dict(
-            text=f"<span style='font-size:12px;color:#cbd5e1'>{title}</span>",
-            x=0.5,
-            y=0.38,
-            showarrow=False,
-            font=dict(color="#cbd5e1", size=12),
-        ),
-    ]
-    if subtitle:
-        annotations.append(
-            dict(
-                text=f"<span style='font-size:11px;color:#94a3b8'>{subtitle}</span>",
-                x=0.5,
-                y=0.24,
-                showarrow=False,
-                font=dict(color="#94a3b8", size=11),
-            )
-        )
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
         height=height,
+        width=height,
         showlegend=False,
-        annotations=annotations,
+        annotations=[
+            dict(
+                text=f"<b>{value:.1f}%</b>",
+                x=0.5,
+                y=0.60,
+                showarrow=False,
+                font=dict(color="#ffffff", size=24),
+            ),
+            dict(
+                text=f"<span style='font-size:13px;color:#ffffff;font-weight:800'>{title}</span>",
+                x=0.5,
+                y=0.41,
+                showarrow=False,
+                font=dict(color="#ffffff", size=13),
+            ),
+            dict(
+                text=f"<span style='font-size:11px;color:#cbd5e1'>{subtitle}</span>" if subtitle else "",
+                x=0.5,
+                y=0.24,
+                showarrow=False,
+                font=dict(color="#cbd5e1", size=11),
+            ),
+        ],
     )
     return fig
-
-
 
 def render_win_loss_donut(win_pct: float, loss_pct: float, net_eur: float) -> go.Figure:
     win_pct = max(0.0, min(100.0, safe_float(win_pct, 0.0)))
@@ -869,12 +873,12 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
     loss_pct = safe_float(summary["lossrate"], 0.0)
     net_eur = safe_float(summary["net_eur"], 0.0)
     dominant = safe_str(summary["dominant"], "red")
-    glow_color = "rgba(52,211,153,0.24)" if dominant == "green" else "rgba(239,68,68,0.24)"
+    glow_rgb = "52,211,153" if dominant == "green" else "239,68,68"
 
     fig = go.Figure()
     fig.add_trace(
         go.Pie(
-            values=[win_pct, loss_pct],
+            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
             labels=["Win", "Loss"],
             hole=0.79,
             sort=False,
@@ -883,7 +887,7 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
             textinfo="none",
             marker=dict(
                 colors=["#34d399", "#ef4444"],
-                line=dict(color="rgba(255,255,255,0.0)", width=0),
+                line=dict(color="rgba(255,255,255,0)", width=0),
             ),
             showlegend=False,
         )
@@ -891,22 +895,22 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=360,
-        margin=dict(l=4, r=4, t=6, b=6),
+        height=440,
+        width=440,
+        margin=dict(l=2, r=2, t=2, b=2),
         showlegend=False,
         annotations=[
-            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=34)),
-            dict(text="<span style='font-size:18px;color:#dbe4f0;font-weight:800'>Win Rate</span>", x=0.5, y=0.49, showarrow=False, font=dict(color="#dbe4f0", size=18)),
-            dict(text=f"<span style='font-size:22px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.32, showarrow=False, font=dict(color="#ffffff", size=22)),
-            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.19, showarrow=False, font=dict(color="#94a3b8", size=12)),
+            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.62, showarrow=False, font=dict(color="#ffffff", size=38)),
+            dict(text="<span style='font-size:18px;color:#ffffff;font-weight:800'>Win Rate</span>", x=0.5, y=0.46, showarrow=False, font=dict(color="#ffffff", size=18)),
+            dict(text=f"<span style='font-size:26px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.31, showarrow=False, font=dict(color="#ffffff", size=26)),
+            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.18, showarrow=False, font=dict(color="#94a3b8", size=12)),
         ],
         shapes=[
-            dict(type="circle", xref="paper", yref="paper", x0=0.10, y0=0.10, x1=0.90, y1=0.90, line=dict(color=glow_color, width=16)),
-            dict(type="circle", xref="paper", yref="paper", x0=0.15, y0=0.15, x1=0.85, y1=0.85, line=dict(color=glow_color, width=8)),
+            dict(type="circle", xref="paper", yref="paper", x0=0.08, y0=0.08, x1=0.92, y1=0.92, line=dict(color=f"rgba({glow_rgb},0.26)", width=18)),
+            dict(type="circle", xref="paper", yref="paper", x0=0.13, y0=0.13, x1=0.87, y1=0.87, line=dict(color=f"rgba({glow_rgb},0.12)", width=8)),
         ],
     )
     return fig
-
 
 def prepare_portfolio_table(assets_df: pd.DataFrame, total_portfolio_eur: float) -> pd.DataFrame:
     if assets_df.empty:
@@ -1826,24 +1830,50 @@ def performance_summary(df: pd.DataFrame) -> Dict[str, float]:
 
 
 def overall_trade_win_summary(df: pd.DataFrame) -> Dict[str, float]:
-    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
-    wins = int((work["outcome"] == "WIN").sum()) if not work.empty else 0
-    losses = int((work["outcome"] == "LOSS").sum()) if not work.empty else 0
-    total = wins + losses
-    winrate = float((wins / total) * 100.0) if total > 0 else 0.0
-    lossrate = 100.0 - winrate if total > 0 else 0.0
+    if df.empty:
+        return {
+            "wins": 0,
+            "losses": 0,
+            "count": 0,
+            "resolved_count": 0,
+            "open_count": 0,
+            "winrate": 0.0,
+            "lossrate": 0.0,
+        }
+
+    work = df.copy()
+    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
+    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
+
+    is_win = outcome.eq("WIN")
+    is_loss = outcome.eq("LOSS")
+    infer_win = (~is_win) & (~is_loss) & (pnl_eur > 0)
+    infer_loss = (~is_win) & (~is_loss) & (pnl_eur < 0)
+    infer_win_r = (~is_win) & (~is_loss) & (~infer_win) & (~infer_loss) & (pnl_r > 0)
+    infer_loss_r = (~is_win) & (~is_loss) & (~infer_win) & (~infer_loss) & (pnl_r < 0)
+
+    is_win = is_win | infer_win | infer_win_r
+    is_loss = is_loss | infer_loss | infer_loss_r
+
+    wins = int(is_win.sum())
+    losses = int(is_loss.sum())
+    resolved = wins + losses
+    open_count = int(len(work) - resolved)
+    winrate = float((wins / resolved) * 100.0) if resolved > 0 else 0.0
+    lossrate = 100.0 - winrate if resolved > 0 else 0.0
     return {
         "wins": wins,
         "losses": losses,
-        "count": total,
+        "count": int(len(work)),
+        "resolved_count": resolved,
+        "open_count": open_count,
         "winrate": winrate,
         "lossrate": lossrate,
     }
 
-
 def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str, float]:
-    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
-    if work.empty:
+    if df.empty:
         return {
             "stake_eur": stake_eur,
             "total_eur": 0.0,
@@ -1852,32 +1882,40 @@ def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str,
             "money_winrate": 0.0,
             "wins": 0,
             "losses": 0,
+            "resolved_count": 0,
+            "open_count": 0,
         }
 
+    work = df.copy()
+    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
     entry = pd.to_numeric(work.get("entry", pd.Series(index=work.index, dtype=float)), errors="coerce")
     target = pd.to_numeric(work.get("target", pd.Series(index=work.index, dtype=float)), errors="coerce")
     stop = pd.to_numeric(work.get("stop", pd.Series(index=work.index, dtype=float)), errors="coerce")
-    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
+    pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce")
+    pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
 
     sim_eur = pd.Series(0.0, index=work.index, dtype=float)
-
-    valid_win = (work["outcome"] == "WIN") & entry.gt(0) & target.notna()
+    valid_win = outcome.eq("WIN") & entry.gt(0) & target.notna()
     sim_eur.loc[valid_win] = stake_eur * ((target[valid_win] - entry[valid_win]) / entry[valid_win])
 
-    valid_loss = (work["outcome"] == "LOSS") & entry.gt(0) & stop.notna()
+    valid_loss = outcome.eq("LOSS") & entry.gt(0) & stop.notna()
     sim_eur.loc[valid_loss] = stake_eur * ((stop[valid_loss] - entry[valid_loss]) / entry[valid_loss])
 
-    unresolved = sim_eur.eq(0.0) & pnl_r.ne(0.0)
+    unresolved = sim_eur.eq(0.0) & pnl_r.notna() & pnl_r.ne(0.0)
     sim_eur.loc[unresolved] = pnl_r[unresolved] * stake_eur
+
+    unresolved2 = sim_eur.eq(0.0) & pnl_eur.notna() & pnl_eur.ne(0.0)
+    sim_eur.loc[unresolved2] = pnl_eur[unresolved2].apply(lambda x: stake_eur if x > 0 else -stake_eur)
 
     gross_profit = float(sim_eur[sim_eur > 0].sum())
     gross_loss = float(abs(sim_eur[sim_eur < 0].sum()))
     total_net = float(sim_eur.sum())
     base = gross_profit + gross_loss
     money_winrate = float((gross_profit / base) * 100.0) if base > 0 else 0.0
-
     wins = int((sim_eur > 0).sum())
     losses = int((sim_eur < 0).sum())
+    resolved = wins + losses
+    open_count = int(len(work) - resolved)
 
     return {
         "stake_eur": stake_eur,
@@ -1887,12 +1925,12 @@ def euro_five_sim_summary(df: pd.DataFrame, stake_eur: float = 5.0) -> Dict[str,
         "money_winrate": money_winrate,
         "wins": wins,
         "losses": losses,
+        "resolved_count": resolved,
+        "open_count": open_count,
     }
 
-
 def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
-    work = df[df["outcome"].isin(["WIN", "LOSS"])].copy() if not df.empty else pd.DataFrame([])
-    if work.empty:
+    if df.empty:
         return {
             "wins": 0,
             "losses": 0,
@@ -1905,16 +1943,22 @@ def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
             "dominant": "neutral",
         }
 
+    work = df.copy()
+    outcome = work.get("outcome", pd.Series(index=work.index, dtype=object)).fillna("").astype(str).str.upper().str.strip()
     pnl_eur = pd.to_numeric(work.get("pnl_eur", pd.Series(index=work.index, dtype=float)), errors="coerce")
     pnl_r = pd.to_numeric(work.get("pnl_r", pd.Series(index=work.index, dtype=float)), errors="coerce").fillna(0.0)
     pnl_eur = pnl_eur.fillna(pnl_r * 25.0)
 
-    wins = int((work["outcome"] == "WIN").sum())
-    losses = int((work["outcome"] == "LOSS").sum())
+    is_win = outcome.eq("WIN") | (pnl_eur > 0)
+    is_loss = outcome.eq("LOSS") | (pnl_eur < 0)
+    resolved = is_win | is_loss
+    pnl_eur = pnl_eur[resolved]
+
+    wins = int((pnl_eur > 0).sum())
+    losses = int((pnl_eur < 0).sum())
     total = wins + losses
     winrate = float((wins / total) * 100.0) if total > 0 else 0.0
     lossrate = 100.0 - winrate if total > 0 else 0.0
-
     gross_profit = float(pnl_eur[pnl_eur > 0].sum())
     gross_loss = float(abs(pnl_eur[pnl_eur < 0].sum()))
     net = float(pnl_eur.sum())
@@ -1932,7 +1976,6 @@ def real_trade_money_summary(df: pd.DataFrame) -> Dict[str, float]:
         "dominant": dominant,
     }
 
-
 def render_real_stats_panel(summary: Dict[str, float]) -> None:
     dominant_label = "WINST DOMINEERT" if safe_str(summary.get("dominant")) == "green" else "VERLIES DOMINEERT"
     dominant_cls = "green" if safe_str(summary.get("dominant")) == "green" else "red"
@@ -1945,10 +1988,11 @@ def render_real_stats_panel(summary: Dict[str, float]) -> None:
     st.markdown('<div class="section-title">Statistieken</div>', unsafe_allow_html=True)
 
     rows = [
+        ("Aantal echte trades", str(int(summary.get("count", 0))), ""),
         ("Winst Trades", str(int(summary.get("wins", 0))), f'{safe_float(summary.get("winrate"), 0.0):.1f}%'),
         ("Verlies Trades", str(int(summary.get("losses", 0))), f'{safe_float(summary.get("lossrate"), 0.0):.1f}%'),
         ("Totale Winst", format_money(summary.get("gross_profit_eur", 0.0)), ""),
-        ("Totale Verlies", f'-{format_money(summary.get("gross_loss_eur", 0.0)).replace("€", "€")}' if safe_float(summary.get("gross_loss_eur", 0.0)) > 0 else "€0,00", ""),
+        ("Totale Verlies", "-" + format_money(summary.get("gross_loss_eur", 0.0)) if safe_float(summary.get("gross_loss_eur", 0.0)) > 0 else "€0,00", ""),
         ("Netto Resultaat", format_money(summary.get("net_eur", 0.0)), ""),
     ]
     for label, value, badge in rows:
@@ -1963,7 +2007,6 @@ def render_real_stats_panel(summary: Dict[str, float]) -> None:
             unsafe_allow_html=True,
         )
     st.markdown('</div>', unsafe_allow_html=True)
-
 
 def get_selected_trade(df: pd.DataFrame, state_key: str = "selected_page_trade_id") -> Optional[pd.Series]:
     if df.empty:
@@ -2976,7 +3019,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.62, 0.62, 0.88], gap="small")
+metric_cols = st.columns([1.0, 0.95, 0.9, 0.9, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -2986,43 +3029,44 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
+    st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
+
+performance_row = st.columns([0.90, 0.90, 1.55, 1.05], gap="small")
+with performance_row[0]:
     st.plotly_chart(
         render_donut(
             safe_float(overall_trade_summary["winrate"], 0.0),
             "Trade Win Rate",
             "#34d399",
-            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss",
-            height=118,
+            subtitle=f"{int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss | {int(overall_trade_summary.get('open_count', 0))} open",
+            height=205,
         ),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with metric_cols[5]:
+with performance_row[1]:
     st.plotly_chart(
         render_donut(
             safe_float(euro_sim5_summary["money_winrate"], 0.0),
             "Euro Win Rate",
-            "#60a5fa",
-            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade",
-            height=118,
+            "#34d399",
+            subtitle=f"{format_money(euro_sim5_summary['total_eur'])} @ €5/trade | {int(euro_sim5_summary.get('resolved_count', 0))} resolved",
+            height=205,
         ),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with metric_cols[6]:
-    st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
-
-combined_row = st.columns([0.42, 1.35, 0.95], gap="small")
-with combined_row[1]:
+with performance_row[2]:
     st.plotly_chart(
         chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
         use_container_width=True,
         config={"displayModeBar": False},
     )
-with combined_row[2]:
+with performance_row[3]:
     render_real_stats_panel(real_money_summary)
 
-st.caption("Bovenste kleine donuts: links = algemene winrate over alle gesloten trades. Midden = euro-simulatie over alle gesloten trades met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
+st.caption("Bovenste kleine donuts: links = algemene winrate over alle trades samen. Midden = euro-simulatie over alle trades samen met €5 vaste inzet per trade. Grote donut + statistieken = alleen echte live trades.")
+
 
 # ==========================================================
 # MAIN LAYOUT
