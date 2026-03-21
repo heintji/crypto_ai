@@ -564,7 +564,133 @@ st.markdown(
             border-radius: 12px !important;
             border: 1px solid rgba(255,255,255,0.08) !important;
         }
-    </style>
+    
+        .hero-shell {
+            background:
+                radial-gradient(circle at 50% 18%, rgba(255,0,90,0.10), rgba(0,0,0,0) 26%),
+                linear-gradient(180deg, rgba(8,11,18,0.98), rgba(6,9,16,0.98));
+            border:1px solid rgba(255,255,255,0.06);
+            border-radius:24px;
+            padding:18px;
+            box-shadow: 0 18px 48px rgba(0,0,0,0.28);
+        }
+        .hero-card {
+            background:
+                radial-gradient(circle at top center, rgba(255,0,90,0.06), rgba(0,0,0,0) 38%),
+                linear-gradient(180deg, rgba(10,13,22,0.96), rgba(8,11,18,0.96));
+            border:1px solid rgba(255,255,255,0.05);
+            border-radius:22px;
+            padding:20px;
+            min-height:100%;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+        }
+        .hero-title-small {
+            font-size: 18px;
+            font-weight: 900;
+            margin-bottom: 10px;
+            line-height: 1;
+        }
+        .hero-title-small .green { color:#34d399; }
+        .hero-title-small .white { color:#ffffff; }
+        .hero-small-number {
+            font-size: 22px;
+            line-height: 1;
+            font-weight: 900;
+            color:#ffffff;
+            margin-top: 6px;
+        }
+        .hero-small-label {
+            font-size: 13px;
+            color:#cbd5e1;
+            margin-top: 8px;
+        }
+        .hero-divider {
+            height:1px;
+            background: rgba(255,255,255,0.06);
+            border-radius:999px;
+            margin: 12px 0;
+        }
+        .hero-note {
+            font-size: 12px;
+            line-height: 1.45;
+            color:#cbd5e1;
+        }
+        .hero-note-muted {
+            font-size: 12px;
+            line-height: 1.45;
+            color:#94a3b8;
+            margin-top: 8px;
+        }
+        .hero-main-amount {
+            font-size: 34px;
+            font-weight: 900;
+            color:#ffffff;
+            line-height:1;
+            margin-bottom: 8px;
+        }
+        .hero-main-label {
+            font-size: 18px;
+            color:#ffffff;
+            margin-bottom: 6px;
+        }
+        .hero-dominance {
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding:10px 16px;
+            border-radius:999px;
+            margin-bottom:16px;
+            font-size:13px;
+            font-weight:900;
+            letter-spacing:0.03em;
+            border:1px solid rgba(255,255,255,0.10);
+        }
+        .hero-dominance.red {
+            color:#ffffff;
+            background: linear-gradient(90deg, rgba(127,29,29,0.36), rgba(239,68,68,0.10));
+            box-shadow: 0 0 24px rgba(239,68,68,0.18);
+        }
+        .hero-dominance.green {
+            color:#ffffff;
+            background: linear-gradient(90deg, rgba(6,78,59,0.36), rgba(52,211,153,0.10));
+            box-shadow: 0 0 24px rgba(52,211,153,0.18);
+        }
+        .hero-stats-head {
+            font-size:18px;
+            color:#ffffff;
+            font-weight:900;
+            margin-bottom:16px;
+            letter-spacing:0.02em;
+        }
+        .hero-stat-row {
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            padding:12px 0;
+            border-bottom:1px solid rgba(255,255,255,0.06);
+        }
+        .hero-stat-label {
+            font-size:15px;
+            color:#f8fafc;
+            font-weight:700;
+        }
+        .hero-stat-value {
+            font-size:16px;
+            color:#ffffff;
+            font-weight:900;
+            text-align:right;
+        }
+        .hero-stat-badge {
+            display:inline-block;
+            padding:4px 10px;
+            border-radius:999px;
+            font-size:12px;
+            font-weight:900;
+            margin-left:10px;
+        }
+        .hero-stat-badge.green { background: rgba(52,211,153,0.16); color:#34d399; }
+        .hero-stat-badge.red { background: rgba(239,68,68,0.16); color:#ef4444; }
+</style>
     """,
     unsafe_allow_html=True,
 )
@@ -739,56 +865,53 @@ def get_status_badge(status: str) -> str:
     return f'<span class="status-bad">{status_u}</span>'
 
 
-def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 126) -> go.Figure:
+
+def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 176) -> go.Figure:
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                values=[value, 100 - value],
-                hole=0.76,
-                sort=False,
-                textinfo="none",
-                marker=dict(colors=[color, "rgba(255,255,255,0.08)"], line=dict(width=0)),
-                showlegend=False,
-            )
-        ]
-    )
-    annotations = [
-        dict(
-            text=f"<b>{value:.1f}%</b>",
-            x=0.5,
-            y=0.56,
-            showarrow=False,
-            font=dict(color="#ffffff", size=18),
-        ),
-        dict(
-            text=f"<span style='font-size:12px;color:#cbd5e1'>{title}</span>",
-            x=0.5,
-            y=0.38,
-            showarrow=False,
-            font=dict(color="#cbd5e1", size=12),
-        ),
-    ]
-    if subtitle:
-        annotations.append(
-            dict(
-                text=f"<span style='font-size:11px;color:#94a3b8'>{subtitle}</span>",
-                x=0.5,
-                y=0.24,
-                showarrow=False,
-                font=dict(color="#94a3b8", size=11),
-            )
+    loss_value = max(0.0, 100.0 - value)
+    dominant_red = loss_value > value
+    halo_color = "rgba(239,68,68,0.20)" if dominant_red else "rgba(52,211,153,0.20)"
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Pie(
+            values=[max(value, 0.0001), max(loss_value, 0.0001)],
+            hole=0.60,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(colors=[halo_color, "rgba(255,255,255,0.03)"], line=dict(width=0)),
+            showlegend=False,
         )
+    )
+    fig.add_trace(
+        go.Pie(
+            values=[max(value, 0.0001), max(loss_value, 0.0001)],
+            labels=["Win", "Loss"],
+            hole=0.76,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(colors=["#34d399", "#ef4444"], line=dict(width=0)),
+            showlegend=False,
+        )
+    )
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
         height=height,
+        width=height,
         showlegend=False,
-        annotations=annotations,
+        annotations=[
+            dict(text=f"<b>{value:.1f}%</b>", x=0.5, y=0.58, showarrow=False, font=dict(color="#ffffff", size=22)),
+            dict(text=f"<span style='font-size:13px;color:#ffffff'><b>{title}</b></span>", x=0.5, y=0.40, showarrow=False, font=dict(color="#ffffff", size=13)),
+            dict(text=f"<span style='font-size:10px;color:#cbd5e1'>{subtitle}</span>" if subtitle else "", x=0.5, y=0.23, showarrow=False, font=dict(color="#cbd5e1", size=10)),
+        ],
     )
     return fig
-
 
 
 def render_win_loss_donut(win_pct: float, loss_pct: float, net_eur: float) -> go.Figure:
@@ -863,46 +986,63 @@ def downsample_dataframe(df: pd.DataFrame, max_points: int = 1200) -> pd.DataFra
     return df.iloc[::step].copy()
 
 
+
 def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Performance") -> go.Figure:
     summary = real_trade_money_summary(df)
     win_pct = safe_float(summary["winrate"], 0.0)
     loss_pct = safe_float(summary["lossrate"], 0.0)
     net_eur = safe_float(summary["net_eur"], 0.0)
     dominant = safe_str(summary["dominant"], "red")
-    glow_color = "rgba(52,211,153,0.24)" if dominant == "green" else "rgba(239,68,68,0.24)"
+
+    is_win_dominant = dominant == "green"
+    dominant_glow = "52,211,153" if is_win_dominant else "239,68,68"
+    secondary_glow = "239,68,68" if is_win_dominant else "52,211,153"
 
     fig = go.Figure()
     fig.add_trace(
         go.Pie(
-            values=[win_pct, loss_pct],
-            labels=["Win", "Loss"],
-            hole=0.79,
+            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
+            hole=0.54,
             sort=False,
             direction="clockwise",
             rotation=270,
             textinfo="none",
             marker=dict(
-                colors=["#34d399", "#ef4444"],
-                line=dict(color="rgba(255,255,255,0.0)", width=0),
+                colors=[f"rgba({dominant_glow},0.32)", f"rgba({secondary_glow},0.08)"],
+                line=dict(width=0),
             ),
+            showlegend=False,
+        )
+    )
+    fig.add_trace(
+        go.Pie(
+            values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
+            labels=["Win", "Loss"],
+            hole=0.78,
+            sort=False,
+            direction="clockwise",
+            rotation=270,
+            textinfo="none",
+            marker=dict(colors=["#34d399", "#ef4444"], line=dict(width=0)),
             showlegend=False,
         )
     )
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=360,
-        margin=dict(l=4, r=4, t=6, b=6),
+        width=700,
+        height=620,
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
         annotations=[
-            dict(text=f"<b>{win_pct:.1f}%</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=34)),
-            dict(text="<span style='font-size:18px;color:#dbe4f0;font-weight:800'>Win Rate</span>", x=0.5, y=0.49, showarrow=False, font=dict(color="#dbe4f0", size=18)),
-            dict(text=f"<span style='font-size:22px;color:#ffffff'><b>{format_money(net_eur)}</b></span>", x=0.5, y=0.32, showarrow=False, font=dict(color="#ffffff", size=22)),
-            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.19, showarrow=False, font=dict(color="#94a3b8", size=12)),
+            dict(text=f"<b>{format_money(net_eur)}</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=38)),
+            dict(text="<span style='font-size:22px;color:#ffffff'>Win Rate</span>", x=0.5, y=0.49, showarrow=False, font=dict(color="#ffffff", size=22)),
+            dict(text=f"<span style='font-size:20px;color:#ffffff'><b>{win_pct:.1f}%</b></span>", x=0.5, y=0.35, showarrow=False, font=dict(color="#ffffff", size=20)),
         ],
         shapes=[
-            dict(type="circle", xref="paper", yref="paper", x0=0.10, y0=0.10, x1=0.90, y1=0.90, line=dict(color=glow_color, width=16)),
-            dict(type="circle", xref="paper", yref="paper", x0=0.15, y0=0.15, x1=0.85, y1=0.85, line=dict(color=glow_color, width=8)),
+            dict(type="line", xref="paper", yref="paper", x0=0.28, x1=0.72, y0=0.43, y1=0.43, line=dict(color=f"rgba({dominant_glow},0.92)", width=3)),
+            dict(type="circle", xref="paper", yref="paper", x0=0.09, y0=0.09, x1=0.91, y1=0.91, line=dict(color=f"rgba({dominant_glow},0.40)", width=26)),
+            dict(type="circle", xref="paper", yref="paper", x0=0.14, y0=0.14, x1=0.86, y1=0.86, line=dict(color=f"rgba({dominant_glow},0.14)", width=12)),
         ],
     )
     return fig
@@ -2598,14 +2738,116 @@ def chart_source_distribution(df: pd.DataFrame, title: str) -> go.Figure:
     return fig
 
 
+
+def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    overall_trade_summary = overall_trade_win_summary(history_df)
+    euro_sim5_summary = euro_five_sim_summary(history_df, 5.0)
+    real_money_summary = real_trade_money_summary(real_df)
+
+    left_col, main_col, right_col = st.columns([0.92, 1.88, 0.92], gap="small")
+
+    with left_col:
+        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+
+        mini1_left, mini1_right = st.columns([0.56, 0.44], gap="small")
+        with mini1_left:
+            st.markdown('<div class="hero-title-small"><span class="green">Trade</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="hero-small-number">{overall_trade_summary["winrate"]:.1f}%</div>', unsafe_allow_html=True)
+            st.markdown('<div class="hero-small-label">Trade Win Rate</div>', unsafe_allow_html=True)
+        with mini1_right:
+            st.plotly_chart(
+                render_donut(
+                    safe_float(overall_trade_summary["winrate"], 0.0),
+                    "",
+                    subtitle=f"% {int(overall_trade_summary['wins'])} / {int(overall_trade_summary['count'])}",
+                    height=170,
+                ),
+                use_container_width=False,
+                config={"displayModeBar": False},
+            )
+
+        st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary['wins'])} win / {int(overall_trade_summary['losses'])} loss / 0 open</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div class="hero-note-muted">({int(overall_trade_summary['count'])} Opp ({int(overall_trade_summary['count'])} afgehandeld))</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="hero-divider" style="margin-top:18px;margin-bottom:18px;"></div>', unsafe_allow_html=True)
+
+        mini2_left, mini2_right = st.columns([0.56, 0.44], gap="small")
+        with mini2_left:
+            st.markdown('<div class="hero-title-small"><span class="green">Euro</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="hero-small-number">{format_money(euro_sim5_summary['total_eur'])}</div>', unsafe_allow_html=True)
+            st.markdown('<div class="hero-small-label">Rate Win Rate</div>', unsafe_allow_html=True)
+        with mini2_right:
+            st.plotly_chart(
+                render_donut(
+                    safe_float(euro_sim5_summary["money_winrate"], 0.0),
+                    "",
+                    subtitle=f"{euro_sim5_summary['money_winrate']:.1f}.",
+                    height=170,
+                ),
+                use_container_width=False,
+                config={"displayModeBar": False},
+            )
+
+        st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div class="hero-note"><span style="color:#34d399;">●</span> {format_money(euro_sim5_summary['gross_profit_eur'])} / {format_money(euro_sim5_summary['gross_loss_eur'])} / €0</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            f'<div class="hero-note-muted">({int(overall_trade_summary['count'])}0 afgehandeld)</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with main_col:
+        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero-main-amount">{format_money(real_money_summary['net_eur'])}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="hero-main-label">Win Rate</div>', unsafe_allow_html=True)
+        st.plotly_chart(
+            chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
+            use_container_width=True,
+            config={"displayModeBar": False},
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with right_col:
+        dominant_label = "WINST DOMINEERT" if safe_str(real_money_summary.get("dominant")) == "green" else "VERLIES DOMINEERT"
+        dominant_cls = "green" if safe_str(real_money_summary.get("dominant")) == "green" else "red"
+        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+        st.markdown(f'<div class="hero-dominance {dominant_cls}">{dominant_label}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="hero-stats-head">STATISTIEKEN</div>', unsafe_allow_html=True)
+
+        rows = [
+            ("Aantal trade", str(int(real_money_summary.get("count", 0))), ""),
+            ("Win Trades", f'{safe_float(real_money_summary.get("winrate", 0.0)):.1f}%', ""),
+            ("Verlies Trades", f'{safe_float(real_money_summary.get("lossrate", 0.0)):.1f}%', ""),
+            ("Real Performance)", format_money(real_money_summary.get("gross_profit_eur", 0.0)), ""),
+            ("Aantal echte trades", str(int(real_money_summary.get("count", 0))), f'{safe_float(real_money_summary.get("winrate", 0.0)):.0f}%'),
+            ("Win Trades", str(int(real_money_summary.get("wins", 0))), f'{safe_float(real_money_summary.get("winrate", 0.0)):.1f}%'),
+            ("Verlies Trades", str(int(real_money_summary.get("losses", 0))), f'{safe_float(real_money_summary.get("lossrate", 0.0)):.1f}%'),
+            ("Totale Verlies", format_money(real_money_summary.get("gross_loss_eur", 0.0)), ""),
+        ]
+        for label, value, badge in rows:
+            badge_cls = "green" if ("Win" in label or label == "Aantal echte trades") else "red"
+            badge_html = f'<span class="hero-stat-badge {badge_cls}">{badge}</span>' if badge else ""
+            st.markdown(
+                f'<div class="hero-stat-row"><div class="hero-stat-label">{label}</div><div class="hero-stat-value">{value}{badge_html}</div></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
 def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, scoreboard_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">Dashboard</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="section-subtitle">Dit scherm is opnieuw ingedeeld als een pro terminal: minder verticale rommel, duidelijkere blokken en snellere navigatie. De twee kleine top-cirkels blijven zichtbaar, met daaronder de grote gecombineerde performance-cirkel.</div>',
-        unsafe_allow_html=True,
-    )
-
+    render_hero_top_section(history_df, real_df)
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     filtered = render_filters(history_df, include_trade_type=True)
     summary = performance_summary(filtered)
 
