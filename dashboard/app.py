@@ -1,7 +1,3 @@
-````python
-# ==========================================================
-# DEEL 1/3
-# ==========================================================
 from __future__ import annotations
 
 import os
@@ -9,7 +5,6 @@ import json
 import time
 import hmac
 import hashlib
-import traceback
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -823,7 +818,6 @@ CREATE INDEX IF NOT EXISTS idx_experience_trades_symbol ON experience_trades(sym
 CREATE INDEX IF NOT EXISTS idx_experience_trades_setup_type ON experience_trades(setup_type);
 CREATE INDEX IF NOT EXISTS idx_experience_trades_created_at ON experience_trades(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_experience_trades_closed_at ON experience_trades(closed_at DESC);
-````
 
 """
 
@@ -835,7 +829,6 @@ regime = safe_str(row.get("regime"), "-")
 symbol = safe_str(row.get("symbol"), "-")
 pnl = safe_float(row.get("pnl_r"), 0.0)
 
-```
 pnl_txt = format_compact_r(pnl)
 
 if trade_type == "SHADOW":
@@ -896,162 +889,162 @@ return (
     f"Dit is een live trade op {symbol} binnen de setup '{setup}' en het regime '{regime}', maar zonder duidelijke win/loss-uitkomst. "
     f"Gebruik deze trade vooral als operationele en contextuele feedback binnen de evaluatie van het systeem."
 )
-```
+==========================================================
+SNAPSHOT / BITVAVO
+==========================================================
 
-````
-
-```python
-# ==========================================================
-# DEEL 2/3
-# ==========================================================
 def bitvavo_request(method: str, path: str, body: str = ""):
-    if not API_KEY or not API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
+if not API_KEY or not API_SECRET:
+raise RuntimeError("BITVAVO_API_KEY of BITVAVO_API_SECRET ontbreken.")
 
-    method_u = method.upper()
-    timestamp = str(int(time.time() * 1000))
-    body = body or ""
-    message = f"{timestamp}{method_u}{path}{body}"
-    signature = hmac.new(
-        API_SECRET.encode("utf-8"),
-        message.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+method_u = method.upper()
+timestamp = str(int(time.time() * 1000))
+body = body or ""
+message = f"{timestamp}{method_u}{path}{body}"
+signature = hmac.new(
+    API_SECRET.encode("utf-8"),
+    message.encode("utf-8"),
+    hashlib.sha256,
+).hexdigest()
 
-    headers = {
-        "Bitvavo-Access-Key": API_KEY,
-        "Bitvavo-Access-Signature": signature,
-        "Bitvavo-Access-Timestamp": timestamp,
-        "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
-        "Content-Type": "application/json",
-    }
-    url = f"{BASE_URL}{path}"
+headers = {
+    "Bitvavo-Access-Key": API_KEY,
+    "Bitvavo-Access-Signature": signature,
+    "Bitvavo-Access-Timestamp": timestamp,
+    "Bitvavo-Access-Window": ACCESS_WINDOW_MS,
+    "Content-Type": "application/json",
+}
+url = f"{BASE_URL}{path}"
 
-    if method_u == "GET":
-        r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
-    elif method_u == "POST":
-        r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
-    else:
-        raise ValueError("Alleen GET/POST ondersteund.")
+if method_u == "GET":
+    r = requests.get(url, headers=headers, timeout=HTTP_TIMEOUT)
+elif method_u == "POST":
+    r = requests.post(url, headers=headers, data=body, timeout=HTTP_TIMEOUT)
+else:
+    raise ValueError("Alleen GET/POST ondersteund.")
 
-    if r.status_code >= 400:
-        try:
-            err = r.json()
-        except Exception:
-            err = {"error": r.text}
-        raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
-    return r.json()
-
+if r.status_code >= 400:
+    try:
+        err = r.json()
+    except Exception:
+        err = {"error": r.text}
+    raise RuntimeError(f"Bitvavo error {r.status_code}: {err}")
+return r.json()
 
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_all_market_prices() -> Dict[str, float]:
-    try:
-        url = f"{BASE_URL}/v2/ticker/price"
-        r = requests.get(url, timeout=HTTP_TIMEOUT)
-        r.raise_for_status()
-        data = r.json()
+try:
+url = f"{BASE_URL}/v2/ticker/price"
+r = requests.get(url, timeout=HTTP_TIMEOUT)
+r.raise_for_status()
+data = r.json()
 
-        prices: Dict[str, float] = {}
-        for row in data:
-            market = row.get("market")
-            price = row.get("price")
-            if market and price is not None:
-                try:
-                    prices[market] = float(price)
-                except Exception:
-                    pass
-        return prices
-    except Exception as e:
-        capture_exception("fetch_all_market_prices", e)
-        return {}
-
+    prices: Dict[str, float] = {}
+    for row in data:
+        market = row.get("market")
+        price = row.get("price")
+        if market and price is not None:
+            try:
+                prices[market] = float(price)
+            except Exception:
+                pass
+    return prices
+except Exception as e:
+    capture_exception("fetch_all_market_prices", e)
+    return {}
 
 def price_in_eur(symbol: str, prices: Dict[str, float]) -> Tuple[Optional[float], str]:
-    if symbol == "EUR":
-        return 1.0, "EUR"
-    direct = f"{symbol}-EUR"
-    if direct in prices:
-        return prices[direct], direct
-    a = f"{symbol}-USDT"
-    b = "USDT-EUR"
-    if a in prices and b in prices:
-        return prices[a] * prices[b], f"{a}*{b}"
-    a = f"{symbol}-BTC"
-    b = "BTC-EUR"
-    if a in prices and b in prices:
-        return prices[a] * prices[b], f"{a}*{b}"
-    return None, "NO_ROUTE"
-
+if symbol == "EUR":
+return 1.0, "EUR"
+direct = f"{symbol}-EUR"
+if direct in prices:
+return prices[direct], direct
+a = f"{symbol}-USDT"
+b = "USDT-EUR"
+if a in prices and b in prices:
+return prices[a] * prices[b], f"{a}{b}"
+a = f"{symbol}-BTC"
+b = "BTC-EUR"
+if a in prices and b in prices:
+return prices[a] * prices[b], f"{a}{b}"
+return None, "NO_ROUTE"
 
 def build_snapshot_with_eur_values() -> dict:
-    balances = bitvavo_request("GET", "/v2/balance")
-    prices = fetch_all_market_prices()
-    assets: List[Dict[str, Any]] = []
-    eur_available = 0.0
+balances = bitvavo_request("GET", "/v2/balance")
+prices = fetch_all_market_prices()
+assets: List[Dict[str, Any]] = []
+eur_available = 0.0
 
-    for row in balances:
-        symbol = row.get("symbol")
-        available = float(row.get("available", 0) or 0)
-        in_order = float(row.get("inOrder", 0) or 0)
-        total = available + in_order
+for row in balances:
+    symbol = row.get("symbol")
+    available = float(row.get("available", 0) or 0)
+    in_order = float(row.get("inOrder", 0) or 0)
+    total = available + in_order
 
-        if symbol == "EUR":
-            eur_available = available
+    if symbol == "EUR":
+        eur_available = available
 
-        if total > 0:
-            p_eur, route = price_in_eur(symbol, prices)
-            eur_value = float(total) * float(p_eur) if p_eur is not None else None
-            assets.append(
-                {
-                    "symbol": symbol,
-                    "available": available,
-                    "inOrder": in_order,
-                    "total": total,
-                    "price_eur": p_eur,
-                    "eur_value": eur_value,
-                    "price_route": route,
-                }
-            )
+    if total > 0:
+        p_eur, route = price_in_eur(symbol, prices)
+        eur_value = float(total) * float(p_eur) if p_eur is not None else None
+        assets.append(
+            {
+                "symbol": symbol,
+                "available": available,
+                "inOrder": in_order,
+                "total": total,
+                "price_eur": p_eur,
+                "eur_value": eur_value,
+                "price_route": route,
+            }
+        )
 
-    crypto_assets_eur = sum(
-        float(a["eur_value"])
-        for a in assets
-        if a["symbol"] != "EUR" and a.get("eur_value") is not None
-    )
-    total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
+crypto_assets_eur = sum(
+    float(a["eur_value"])
+    for a in assets
+    if a["symbol"] != "EUR" and a.get("eur_value") is not None
+)
+total_portfolio_eur = float(eur_available) + float(crypto_assets_eur)
 
-    snapshot = {
-        "status": "OK",
-        "ts": now_iso(),
-        "eur_available": float(eur_available),
-        "crypto_assets_eur": float(crypto_assets_eur),
-        "total_portfolio_eur": float(total_portfolio_eur),
-        "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
-    }
+snapshot = {
+    "status": "OK",
+    "ts": now_iso(),
+    "eur_available": float(eur_available),
+    "crypto_assets_eur": float(crypto_assets_eur),
+    "total_portfolio_eur": float(total_portfolio_eur),
+    "assets": sorted(assets, key=lambda x: (x["symbol"] != "EUR", x["symbol"])),
+}
 
-    ensure_parent_dir(SNAPSHOT_PATH)
-    with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
-        json.dump(snapshot, f, indent=2, ensure_ascii=False)
+ensure_parent_dir(SNAPSHOT_PATH)
+with open(SNAPSHOT_PATH, "w", encoding="utf-8") as f:
+    json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
-    append_debug_event("Snapshot succesvol opgebouwd.")
-    return snapshot
-
+append_debug_event("Snapshot succesvol opgebouwd.")
+return snapshot
 
 def read_snapshot_only() -> Tuple[dict, str]:
-    snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
-    if snapshot is None:
-        snapshot = {
-            "status": "MISSING",
-            "ts": None,
-            "eur_available": 0.0,
-            "crypto_assets_eur": 0.0,
-            "total_portfolio_eur": 0.0,
-            "assets": [],
-        }
-        return snapshot, snapshot_err or "Snapshot niet gevonden"
-    return snapshot, "read-only snapshot"
+snapshot, snapshot_err = safe_read_json(SNAPSHOT_PATH)
+if snapshot is None:
+snapshot = {
+"status": "MISSING",
+"ts": None,
+"eur_available": 0.0,
+"crypto_assets_eur": 0.0,
+"total_portfolio_eur": 0.0,
+"assets": [],
+}
+return snapshot, snapshot_err or "Snapshot niet gevonden"
+return snapshot, "read-only snapshot"
 
 
+---
+
+## DEEL 2/3
+
+```python
+# ==========================================================
+# DATABASE
+# ==========================================================
 def db_ready() -> bool:
     return bool(DATABASE_URL)
 
@@ -1825,11 +1818,9 @@ def build_trade_detail_chart(row: pd.Series) -> go.Figure:
         dragmode=False,
     )
     return fig
-````
-
-```python
+DEEL 3/3
 # ==========================================================
-# DEEL 3/3
+# UI
 # ==========================================================
 st.markdown(
     """
@@ -2481,9 +2472,9 @@ status_text = (
 st.caption(status_text)
 
 st.markdown("</div>", unsafe_allow_html=True)
-```
 
-W ⚡ doorgaan met extra features
-D 🧠 fout debuggen op jouw app.py
-A 🚀 nog krachtigere advanced analytics
-S 📖 uitleg waarom iets niet werkt
+# Hotkeys:
+# W = volgende trade
+# D = debug + PostgreSQL structuur
+# A = advanced mode
+# S = uitleg tonen
