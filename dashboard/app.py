@@ -639,13 +639,13 @@ def get_status_badge(status: str) -> str:
     return f'<span class="status-bad">{status_u}</span>'
 
 
-def render_donut(value: float, title: str, color: str = "#34d399") -> go.Figure:
+def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "") -> go.Figure:
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
     fig = go.Figure(
         data=[
             go.Pie(
                 values=[value, 100 - value],
-                hole=0.74,
+                hole=0.76,
                 sort=False,
                 textinfo="none",
                 marker=dict(colors=[color, "rgba(255,255,255,0.08)"], line=dict(width=0)),
@@ -653,21 +653,39 @@ def render_donut(value: float, title: str, color: str = "#34d399") -> go.Figure:
             )
         ]
     )
+    annotations = [
+        dict(
+            text=f"<b>{value:.1f}%</b>",
+            x=0.5,
+            y=0.56,
+            showarrow=False,
+            font=dict(color="#ffffff", size=18),
+        ),
+        dict(
+            text=f"<span style='font-size:12px;color:#cbd5e1'>{title}</span>",
+            x=0.5,
+            y=0.38,
+            showarrow=False,
+            font=dict(color="#cbd5e1", size=12),
+        ),
+    ]
+    if subtitle:
+        annotations.append(
+            dict(
+                text=f"<span style='font-size:11px;color:#94a3b8'>{subtitle}</span>",
+                x=0.5,
+                y=0.24,
+                showarrow=False,
+                font=dict(color="#94a3b8", size=11),
+            )
+        )
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=0, t=0, b=0),
-        height=118,
+        height=138,
         showlegend=False,
-        annotations=[
-            dict(
-                text=f"<b>{value:.1f}%</b><br><span style='font-size:12px;color:#94a3b8'>{title}</span>",
-                x=0.5,
-                y=0.5,
-                showarrow=False,
-                font=dict(color="#ffffff", size=14),
-            )
-        ],
+        annotations=annotations,
     )
     return fig
 
@@ -950,7 +968,8 @@ def run_df_query(sql: str, params: Optional[tuple] = None) -> pd.DataFrame:
                 cols = [desc[0] for desc in cur.description]
         return pd.DataFrame(rows, columns=cols)
     except Exception as exc:
-        capture_exception("run_df_query", exc)
+        sql_preview = " ".join(str(sql).split())[:700]
+        capture_exception("run_df_query", Exception(f"{exc} | SQL: {sql_preview}"))
         return pd.DataFrame([])
     finally:
         try:
@@ -1046,153 +1065,61 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
     if not cols:
         return ""
 
-    trade_id_expr = "NULL::text"
-    if "trade_key" in cols and "id" in cols:
-        trade_id_expr = 'COALESCE("trade_key"::text, "id"::text)'
-    elif "trade_key" in cols:
-        trade_id_expr = '"trade_key"::text'
-    elif "id" in cols:
-        trade_id_expr = '"id"::text'
+    def first_existing(*names: str) -> Optional[str]:
+        for name in names:
+            if name in cols:
+                return name
+        return None
 
-    symbol_expr = "NULL::text"
-    if "coin" in cols and "symbol" in cols:
-        symbol_expr = 'COALESCE("coin", "symbol")'
-    elif "coin" in cols:
-        symbol_expr = '"coin"'
-    elif "symbol" in cols:
-        symbol_expr = '"symbol"'
+    def txt_expr(*names: str) -> str:
+        name = first_existing(*names)
+        return f'"{name}"::text' if name else "NULL::text"
 
-    timeframe_expr = "NULL::text"
-    if "entry_timeframe" in cols and "timeframe" in cols:
-        timeframe_expr = 'COALESCE("entry_timeframe", "timeframe")'
-    elif "entry_timeframe" in cols:
-        timeframe_expr = '"entry_timeframe"'
-    elif "timeframe" in cols:
-        timeframe_expr = '"timeframe"'
+    def num_expr(*names: str) -> str:
+        name = first_existing(*names)
+        return f'"{name}"::double precision' if name else "NULL::double precision"
 
-    regime_expr = "NULL::text"
-    if "market_regime" in cols and "regime" in cols:
-        regime_expr = 'COALESCE("market_regime", "regime")'
-    elif "market_regime" in cols:
-        regime_expr = '"market_regime"'
-    elif "regime" in cols:
-        regime_expr = '"regime"'
+    def bool_expr(*names: str) -> str:
+        name = first_existing(*names)
+        return f'COALESCE("{name}", FALSE)' if name else "FALSE"
 
-    label_expr = "NULL::text"
-    if "label" in cols and "grade" in cols:
-        label_expr = 'COALESCE("label", "grade")'
-    elif "label" in cols:
-        label_expr = '"label"'
-    elif "grade" in cols:
-        label_expr = '"grade"'
+    trade_id_expr = txt_expr("trade_key", "id")
+    symbol_expr = txt_expr("coin", "symbol")
+    timeframe_expr = txt_expr("entry_timeframe", "timeframe", "regime_timeframe")
+    regime_expr = txt_expr("market_regime", "regime")
+    label_expr = txt_expr("grade", "label")
+    setup_expr = txt_expr("setup_type")
+    outcome_expr = txt_expr("outcome")
+    source_expr = txt_expr("source")
 
-    score_expr = "0::double precision"
-    if "score" in cols and "bot_confidence" in cols:
-        score_expr = 'COALESCE("score"::double precision, "bot_confidence"::double precision, 0)'
-    elif "score" in cols:
-        score_expr = 'COALESCE("score"::double precision, 0)'
-    elif "bot_confidence" in cols:
-        score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    created_candidates = [name for name in ["entry_time", "timestamp", "created_at"] if name in cols]
+    if created_candidates:
+        created_expr = "COALESCE(" + ", ".join([f'"{name}"' for name in created_candidates]) + ")"
+    else:
+        created_expr = "NULL::timestamptz"
 
-    raw_score_expr = "0::double precision"
-    if "raw_score" in cols:
-        raw_score_expr = 'COALESCE("raw_score"::double precision, 0)'
-    elif "score" in cols:
-        raw_score_expr = 'COALESCE("score"::double precision, 0)'
-    elif "bot_confidence" in cols:
-        raw_score_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    closed_candidates = [name for name in ["exit_time", "closed_at"] if name in cols]
+    if closed_candidates:
+        closed_expr = "COALESCE(" + ", ".join([f'"{name}"' for name in closed_candidates]) + ")"
+    else:
+        closed_expr = "NULL::timestamptz"
 
-    chance_expr = 'COALESCE("chance"::double precision, 0)' if "chance" in cols else "0::double precision"
+    entry_expr = num_expr("entry")
+    stop_expr = num_expr("stop")
+    target_expr = num_expr("target")
+    mfe_expr = num_expr("mfe")
+    mae_expr = num_expr("mae")
+    score_expr = num_expr("score", "bot_confidence", "confidence")
+    raw_score_expr = num_expr("raw_score", "score", "bot_confidence")
+    chance_expr = num_expr("chance")
+    confidence_expr = num_expr("confidence", "bot_confidence")
+    is_shadow_expr = bool_expr("is_shadow")
 
-    confidence_expr = "0::double precision"
-    if "confidence" in cols and "bot_confidence" in cols:
-        confidence_expr = 'COALESCE("confidence"::double precision, "bot_confidence"::double precision, 0)'
-    elif "confidence" in cols:
-        confidence_expr = 'COALESCE("confidence"::double precision, 0)'
-    elif "bot_confidence" in cols:
-        confidence_expr = 'COALESCE("bot_confidence"::double precision, 0)'
+    result_r_col = first_existing("result_r", "pnl_r", "r_multiple", "realized_r")
+    pnl_r_calc_expr = f'"{result_r_col}"::double precision' if result_r_col else "NULL::double precision"
 
-    entry_expr = sql_col(cols, "entry", "double precision")
-    stop_expr = sql_col(cols, "stop", "double precision")
-    target_expr = sql_col(cols, "target", "double precision")
-    outcome_expr = sql_col(cols, "outcome")
-
-    created_expr = "NULL::timestamptz"
-    if "created_at" in cols and "entry_time" in cols and "timestamp" in cols:
-        created_expr = 'COALESCE("created_at", "entry_time", "timestamp")'
-    elif "created_at" in cols and "entry_time" in cols:
-        created_expr = 'COALESCE("created_at", "entry_time")'
-    elif "created_at" in cols and "timestamp" in cols:
-        created_expr = 'COALESCE("created_at", "timestamp")'
-    elif "created_at" in cols:
-        created_expr = '"created_at"'
-    elif "entry_time" in cols:
-        created_expr = '"entry_time"'
-    elif "timestamp" in cols:
-        created_expr = '"timestamp"'
-
-    closed_expr = "NULL::timestamptz"
-    if "closed_at" in cols and "exit_time" in cols:
-        closed_expr = 'COALESCE("closed_at", "exit_time")'
-    elif "closed_at" in cols:
-        closed_expr = '"closed_at"'
-    elif "exit_time" in cols:
-        closed_expr = '"exit_time"'
-
-    source_expr = "'UNKNOWN'::text"
-    if "source" in cols and "is_shadow" in cols:
-        source_expr = """
-            COALESCE(
-                UPPER("source"),
-                CASE WHEN COALESCE("is_shadow", FALSE) THEN 'SHADOW' ELSE 'REAL' END
-            )
-        """
-    elif "source" in cols:
-        source_expr = 'COALESCE(UPPER("source"), \'UNKNOWN\')'
-    elif "is_shadow" in cols:
-        source_expr = "CASE WHEN COALESCE(\"is_shadow\", FALSE) THEN 'SHADOW' ELSE 'REAL' END"
-
-    is_shadow_expr = "FALSE"
-    if "is_shadow" in cols:
-        is_shadow_expr = 'COALESCE("is_shadow", FALSE)'
-    elif "source" in cols:
-        is_shadow_expr = "CASE WHEN UPPER(COALESCE(\"source\", '')) = 'SHADOW' THEN TRUE ELSE FALSE END"
-
-    pnl_expr = """
-        CASE
-            WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
-            WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
-            ELSE 0.0
-        END
-    """
-    if "result_r" in cols:
-        pnl_expr = """
-            COALESCE(
-                "result_r"::double precision,
-                CASE
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
-                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
-                    ELSE 0.0
-                END
-            )
-        """
-
-    pnl_eur_col_expr = "NULL::double precision"
-    for eur_col in ["pnl_eur", "result_eur", "realized_pnl_eur", "profit_eur", "net_pnl_eur", "realized_eur"]:
-        if eur_col in cols:
-            pnl_eur_col_expr = f'COALESCE("{eur_col}"::double precision, NULL)'
-            break
-
-    pnl_eur_expr = """
-        COALESCE(
-            pnl_eur_calc,
-            CASE
-                WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 50.0
-                WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -25.0
-                ELSE 0.0
-            END
-        )
-    """
+    pnl_eur_col = first_existing("pnl_eur", "result_eur", "realized_pnl_eur", "profit_eur", "net_pnl_eur", "realized_eur")
+    pnl_eur_calc_expr = f'"{pnl_eur_col}"::double precision' if pnl_eur_col else "NULL::double precision"
 
     kind_u = kind.upper()
     where = "1=1"
@@ -1203,7 +1130,7 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
             where = "UPPER(COALESCE(source_calc, '')) = 'SHADOW'"
         elif kind_u == "REAL":
             where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW')"
-        elif kind_u == "ALL":
+        elif kind_u in ("ALL", "RAWALL"):
             where = "1=1"
     elif "is_shadow" in cols:
         if kind_u == "SHADOW":
@@ -1213,23 +1140,28 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
         elif kind_u == "SIM":
             where = "1=0"
 
+    order_expr = "COALESCE(closed_at, created_at) DESC NULLS LAST"
+
     return f"""
         WITH base AS (
             SELECT
                 {trade_id_expr} AS trade_id,
                 {symbol_expr} AS symbol,
-                {sql_col(cols, "setup_type")} AS setup_type,
+                {setup_expr} AS setup_type,
                 {timeframe_expr} AS timeframe,
                 {regime_expr} AS regime,
                 {label_expr} AS label,
-                {score_expr} AS score,
-                {raw_score_expr} AS raw_score,
-                {chance_expr} AS chance,
-                {confidence_expr} AS confidence,
+                COALESCE({score_expr}, 0) AS score,
+                COALESCE({raw_score_expr}, 0) AS raw_score,
+                COALESCE({chance_expr}, 0) AS chance,
+                COALESCE({confidence_expr}, 0) AS confidence,
                 {entry_expr} AS entry,
                 {stop_expr} AS stop,
                 {target_expr} AS target,
-                {pnl_eur_col_expr} AS pnl_eur_calc,
+                {mfe_expr} AS mfe,
+                {mae_expr} AS mae,
+                {pnl_r_calc_expr} AS pnl_r_calc,
+                {pnl_eur_calc_expr} AS pnl_eur_calc,
                 {outcome_expr} AS outcome_calc,
                 {source_expr} AS source_calc,
                 {is_shadow_expr} AS is_shadow_calc,
@@ -1251,8 +1183,24 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
             entry,
             stop,
             target,
-            {pnl_expr} AS pnl_r,
-            {pnl_eur_expr} AS pnl_eur,
+            mfe,
+            mae,
+            COALESCE(
+                pnl_r_calc,
+                CASE
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 2.0
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -1.0
+                    ELSE 0.0
+                END
+            ) AS pnl_r,
+            COALESCE(
+                pnl_eur_calc,
+                CASE
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 50.0
+                    WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -25.0
+                    ELSE 0.0
+                END
+            ) AS pnl_eur,
             COALESCE(outcome_calc, 'UNKNOWN') AS outcome,
             COALESCE(source_calc, 'UNKNOWN') AS source,
             CASE
@@ -1260,200 +1208,49 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
                 WHEN UPPER(COALESCE(source_calc, '')) = 'SHADOW' THEN 'SHADOW'
                 WHEN UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
                 WHEN COALESCE(is_shadow_calc, FALSE) THEN 'SHADOW'
-                ELSE 'REAL'
+                ELSE 'OTHER'
             END AS trade_type,
             COALESCE(is_shadow_calc, FALSE) AS is_shadow,
             created_at,
             closed_at
         FROM base
         WHERE {where}
-        ORDER BY COALESCE(closed_at, created_at) DESC NULLS LAST
-        LIMIT {limit}
+        ORDER BY {order_expr}
+        LIMIT {int(limit)}
     """
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_real_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("REAL", REAL_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_sim_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("SIM", SIM_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_shadow_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("SHADOW", SHADOW_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_history_trades_db() -> pd.DataFrame:
-    sql = build_experience_trades_sql("ALL", HISTORY_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_history_trades_db_raw() -> pd.DataFrame:
-    sql = build_experience_trades_sql("RAWALL", HISTORY_LIMIT)
-    if not sql:
-        return pd.DataFrame([])
-    return normalize_trade_df(run_df_query(sql))
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_pending_orders_db() -> pd.DataFrame:
-    if not has_columns("pending_approvals"):
-        return pd.DataFrame([])
-    cols = get_table_columns("pending_approvals")
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    sql = f"""
-        SELECT
-            {c("id")} AS id,
-            {c("symbol")} AS symbol,
-            {c("status")} AS status,
-            {c("setup_type")} AS setup_type,
-            {c("regime")} AS regime,
-            {c("score", "double precision")} AS score,
-            {c("chance", "double precision")} AS chance,
-            {c("confidence", "double precision")} AS confidence,
-            {c("entry", "double precision")} AS entry,
-            {c("stop", "double precision")} AS stop,
-            {c("target", "double precision")} AS target,
-            {c("timeframe")} AS timeframe,
-            {c("created_at", "timestamptz")} AS created_at,
-            {c("expires_at", "timestamptz")} AS expires_at
-        FROM public.pending_approvals
-        WHERE COALESCE({c("status")}, 'PENDING') IN ('PENDING', 'APPROVED')
-        ORDER BY COALESCE({c("chance", "double precision")}, 0) DESC,
-                 COALESCE({c("score", "double precision")}, 0) DESC,
-                 {c("created_at", "timestamptz")} DESC NULLS LAST
-        LIMIT 25
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return pd.DataFrame([])
-    for col in ["score", "chance", "confidence", "entry", "stop", "target"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-    for col in ["created_at", "expires_at"]:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_scoreboard_db() -> pd.DataFrame:
-    cols = get_table_columns("experience_scoreboard")
-    if not cols:
-        return pd.DataFrame([])
-
-    def c(name: str, cast: str = "text") -> str:
-        return sql_col(cols, name, cast)
-
-    setup_expr = c("setup_type")
-    regime_expr = (
-        'COALESCE("market_regime", "regime")'
-        if "market_regime" in cols and "regime" in cols
-        else '"market_regime"'
-        if "market_regime" in cols
-        else '"regime"'
-        if "regime" in cols
-        else "NULL::text"
-    )
-
-    sql = f"""
-        SELECT
-            {c("score_key")} AS score_key,
-            {setup_expr} AS setup_type,
-            {regime_expr} AS market_regime,
-            {c("grade")} AS grade,
-            COALESCE({c("n", "integer")}, 0) AS n,
-            COALESCE({c("wins", "integer")}, 0) AS wins,
-            COALESCE({c("losses", "integer")}, 0) AS losses,
-            COALESCE({c("timeouts", "integer")}, 0) AS timeouts,
-            COALESCE({c("win_rate", "double precision")}, 0) AS win_rate,
-            COALESCE({c("avg_mfe", "double precision")}, 0) AS avg_mfe,
-            COALESCE({c("avg_mae", "double precision")}, 0) AS avg_mae,
-            COALESCE({c("avg_time_minutes", "double precision")}, 0) AS avg_time_minutes,
-            {c("updated_at", "timestamptz")} AS updated_at
-        FROM public.experience_scoreboard
-        ORDER BY COALESCE({c("n", "integer")}, 0) DESC NULLS LAST
-        LIMIT 50
-    """
-    df = run_df_query(sql)
-    if df.empty:
-        return pd.DataFrame([])
-    for col in ["n", "wins", "losses", "timeouts", "win_rate", "avg_mfe", "avg_mae", "avg_time_minutes"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
-    if "updated_at" in df.columns:
-        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce", utc=True)
-    return df
-
-
-@st.cache_data(ttl=25, show_spinner=False)
-def load_source_counts() -> pd.DataFrame:
-    cols = get_table_columns("experience_trades")
-    if not cols or "source" not in cols:
-        return pd.DataFrame([])
-    sql = """
-        SELECT
-            CASE
-                WHEN UPPER(COALESCE(source, '')) IN ('REAL', 'REAL_REVIEW') THEN 'REAL'
-                WHEN UPPER(COALESCE(source, '')) = 'SIM' THEN 'SIM'
-                WHEN UPPER(COALESCE(source, '')) = 'SHADOW' THEN 'SHADOW'
-                ELSE 'OTHER'
-            END AS source,
-            COUNT(*) AS n
-        FROM public.experience_trades
-        GROUP BY 1
-        ORDER BY n DESC
-    """
-    return run_df_query(sql)
 
 
 def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
+    table_rows = table_count("experience_trades") if db_ready() else 0
+
     real_df = load_real_trades_db()
     sim_df = load_sim_trades_db()
     shadow_df = load_shadow_trades_db()
-
-    table_rows = table_count("experience_trades") if db_ready() else 0
     history_df = load_history_trades_db()
+
+    frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
+    combined = normalize_trade_df(pd.concat(frames, ignore_index=True)) if frames else empty_trade_df()
+
+    # Prefer the fullest DB dataset available
+    if len(combined) > len(history_df):
+        history_df = combined
 
     if history_df.empty and table_rows > 0:
         history_df = load_history_trades_db_raw()
 
-    if history_df.empty:
-        frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
-        if frames:
-            history_df = normalize_trade_df(pd.concat(frames, ignore_index=True))
-
-    if history_df.empty and real_df.empty and sim_df.empty and shadow_df.empty:
-        demo = demo_trades()
-        real_df = demo[demo["trade_type"] == "REAL"].copy()
-        sim_df = demo[demo["trade_type"] == "SIM"].copy()
-        shadow_df = demo[demo["trade_type"] == "SHADOW"].copy()
-        history_df = demo.copy()
-        return real_df, sim_df, shadow_df, history_df, "DEMO_NOODMODUS"
+    if len(history_df) > 0:
+        return real_df, sim_df, shadow_df, history_df, "DB_PRIORITY"
 
     if table_rows > 0:
-        return real_df, sim_df, shadow_df, history_df, "DB_PRIORITY"
-    return real_df, sim_df, shadow_df, history_df, "DB_OR_FALLBACK"
+        # DB exists but app could not map rows correctly
+        return real_df, sim_df, shadow_df, history_df, "DB_MAP_ISSUE"
+
+    demo = demo_trades()
+    real_df = demo[demo["trade_type"] == "REAL"].copy()
+    sim_df = demo[demo["trade_type"] == "SIM"].copy()
+    shadow_df = demo[demo["trade_type"] == "SHADOW"].copy()
+    history_df = demo.copy()
+    return real_df, sim_df, shadow_df, history_df, "DEMO_NOODMODUS"
 
 
 # ==========================================================
@@ -2145,7 +1942,7 @@ def render_activity_panel(feed: List[Dict[str, Any]], source_mode: str, history_
     st.markdown(f'<div class="small-muted">• real_df rows in app: <b>{len(real_df)}</b></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="small-muted">• sim_df rows in app: <b>{len(sim_df)}</b></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="small-muted">• shadow_df rows in app: <b>{len(shadow_df)}</b></div>', unsafe_allow_html=True)
-    st.markdown('<div class="small-muted">• Demo mode wordt nu alleen geactiveerd als alle DB-datasets leeg zijn of PostgreSQL geen bruikbare output levert.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-muted">• DEMO_NOODMODUS = alleen fallback. DB_PRIORITY = echte PostgreSQL-data actief. DB_MAP_ISSUE = PostgreSQL heeft rows, maar de app kon de mapping nog niet goed opbouwen.</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Recent activity</div>', unsafe_allow_html=True)
@@ -2205,6 +2002,46 @@ def render_table_export(df: pd.DataFrame, file_name: str) -> None:
 # ==========================================================
 # PAGE RENDERS
 # ==========================================================
+
+def chart_source_distribution(df: pd.DataFrame, title: str) -> go.Figure:
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            height=320,
+            margin=dict(l=10, r=10, t=50, b=20),
+            title=title,
+        )
+        return fig
+
+    work = df.copy()
+    counts = work["trade_type"].fillna("UNKNOWN").astype(str).value_counts().reset_index()
+    counts.columns = ["trade_type", "count"]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=counts["trade_type"],
+            y=counts["count"],
+            text=counts["count"],
+            textposition="outside",
+        )
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=320,
+        margin=dict(l=10, r=10, t=50, b=20),
+        title=title,
+        xaxis_title="Trade type",
+        yaxis_title="Aantal trades",
+    )
+    return fig
+
+
 def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, scoreboard_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Dashboard</div>', unsafe_allow_html=True)
@@ -2242,6 +2079,12 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
         st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R"), use_container_width=True, config={"displayModeBar": False})
 
     st.plotly_chart(chart_trade_timeline(filtered, "Trade Timeline"), use_container_width=True, config={"displayModeBar": False})
+
+    extra1, extra2 = st.columns([1.0, 1.0], gap="small")
+    with extra1:
+        st.plotly_chart(chart_source_distribution(filtered, "Bronverdeling in selectie"), use_container_width=True, config={"displayModeBar": False})
+    with extra2:
+        st.plotly_chart(chart_daily_r(filtered, "Dagresultaten in R (detail)"), use_container_width=True, config={"displayModeBar": False})
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Scoreboard snapshot</div>', unsafe_allow_html=True)
@@ -2423,7 +2266,7 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
             Naast de hoofdvelden zoals symbol, setup_type, regime, outcome, result_r en timestamps,
             kunnen ook velden bestaan zoals quantity, size, leverage, pnl_eur, result_eur, fee, commission,
             slippage, strategy_name, exchange, order_id, entry_reason, exit_reason, notes en execution details.
-            Deze versie leest bewust de stabiele hoofdvelden plus meerdere mogelijke euro-PnL kolommen.
+            Deze versie leest nu expliciet jouw schema met trade_key, source, coin, setup_type, market_regime, entry_timeframe, outcome, entry, stop, target, timestamp, entry_time, exit_time, mfe en mae, plus meerdere mogelijke euro-PnL kolommen.
             Als jij wilt, kan de volgende versie ook fees, trade size, quantity en echte netto euro-winst per setup apart tonen.
         </div>
         """,
@@ -2546,13 +2389,13 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
-    st.plotly_chart(render_donut(live_summary["winrate"], f"Trade Win Rate\n{live_summary['winrate']:.1f}%", "#34d399"), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(render_donut(live_summary["winrate"], "Trade Win Rate", "#34d399"), use_container_width=True, config={"displayModeBar": False})
 with metric_cols[5]:
-    st.plotly_chart(render_donut(live_summary["money_winrate"], f"Euro Win Rate\n{live_summary['total_eur']:.2f}€", "#60a5fa"), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(render_donut(live_summary["money_winrate"], "Euro Win Rate", "#60a5fa", subtitle=format_money(live_summary["total_eur"])), use_container_width=True, config={"displayModeBar": False})
 with metric_cols[6]:
     st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
 
-st.caption("Bovenste cirkels: links = percentage winnende trades. Rechts = euro win rate, met in het label ook het totale euroresultaat van live trades.")
+st.caption("Bovenste cirkels: links = percentage winnende trades. Rechts = euro win rate. Onder de euro-cirkel zie je ook het totale euroresultaat van live trades.")
 
 # ==========================================================
 # MAIN LAYOUT
