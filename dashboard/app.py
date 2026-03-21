@@ -1,3 +1,47 @@
+"""
+Crypto AI Terminal - uitgebreide en verduidelijkte versie
+
+Doel van deze versie
+--------------------
+Deze versie is bewust langer, explicieter en duidelijker gehouden dan de verkorte varianten.
+De nadruk ligt op:
+1. leesbaarheid
+2. voorspelbaar gedrag
+3. veilige fallbacks
+4. duidelijke secties
+5. zo min mogelijk ruimte voor copy/paste-fouten
+
+Belangrijke ontwerpkeuzes
+-------------------------
+- Alle grote blokken zijn duidelijk gescheiden.
+- Variabelen en helpers zijn expliciet benoemd.
+- Waar mogelijk zijn defaults ingesteld om crashes te voorkomen.
+- Data wordt veilig gelezen en genormaliseerd voordat UI en grafieken worden opgebouwd.
+- De app probeert bruikbaar te blijven, ook als database, snapshot of externe API tijdelijk niet beschikbaar zijn.
+
+Let op
+------
+- Deze app verwacht optioneel omgevingsvariabelen voor Bitvavo en PostgreSQL.
+- Als die ontbreken, probeert de app nog steeds leesbaar te blijven door veilige defaults of fallback-logica.
+- Gebruik altijd de bijbehorende requirements.txt uit dezelfde zip.
+
+Structuur in grote lijnen
+-------------------------
+1. Configuratie
+2. Session state
+3. Styling
+4. Algemene helpers
+5. Snapshot / portfolio helpers
+6. Database helpers
+7. Trade-loading en normalisatie
+8. Scoreboard en performance helpers
+9. UI-opbouw
+10. History / filters / debugging
+
+Deze extra uitleg staat expres bovenin zodat later voor jou of een andere developer
+direct zichtbaar is waarom bepaalde keuzes gemaakt zijn.
+"""
+
 
 import os
 import json
