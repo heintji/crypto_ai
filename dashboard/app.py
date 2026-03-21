@@ -692,6 +692,70 @@ def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str
     return fig
 
 
+
+def render_win_loss_donut(win_pct: float, loss_pct: float, net_eur: float) -> go.Figure:
+    win_pct = max(0.0, min(100.0, safe_float(win_pct, 0.0)))
+    loss_pct = max(0.0, min(100.0, safe_float(loss_pct, 0.0)))
+    total = win_pct + loss_pct
+    if total <= 0:
+        win_pct = 0.0
+        loss_pct = 100.0
+    else:
+        scale = 100.0 / total
+        win_pct *= scale
+        loss_pct *= scale
+
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                values=[win_pct, loss_pct],
+                labels=["Win", "Loss"],
+                hole=0.78,
+                sort=False,
+                direction="clockwise",
+                rotation=270,
+                textinfo="none",
+                marker=dict(
+                    colors=["#34d399", "#ef4444"],
+                    line=dict(color="rgba(255,255,255,0)", width=0),
+                ),
+                showlegend=False,
+            )
+        ]
+    )
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=182,
+        showlegend=False,
+        annotations=[
+            dict(
+                text=f"<b>{win_pct:.1f}%</b>",
+                x=0.5,
+                y=0.60,
+                showarrow=False,
+                font=dict(color="#ffffff", size=24),
+            ),
+            dict(
+                text="<span style='font-size:14px;color:#dbe4f0;font-weight:700'>Win Rate</span>",
+                x=0.5,
+                y=0.43,
+                showarrow=False,
+                font=dict(color="#dbe4f0", size=14),
+            ),
+            dict(
+                text=f"<span style='font-size:14px;color:#ffffff'><b>{format_money(net_eur)}</b></span>",
+                x=0.5,
+                y=0.29,
+                showarrow=False,
+                font=dict(color="#ffffff", size=14),
+            ),
+        ],
+    )
+    return fig
+
 def trade_reason_text(row: pd.Series) -> str:
     trade_type = safe_str(row.get("trade_type")).upper()
     outcome = safe_str(row.get("outcome")).upper()
@@ -2401,7 +2465,7 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
             4. <b>Shadow Review</b> gebruikt alleen <b>shadow_df</b>.<br>
             5. <b>Portfolio</b> gebruikt alleen <b>snapshot</b> en <b>assets_df</b>.<br><br>
             Daardoor hoort de data op de juiste plek en blijven grafieken, metrics en tabellen synchroon.<br><br>
-            <b>Nieuwe extra metric:</b> naast de gewone <b>Trade Win Rate</b> toont de app nu ook <b>Euro Win Rate</b>.
+            <b>Nieuwe extra metric:</b> naast de gewone <b>Trade Win Rate</b> toont de app nu ook <b>Totaal verdiend</b>.
             Die tweede donut meet hoeveel van het totale geldresultaat uit winsten komt ten opzichte van winsten + verliezen in euro.
         </div>
         """,
@@ -2546,7 +2610,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.10, 0.98, 0.92, 0.92, 0.72, 0.72, 0.88], gap="small")
+metric_cols = st.columns([1.10, 0.98, 0.92, 0.92, 1.45, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -2556,13 +2620,20 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
-    st.plotly_chart(render_donut(live_summary["winrate"], "Trade Win Rate", "#34d399"), use_container_width=True, config={"displayModeBar": False})
+    loss_pct = max(0.0, 100.0 - safe_float(live_summary["winrate"], 0.0))
+    st.plotly_chart(
+        render_win_loss_donut(
+            safe_float(live_summary["winrate"], 0.0),
+            loss_pct,
+            safe_float(live_summary["total_eur"], 0.0),
+        ),
+        use_container_width=True,
+        config={"displayModeBar": False},
+    )
 with metric_cols[5]:
-    st.plotly_chart(render_donut(live_summary["money_winrate"], "Euro Win Rate", "#60a5fa", subtitle=format_money(live_summary["total_eur"])), use_container_width=True, config={"displayModeBar": False})
-with metric_cols[6]:
     st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
 
-st.caption("Bovenste cirkels: links = percentage winnende trades. Rechts = euro win rate. Onder de euro-cirkel zie je ook het totale euroresultaat van live trades.")
+st.caption("De grote cirkel combineert nu winstpercentage, verliespercentage en totaal verdiend in euro in één overzicht.")
 
 # ==========================================================
 # MAIN LAYOUT
