@@ -68,7 +68,7 @@ DB_STATEMENT_TIMEOUT_MS = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "4000"))
 REAL_LIMIT = int(os.getenv("DASH_REAL_LIMIT", "400"))
 SIM_LIMIT = int(os.getenv("DASH_SIM_LIMIT", "400"))
 SHADOW_LIMIT = int(os.getenv("DASH_SHADOW_LIMIT", "400"))
-HISTORY_LIMIT = int(os.getenv("DASH_HISTORY_LIMIT", "1500"))
+HISTORY_LIMIT = int(os.getenv("DASH_HISTORY_LIMIT", "100000"))
 ASSET_LIMIT = int(os.getenv("DASH_ASSET_LIMIT", "20"))
 
 
@@ -84,7 +84,7 @@ SESSION_DEFAULTS = {
     "show_debug": False,
     "show_help_expanded": False,
     "search_text": "",
-    "global_days_filter": "30D",
+    "global_days_filter": "ALLES",
     "global_trade_type_filter": "ALLES",
     "global_setup_filter": "ALLES",
     "global_regime_filter": "ALLES",
@@ -614,6 +614,7 @@ def empty_trade_df() -> pd.DataFrame:
         "stop",
         "target",
         "pnl_r",
+        "pnl_eur",
         "outcome",
         "source",
         "trade_type",
@@ -738,15 +739,15 @@ def trade_reason_text(row: pd.Series) -> str:
 # ==========================================================
 def demo_trades() -> pd.DataFrame:
     rows = [
-        {"trade_id": "r1", "symbol": "BTCUSDT", "setup_type": "BREAKOUT", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 84, "raw_score": 84, "chance": 77, "confidence": 82, "entry": 67200, "stop": 66500, "target": 68800, "pnl_r": 2.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-15T09:10:00Z", "closed_at": "2026-03-15T13:40:00Z"},
-        {"trade_id": "r2", "symbol": "ETHUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "4H", "regime": "BULL", "label": "B", "score": 73, "raw_score": 73, "chance": 69, "confidence": 70, "entry": 3550, "stop": 3488, "target": 3660, "pnl_r": -1.0, "outcome": "LOSS", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-16T08:20:00Z", "closed_at": "2026-03-16T11:15:00Z"},
-        {"trade_id": "r3", "symbol": "DOGEUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 79, "raw_score": 79, "chance": 75, "confidence": 78, "entry": 0.212, "stop": 0.207, "target": 0.225, "pnl_r": 2.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-17T13:10:00Z", "closed_at": "2026-03-17T18:20:00Z"},
-        {"trade_id": "r4", "symbol": "XRPUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 66, "raw_score": 66, "chance": 63, "confidence": 65, "entry": 0.62, "stop": 0.605, "target": 0.655, "pnl_r": 2.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-18T09:10:00Z", "closed_at": "2026-03-18T12:05:00Z"},
-        {"trade_id": "s1", "symbol": "SOLUSDT", "setup_type": "BREAKOUT", "timeframe": "4H", "regime": "BULL", "label": "A", "score": 88, "raw_score": 88, "chance": 82, "confidence": 86, "entry": 168, "stop": 162, "target": 182, "pnl_r": 2.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-15T10:00:00Z", "closed_at": "2026-03-15T22:20:00Z"},
-        {"trade_id": "s2", "symbol": "AVAXUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 62, "raw_score": 62, "chance": 58, "confidence": 61, "entry": 39.1, "stop": 37.9, "target": 41.8, "pnl_r": -1.0, "outcome": "LOSS", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-16T11:45:00Z", "closed_at": "2026-03-16T15:05:00Z"},
-        {"trade_id": "s3", "symbol": "FETUSDT", "setup_type": "BREAKOUT_RETEST", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 81, "raw_score": 81, "chance": 78, "confidence": 79, "entry": 2.19, "stop": 2.10, "target": 2.35, "pnl_r": 2.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-17T14:10:00Z", "closed_at": "2026-03-17T19:40:00Z"},
-        {"trade_id": "sh1", "symbol": "STORJUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "C", "score": 57, "raw_score": 57, "chance": 55, "confidence": 58, "entry": 0.79, "stop": 0.76, "target": 0.86, "pnl_r": 2.0, "outcome": "WIN", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-18T08:10:00Z", "closed_at": "2026-03-18T16:25:00Z"},
-        {"trade_id": "sh2", "symbol": "DOGEUSDT", "setup_type": "BREAKOUT", "timeframe": "15M", "regime": "CHOPPY", "label": "C", "score": 49, "raw_score": 49, "chance": 46, "confidence": 50, "entry": 0.204, "stop": 0.199, "target": 0.214, "pnl_r": -1.0, "outcome": "LOSS", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-19T09:10:00Z", "closed_at": "2026-03-19T11:15:00Z"},
+        {"trade_id": "r1", "symbol": "BTCUSDT", "setup_type": "BREAKOUT", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 84, "raw_score": 84, "chance": 77, "confidence": 82, "entry": 67200, "stop": 66500, "target": 68800, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-15T09:10:00Z", "closed_at": "2026-03-15T13:40:00Z"},
+        {"trade_id": "r2", "symbol": "ETHUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "4H", "regime": "BULL", "label": "B", "score": 73, "raw_score": 73, "chance": 69, "confidence": 70, "entry": 3550, "stop": 3488, "target": 3660, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-16T08:20:00Z", "closed_at": "2026-03-16T11:15:00Z"},
+        {"trade_id": "r3", "symbol": "DOGEUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 79, "raw_score": 79, "chance": 75, "confidence": 78, "entry": 0.212, "stop": 0.207, "target": 0.225, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-17T13:10:00Z", "closed_at": "2026-03-17T18:20:00Z"},
+        {"trade_id": "r4", "symbol": "XRPUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 66, "raw_score": 66, "chance": 63, "confidence": 65, "entry": 0.62, "stop": 0.605, "target": 0.655, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "REAL", "trade_type": "REAL", "is_shadow": False, "created_at": "2026-03-18T09:10:00Z", "closed_at": "2026-03-18T12:05:00Z"},
+        {"trade_id": "s1", "symbol": "SOLUSDT", "setup_type": "BREAKOUT", "timeframe": "4H", "regime": "BULL", "label": "A", "score": 88, "raw_score": 88, "chance": 82, "confidence": 86, "entry": 168, "stop": 162, "target": 182, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-15T10:00:00Z", "closed_at": "2026-03-15T22:20:00Z"},
+        {"trade_id": "s2", "symbol": "AVAXUSDT", "setup_type": "RANGE_RECLAIM", "timeframe": "1H", "regime": "RANGE", "label": "B", "score": 62, "raw_score": 62, "chance": 58, "confidence": 61, "entry": 39.1, "stop": 37.9, "target": 41.8, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-16T11:45:00Z", "closed_at": "2026-03-16T15:05:00Z"},
+        {"trade_id": "s3", "symbol": "FETUSDT", "setup_type": "BREAKOUT_RETEST", "timeframe": "1H", "regime": "BULL", "label": "A", "score": 81, "raw_score": 81, "chance": 78, "confidence": 79, "entry": 2.19, "stop": 2.10, "target": 2.35, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SIM", "trade_type": "SIM", "is_shadow": False, "created_at": "2026-03-17T14:10:00Z", "closed_at": "2026-03-17T19:40:00Z"},
+        {"trade_id": "sh1", "symbol": "STORJUSDT", "setup_type": "TREND_PULLBACK", "timeframe": "1H", "regime": "BULL", "label": "C", "score": 57, "raw_score": 57, "chance": 55, "confidence": 58, "entry": 0.79, "stop": 0.76, "target": 0.86, "pnl_r": 2.0, "pnl_eur": 48.0, "outcome": "WIN", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-18T08:10:00Z", "closed_at": "2026-03-18T16:25:00Z"},
+        {"trade_id": "sh2", "symbol": "DOGEUSDT", "setup_type": "BREAKOUT", "timeframe": "15M", "regime": "CHOPPY", "label": "C", "score": 49, "raw_score": 49, "chance": 46, "confidence": 50, "entry": 0.204, "stop": 0.199, "target": 0.214, "pnl_r": -1.0, "pnl_eur": -24.0, "outcome": "LOSS", "source": "SHADOW", "trade_type": "SHADOW", "is_shadow": True, "created_at": "2026-03-19T09:10:00Z", "closed_at": "2026-03-19T11:15:00Z"},
     ]
     return normalize_trade_df(pd.DataFrame(rows))
 
@@ -1002,7 +1003,7 @@ def normalize_trade_df(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    numeric_cols = ["score", "raw_score", "chance", "confidence", "entry", "stop", "target", "pnl_r"]
+    numeric_cols = ["score", "raw_score", "chance", "confidence", "entry", "stop", "target", "pnl_r", "pnl_eur"]
     for col in numeric_cols:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
@@ -1034,6 +1035,9 @@ def normalize_trade_df(df: pd.DataFrame) -> pd.DataFrame:
     out["entry_price"] = out["entry"]
     out["exit_price"] = out["target"]
     out["day"] = pd.to_datetime(out["datetime_raw"], errors="coerce", utc=True).dt.strftime("%Y-%m-%d")
+    if "pnl_eur" not in out.columns:
+        out["pnl_eur"] = out["pnl_r"] * 25.0
+    out["pnl_eur"] = pd.to_numeric(out["pnl_eur"], errors="coerce").fillna(out["pnl_r"] * 25.0)
     return out
 
 
@@ -1173,6 +1177,23 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
             )
         """
 
+    pnl_eur_col_expr = "NULL::double precision"
+    for eur_col in ["pnl_eur", "result_eur", "realized_pnl_eur", "profit_eur", "net_pnl_eur", "realized_eur"]:
+        if eur_col in cols:
+            pnl_eur_col_expr = f'COALESCE("{eur_col}"::double precision, NULL)'
+            break
+
+    pnl_eur_expr = """
+        COALESCE(
+            pnl_eur_calc,
+            CASE
+                WHEN UPPER(COALESCE(outcome_calc, '')) = 'WIN' THEN 50.0
+                WHEN UPPER(COALESCE(outcome_calc, '')) = 'LOSS' THEN -25.0
+                ELSE 0.0
+            END
+        )
+    """
+
     kind_u = kind.upper()
     where = "1=1"
     if "source" in cols:
@@ -1183,7 +1204,7 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
         elif kind_u == "REAL":
             where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW')"
         elif kind_u == "ALL":
-            where = "UPPER(COALESCE(source_calc, '')) IN ('REAL', 'REAL_REVIEW', 'SIM', 'SHADOW')"
+            where = "1=1"
     elif "is_shadow" in cols:
         if kind_u == "SHADOW":
             where = "COALESCE(is_shadow_calc, FALSE) = TRUE"
@@ -1208,6 +1229,7 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
                 {entry_expr} AS entry,
                 {stop_expr} AS stop,
                 {target_expr} AS target,
+                {pnl_eur_col_expr} AS pnl_eur_calc,
                 {outcome_expr} AS outcome_calc,
                 {source_expr} AS source_calc,
                 {is_shadow_expr} AS is_shadow_calc,
@@ -1230,6 +1252,7 @@ def build_experience_trades_sql(kind: str, limit: int) -> str:
             stop,
             target,
             {pnl_expr} AS pnl_r,
+            {pnl_eur_expr} AS pnl_eur,
             COALESCE(outcome_calc, 'UNKNOWN') AS outcome,
             COALESCE(source_calc, 'UNKNOWN') AS source,
             CASE
@@ -1276,6 +1299,14 @@ def load_shadow_trades_db() -> pd.DataFrame:
 @st.cache_data(ttl=25, show_spinner=False)
 def load_history_trades_db() -> pd.DataFrame:
     sql = build_experience_trades_sql("ALL", HISTORY_LIMIT)
+    if not sql:
+        return pd.DataFrame([])
+    return normalize_trade_df(run_df_query(sql))
+
+
+@st.cache_data(ttl=25, show_spinner=False)
+def load_history_trades_db_raw() -> pd.DataFrame:
+    sql = build_experience_trades_sql("RAWALL", HISTORY_LIMIT)
     if not sql:
         return pd.DataFrame([])
     return normalize_trade_df(run_df_query(sql))
@@ -1400,7 +1431,17 @@ def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
     real_df = load_real_trades_db()
     sim_df = load_sim_trades_db()
     shadow_df = load_shadow_trades_db()
+
+    table_rows = table_count("experience_trades") if db_ready() else 0
     history_df = load_history_trades_db()
+
+    if history_df.empty and table_rows > 0:
+        history_df = load_history_trades_db_raw()
+
+    if history_df.empty:
+        frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
+        if frames:
+            history_df = normalize_trade_df(pd.concat(frames, ignore_index=True))
 
     if history_df.empty and real_df.empty and sim_df.empty and shadow_df.empty:
         demo = demo_trades()
@@ -1408,16 +1449,11 @@ def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
         sim_df = demo[demo["trade_type"] == "SIM"].copy()
         shadow_df = demo[demo["trade_type"] == "SHADOW"].copy()
         history_df = demo.copy()
-        return real_df, sim_df, shadow_df, history_df, "DEMO"
+        return real_df, sim_df, shadow_df, history_df, "DEMO_NOODMODUS"
 
-    if history_df.empty:
-        frames = [df for df in [real_df, sim_df, shadow_df] if not df.empty]
-        if frames:
-            history_df = normalize_trade_df(pd.concat(frames, ignore_index=True))
-        else:
-            history_df = empty_trade_df()
-
-    return real_df, sim_df, shadow_df, history_df, "DB"
+    if table_rows > 0:
+        return real_df, sim_df, shadow_df, history_df, "DB_PRIORITY"
+    return real_df, sim_df, shadow_df, history_df, "DB_OR_FALLBACK"
 
 
 # ==========================================================
@@ -1535,28 +1571,47 @@ def performance_summary(df: pd.DataFrame) -> Dict[str, float]:
         return {
             "count": 0,
             "winrate": 0.0,
+            "money_winrate": 0.0,
             "total_r": 0.0,
             "avg_r": 0.0,
             "expectancy": 0.0,
             "max_drawdown": 0.0,
+            "total_eur": 0.0,
+            "avg_eur": 0.0,
+            "gross_profit_eur": 0.0,
+            "gross_loss_eur": 0.0,
         }
 
     work = df[df["outcome"].isin(["WIN", "LOSS"])].copy()
     if work.empty:
         return {
-            "count": len(df),
+            "count": float(len(df)),
             "winrate": 0.0,
+            "money_winrate": 0.0,
             "total_r": 0.0,
             "avg_r": 0.0,
             "expectancy": 0.0,
             "max_drawdown": 0.0,
+            "total_eur": 0.0,
+            "avg_eur": 0.0,
+            "gross_profit_eur": 0.0,
+            "gross_loss_eur": 0.0,
         }
 
     pnl = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
+    pnl_eur = pd.to_numeric(work["pnl_eur"], errors="coerce").fillna(pnl * 25.0)
+
     total_r = float(pnl.sum())
     avg_r = float(pnl.mean())
     winrate = float((pnl > 0).mean() * 100.0)
     expectancy = float((winrate / 100.0 * 2.0) + ((1 - winrate / 100.0) * -1.0))
+
+    gross_profit_eur = float(pnl_eur[pnl_eur > 0].sum())
+    gross_loss_eur = float(abs(pnl_eur[pnl_eur < 0].sum()))
+    money_base = gross_profit_eur + gross_loss_eur
+    money_winrate = float((gross_profit_eur / money_base) * 100.0) if money_base > 0 else 0.0
+    total_eur = float(pnl_eur.sum())
+    avg_eur = float(pnl_eur.mean())
 
     curve = pnl.cumsum()
     peak = curve.cummax()
@@ -1566,10 +1621,15 @@ def performance_summary(df: pd.DataFrame) -> Dict[str, float]:
     return {
         "count": float(len(work)),
         "winrate": winrate,
+        "money_winrate": money_winrate,
         "total_r": total_r,
         "avg_r": avg_r,
         "expectancy": expectancy,
         "max_drawdown": max_drawdown,
+        "total_eur": total_eur,
+        "avg_eur": avg_eur,
+        "gross_profit_eur": gross_profit_eur,
+        "gross_loss_eur": gross_loss_eur,
     }
 
 
@@ -2077,6 +2137,17 @@ def render_activity_panel(feed: List[Dict[str, Any]], source_mode: str, history_
         st.markdown(f'<div class="small-muted">• {reason}</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Broncontrole</div>', unsafe_allow_html=True)
+    table_rows = table_count("experience_trades") if db_ready() else 0
+    st.markdown(f'<div class="small-muted">• source_mode: <b>{source_mode}</b></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">• experience_trades rows in PostgreSQL: <b>{table_rows}</b></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">• history_df rows in app: <b>{len(history_df)}</b></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">• real_df rows in app: <b>{len(real_df)}</b></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">• sim_df rows in app: <b>{len(sim_df)}</b></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">• shadow_df rows in app: <b>{len(shadow_df)}</b></div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-muted">• Demo mode wordt nu alleen geactiveerd als alle DB-datasets leeg zijn of PostgreSQL geen bruikbare output levert.</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Recent activity</div>', unsafe_allow_html=True)
     if not feed:
         st.markdown('<div class="small-muted">Nog geen activiteit beschikbaar.</div>', unsafe_allow_html=True)
@@ -2138,14 +2209,15 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Dashboard</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-subtitle">Dit scherm gebruikt history_df als hoofdbron. Hier komen REAL + SIM + SHADOW samen voor totaaloverzicht, equity curve, win/loss, setup performance en timeline.</div>',
+        '<div class="section-subtitle">Dit scherm gebruikt history_df als hoofdbron. Hier komen REAL + SIM + SHADOW samen voor totaaloverzicht, equity curve, win/loss, setup performance en timeline. De periode staat standaard op ALLES en de loader geeft nu prioriteit aan echte PostgreSQL-data boven demo-data.</div>',
         unsafe_allow_html=True,
     )
 
     filtered = render_filters(history_df, include_trade_type=True)
+    st.caption("Trades in selectie toont nu alles uit de opgehaalde history na jouw filters. Standaard staat de periode op ALLES.")
     summary = performance_summary(filtered)
 
-    m1, m2, m3, m4 = st.columns(4, gap="small")
+    m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     with m1:
         st.markdown(metric_card_html("Trades in selectie", str(int(summary["count"])), "blue"), unsafe_allow_html=True)
     with m2:
@@ -2154,6 +2226,8 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
         st.markdown(metric_card_html("Gemiddelde R", f"{summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
     with m4:
         st.markdown(metric_card_html("Expectancy", f"{summary['expectancy']:.2f} R", "yellow"), unsafe_allow_html=True)
+    with m5:
+        st.markdown(metric_card_html("Totaal verdiend (€)", format_money(summary["total_eur"]), "blue"), unsafe_allow_html=True)
 
     r1c1, r1c2 = st.columns([1.55, 1.0], gap="small")
     with r1c1:
@@ -2301,6 +2375,7 @@ def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snapshot_mode
 def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, source_mode: str, snapshot_mode: str) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Help & Data Mapping</div>', unsafe_allow_html=True)
+    st.markdown('<div class="small-muted">Deze Help-pagina is klikbaar via het linkermenu en via de S-knop. Hier staat expliciet welke databron elk scherm gebruikt en hoe de grafieken worden gevuld.</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">Deze pagina legt expliciet uit welke data naar welke schermdelen gaat, zodat grafieken en metrics logisch gekoppeld blijven.</div>',
         unsafe_allow_html=True,
@@ -2315,7 +2390,41 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
             3. <b>Simulator</b> gebruikt alleen <b>sim_df</b>.<br>
             4. <b>Shadow Review</b> gebruikt alleen <b>shadow_df</b>.<br>
             5. <b>Portfolio</b> gebruikt alleen <b>snapshot</b> en <b>assets_df</b>.<br><br>
-            Daardoor hoort de data op de juiste plek en blijven grafieken, metrics en tabellen synchroon.
+            Daardoor hoort de data op de juiste plek en blijven grafieken, metrics en tabellen synchroon.<br><br>
+            <b>Nieuwe extra metric:</b> naast de gewone <b>Trade Win Rate</b> toont de app nu ook <b>Euro Win Rate</b>.
+            Die tweede donut meet hoeveel van het totale geldresultaat uit winsten komt ten opzichte van winsten + verliezen in euro.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Wanneer demo mode nog wordt geactiveerd</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="trade-note">
+            Demo mode wordt nu alleen nog gebruikt als:
+            <br>1. <b>experience_trades</b> niets bruikbaars teruggeeft
+            <br>2. <b>real_df</b>, <b>sim_df</b>, <b>shadow_df</b> allemaal leeg zijn
+            <br>3. de app dus anders volledig lege grafieken en lege schermen zou tonen
+            <br><br>
+            Zodra PostgreSQL bruikbare rows levert, krijgt de echte database prioriteit boven fallback-data.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Meer PostgreSQL-data dan nu zichtbaar</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="trade-note">
+            Ja, in PostgreSQL kan veel meer staan dan nu op het scherm zichtbaar is.
+            Naast de hoofdvelden zoals symbol, setup_type, regime, outcome, result_r en timestamps,
+            kunnen ook velden bestaan zoals quantity, size, leverage, pnl_eur, result_eur, fee, commission,
+            slippage, strategy_name, exchange, order_id, entry_reason, exit_reason, notes en execution details.
+            Deze versie leest bewust de stabiele hoofdvelden plus meerdere mogelijke euro-PnL kolommen.
+            Als jij wilt, kan de volgende versie ook fees, trade size, quantity en echte netto euro-winst per setup apart tonen.
         </div>
         """,
         unsafe_allow_html=True,
@@ -2338,6 +2447,17 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
     for item in reasons:
         st.markdown(f'<div class="small-muted">• {item}</div>', unsafe_allow_html=True)
 
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Extra uitleg over PostgreSQL-data</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="trade-note">
+        Deze app leest nu vooral uit <b>experience_trades</b>, <b>experience_scoreboard</b> en <b>pending_approvals</b>.
+        In PostgreSQL kunnen echter veel meer bruikbare velden aanwezig zijn, zoals bijvoorbeeld quantity, fee, pnl_eur,
+        result_eur, entry_reason, exit_reason, strategy_name, exchange, order_id, commission, slippage of notes.
+        Als die kolommen aanwezig zijn, kunnen we ze ook op aparte kaarten, tabellen en grafieken tonen.
+        De huidige versie gebruikt bewust alleen de stabiele hoofdvelden zodat het dashboard niet breekt bij schema-verschillen.
+    </div>
+    """, unsafe_allow_html=True)
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Debug controls</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3, gap="small")
@@ -2416,7 +2536,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-metric_cols = st.columns([1.18, 1.0, 0.96, 0.96, 0.75, 0.92], gap="small")
+metric_cols = st.columns([1.10, 0.98, 0.92, 0.92, 0.72, 0.72, 0.88], gap="small")
 with metric_cols[0]:
     st.markdown(metric_card_html("Total Portfolio Value", format_money(total_portfolio_eur), "blue"), unsafe_allow_html=True)
 with metric_cols[1]:
@@ -2426,10 +2546,13 @@ with metric_cols[2]:
 with metric_cols[3]:
     st.markdown(metric_card_html("Average R per Live Trade", f"{live_summary['avg_r']:.2f} R", "purple"), unsafe_allow_html=True)
 with metric_cols[4]:
-    st.plotly_chart(render_donut(live_summary["winrate"], "Live Win Rate", "#34d399"), use_container_width=True, config={"displayModeBar": False})
+    st.plotly_chart(render_donut(live_summary["winrate"], f"Trade Win Rate\n{live_summary['winrate']:.1f}%", "#34d399"), use_container_width=True, config={"displayModeBar": False})
 with metric_cols[5]:
+    st.plotly_chart(render_donut(live_summary["money_winrate"], f"Euro Win Rate\n{live_summary['total_eur']:.2f}€", "#60a5fa"), use_container_width=True, config={"displayModeBar": False})
+with metric_cols[6]:
     st.markdown(metric_card_html("Maximum Drawdown", f"{live_summary['max_drawdown']:.2f} R", "red"), unsafe_allow_html=True)
 
+st.caption("Bovenste cirkels: links = percentage winnende trades. Rechts = euro win rate, met in het label ook het totale euroresultaat van live trades.")
 
 # ==========================================================
 # MAIN LAYOUT
@@ -2486,7 +2609,7 @@ with left_col:
     nav_button("◉ Simulator", "sim")
     nav_button("◉ Shadow Review", "shadow")
     nav_button("◉ Portfolio", "portfolio")
-    nav_button("◉ Help", "help")
+    nav_button("◉ Help & Data Mapping", "help")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     if st.button("↳ Log Out", key="logout_button", use_container_width=True):
@@ -2514,6 +2637,8 @@ with right_col:
     render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
+st.caption("Bovenste cirkels: links = percentage winnende trades, rechts = percentage euro-resultaat uit winsten t.o.v. totale bruto winsten + verliezen.")
 
 status_text = (
     f"Data mode: {source_mode} | "
