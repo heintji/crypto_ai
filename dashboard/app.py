@@ -3295,7 +3295,7 @@ st.markdown(
 # ==========================================================
 # MAIN LAYOUT
 # ==========================================================
-left_col, main_col, right_col = st.columns([0.78, 2.12, 0.98], gap="small")
+left_col, content_col = st.columns([0.78, 3.10], gap="small")
 
 with left_col:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
@@ -3356,6 +3356,32 @@ with left_col:
         st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
+with content_col:
+    if st.session_state.page == "dashboard":
+        render_dashboard_page(history_df, real_df, sim_df, shadow_df, scoreboard_df)
+        subtle_divider()
+        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+    elif st.session_state.page == "live":
+        render_trade_page("live", real_df, include_trade_type=False)
+        subtle_divider()
+        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+    elif st.session_state.page == "sim":
+        render_trade_page("sim", sim_df, include_trade_type=False)
+        subtle_divider()
+        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+    elif st.session_state.page == "shadow":
+        render_trade_page("shadow", shadow_df, include_trade_type=False)
+        subtle_divider()
+        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+    elif st.session_state.page == "portfolio":
+        render_portfolio_page(snapshot, assets_df, snapshot_mode)
+    elif st.session_state.page == "help":
+        render_help_page(history_df, real_df, sim_df, shadow_df, source_mode, snapshot_mode)
+    else:
+        st.error("Onbekende pagina.")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
 with main_col:
     if st.session_state.page == "dashboard":
         render_dashboard_page(history_df, real_df, sim_df, shadow_df, scoreboard_df)
@@ -3390,12 +3416,3 @@ status_text = (
 )
 st.caption(status_text)
 
-source_text = (
-    "Bronverdeling: "
-    + (
-        ", ".join([f"{safe_str(r['source'])}:{safe_int(r['n'])}" for _, r in source_counts_df.iterrows()])
-        if not source_counts_df.empty
-        else "geen brondata beschikbaar"
-    )
-)
-st.caption(source_text)
