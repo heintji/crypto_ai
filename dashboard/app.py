@@ -577,12 +577,13 @@ st.markdown(
         .hero-card {
             background:
                 radial-gradient(circle at top center, rgba(255,0,90,0.06), rgba(0,0,0,0) 38%),
-                linear-gradient(180deg, rgba(10,13,22,0.96), rgba(8,11,18,0.96));
+                linear-gradient(180deg, rgba(10,13,22,0.98), rgba(8,11,18,0.98));
             border:1px solid rgba(255,255,255,0.05);
             border-radius:22px;
-            padding:20px;
+            padding:22px;
             min-height:100%;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+            overflow:hidden;
         }
         .hero-title-small {
             font-size: 18px;
@@ -870,18 +871,18 @@ def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str
     value = max(0.0, min(100.0, safe_float(value, 0.0)))
     loss_value = max(0.0, 100.0 - value)
     dominant_red = loss_value > value
-    halo_color = "rgba(239,68,68,0.20)" if dominant_red else "rgba(52,211,153,0.20)"
+    halo = "rgba(239,68,68,0.18)" if dominant_red else "rgba(52,211,153,0.18)"
 
     fig = go.Figure()
     fig.add_trace(
         go.Pie(
             values=[max(value, 0.0001), max(loss_value, 0.0001)],
-            hole=0.60,
+            hole=0.58,
             sort=False,
             direction="clockwise",
             rotation=270,
             textinfo="none",
-            marker=dict(colors=[halo_color, "rgba(255,255,255,0.03)"], line=dict(width=0)),
+            marker=dict(colors=[halo, "rgba(255,255,255,0.03)"], line=dict(width=0)),
             showlegend=False,
         )
     )
@@ -907,7 +908,7 @@ def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str
         showlegend=False,
         annotations=[
             dict(text=f"<b>{value:.1f}%</b>", x=0.5, y=0.58, showarrow=False, font=dict(color="#ffffff", size=22)),
-            dict(text=f"<span style='font-size:13px;color:#ffffff'><b>{title}</b></span>", x=0.5, y=0.40, showarrow=False, font=dict(color="#ffffff", size=13)),
+            dict(text=f"<span style='font-size:13px;color:#ffffff'><b>{title}</b></span>" if title else "", x=0.5, y=0.40, showarrow=False, font=dict(color="#ffffff", size=13)),
             dict(text=f"<span style='font-size:10px;color:#cbd5e1'>{subtitle}</span>" if subtitle else "", x=0.5, y=0.23, showarrow=False, font=dict(color="#cbd5e1", size=10)),
         ],
     )
@@ -1002,13 +1003,13 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
     fig.add_trace(
         go.Pie(
             values=[max(win_pct, 0.0001), max(loss_pct, 0.0001)],
-            hole=0.54,
+            hole=0.58,
             sort=False,
             direction="clockwise",
             rotation=270,
             textinfo="none",
             marker=dict(
-                colors=[f"rgba({dominant_glow},0.32)", f"rgba({secondary_glow},0.08)"],
+                colors=[f"rgba({dominant_glow},0.28)", f"rgba({secondary_glow},0.07)"],
                 line=dict(width=0),
             ),
             showlegend=False,
@@ -1030,19 +1031,18 @@ def chart_combined_performance_donut(df: pd.DataFrame, title: str = "REAL Perfor
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        width=700,
-        height=620,
+        width=560,
+        height=560,
         margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
         annotations=[
-            dict(text=f"<b>{format_money(net_eur)}</b>", x=0.5, y=0.64, showarrow=False, font=dict(color="#ffffff", size=38)),
-            dict(text="<span style='font-size:22px;color:#ffffff'>Win Rate</span>", x=0.5, y=0.49, showarrow=False, font=dict(color="#ffffff", size=22)),
-            dict(text=f"<span style='font-size:20px;color:#ffffff'><b>{win_pct:.1f}%</b></span>", x=0.5, y=0.35, showarrow=False, font=dict(color="#ffffff", size=20)),
+            dict(text=f"<b>{format_money(net_eur)}</b>", x=0.5, y=0.63, showarrow=False, font=dict(color="#ffffff", size=34)),
+            dict(text="<span style='font-size:20px;color:#ffffff'>Win Rate</span>", x=0.5, y=0.48, showarrow=False, font=dict(color="#ffffff", size=20)),
+            dict(text=f"<span style='font-size:18px;color:#ffffff'><b>{win_pct:.1f}%</b></span>", x=0.5, y=0.34, showarrow=False, font=dict(color="#ffffff", size=18)),
+            dict(text="<span style='font-size:12px;color:#94a3b8'>Alleen echte trades</span>", x=0.5, y=0.20, showarrow=False, font=dict(color="#94a3b8", size=12)),
         ],
         shapes=[
-            dict(type="line", xref="paper", yref="paper", x0=0.28, x1=0.72, y0=0.43, y1=0.43, line=dict(color=f"rgba({dominant_glow},0.92)", width=3)),
-            dict(type="circle", xref="paper", yref="paper", x0=0.09, y0=0.09, x1=0.91, y1=0.91, line=dict(color=f"rgba({dominant_glow},0.40)", width=26)),
-            dict(type="circle", xref="paper", yref="paper", x0=0.14, y0=0.14, x1=0.86, y1=0.86, line=dict(color=f"rgba({dominant_glow},0.14)", width=12)),
+            dict(type="line", xref="paper", yref="paper", x0=0.31, x1=0.69, y0=0.43, y1=0.43, line=dict(color=f"rgba({dominant_glow},0.90)", width=3)),
         ],
     )
     return fig
@@ -2744,23 +2744,23 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
     euro_sim5_summary = euro_five_sim_summary(history_df, 5.0)
     real_money_summary = real_trade_money_summary(real_df)
 
-    left_col, main_col, right_col = st.columns([0.92, 1.88, 0.92], gap="small")
+    left_col, main_col, right_col = st.columns([0.90, 1.35, 0.95], gap="medium")
 
     with left_col:
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
 
-        mini1_left, mini1_right = st.columns([0.56, 0.44], gap="small")
-        with mini1_left:
+        top_l, top_r = st.columns([0.58, 0.42], gap="small")
+        with top_l:
             st.markdown('<div class="hero-title-small"><span class="green">Trade</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="hero-small-number">{overall_trade_summary["winrate"]:.1f}%</div>', unsafe_allow_html=True)
             st.markdown('<div class="hero-small-label">Trade Win Rate</div>', unsafe_allow_html=True)
-        with mini1_right:
+        with top_r:
             st.plotly_chart(
                 render_donut(
                     safe_float(overall_trade_summary["winrate"], 0.0),
                     "",
-                    subtitle=f"% {int(overall_trade_summary['wins'])} / {int(overall_trade_summary['count'])}",
-                    height=170,
+                    subtitle=f"% {int(overall_trade_summary['wins'])}",
+                    height=150,
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
@@ -2769,28 +2769,28 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
 
         st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
         st.markdown(
-            f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary["wins"])} win / {int(overall_trade_summary["losses"])} loss / 0 open</div>',
+            f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary["wins"])} win / {int(overall_trade_summary["losses"])} loss / {int(overall_trade_summary.get("open_count", 0))} open</div>',
             unsafe_allow_html=True,
         )
         st.markdown(
-            f'<div class="hero-note-muted">({int(overall_trade_summary["count"])} opp / {int(overall_trade_summary["count"])} afgehandeld)</div>',
+            f'<div class="hero-note-muted">({int(overall_trade_summary["count"])} opp / {int(overall_trade_summary.get("resolved_count", overall_trade_summary["count"]))} afgehandeld)</div>',
             unsafe_allow_html=True,
         )
 
-        st.markdown('<div class="hero-divider" style="margin-top:18px;margin-bottom:18px;"></div>', unsafe_allow_html=True)
+        st.markdown('<div class="hero-divider" style="margin-top:20px;margin-bottom:20px;"></div>', unsafe_allow_html=True)
 
-        mini2_left, mini2_right = st.columns([0.56, 0.44], gap="small")
-        with mini2_left:
+        bot_l, bot_r = st.columns([0.58, 0.42], gap="small")
+        with bot_l:
             st.markdown('<div class="hero-title-small"><span class="green">Euro</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="hero-small-number">{format_money(euro_sim5_summary["total_eur"])}</div>', unsafe_allow_html=True)
             st.markdown('<div class="hero-small-label">Rate Win Rate</div>', unsafe_allow_html=True)
-        with mini2_right:
+        with bot_r:
             st.plotly_chart(
                 render_donut(
                     safe_float(euro_sim5_summary["money_winrate"], 0.0),
                     "",
-                    subtitle=f"{euro_sim5_summary['money_winrate']:.1f}.",
-                    height=170,
+                    subtitle=f"{euro_sim5_summary['money_winrate']:.1f}%",
+                    height=150,
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
@@ -2803,7 +2803,7 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
             unsafe_allow_html=True,
         )
         st.markdown(
-            f'<div class="hero-note-muted">({int(overall_trade_summary["count"])} afgehandeld)</div>',
+            f'<div class="hero-note-muted">({int(euro_sim5_summary.get("resolved_count", 0))} afgehandeld)</div>',
             unsafe_allow_html=True,
         )
         st.markdown('</div>', unsafe_allow_html=True)
@@ -2812,12 +2812,14 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown(f'<div class="hero-main-amount">{format_money(real_money_summary["net_eur"])}</div>', unsafe_allow_html=True)
         st.markdown('<div class="hero-main-label">Win Rate</div>', unsafe_allow_html=True)
-        st.plotly_chart(
-            chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
-            use_container_width=True,
-            config={"displayModeBar": False},
-            key="hero_real_performance_big",
-        )
+        center = st.columns([0.08, 0.84, 0.08])
+        with center[1]:
+            st.plotly_chart(
+                chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
+                use_container_width=False,
+                config={"displayModeBar": False},
+                key="hero_real_performance_big",
+            )
         st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
