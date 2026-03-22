@@ -2905,14 +2905,79 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
         st.markdown('</div>', unsafe_allow_html=True)
 
 
+
+def render_dashboard_sidebar_panel(history_df: pd.DataFrame) -> None:
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="page-chip">Nu actief: {}</div>'.format(page_display_name(st.session_state.page)), unsafe_allow_html=True)
+    st.markdown('<div class="nav-header">Trading Overview</div>', unsafe_allow_html=True)
+    st.markdown('<div class="nav-caption">Klikbare navigatie. De actieve pagina krijgt een duidelijke highlight zodat je altijd ziet waar je zit.</div>', unsafe_allow_html=True)
+
+    hk1, hk2 = st.columns(2, gap="small")
+    with hk1:
+        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+        if st.button("W ⚡ Volgende trade", use_container_width=True, key="dash_layer2_next"):
+            if not history_df.empty:
+                ids = history_df["trade_id"].astype(str).tolist()
+                current = st.session_state.selected_page_trade_id
+                if current in ids:
+                    idx = ids.index(current)
+                    st.session_state.selected_page_trade_id = ids[(idx + 1) % len(ids)]
+                else:
+                    st.session_state.selected_page_trade_id = ids[0]
+                st.session_state.status_notice = "Volgende trade geselecteerd."
+            else:
+                st.session_state.status_notice = "Geen trades beschikbaar."
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    with hk2:
+        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+        if st.button("D 🧠 Debug", use_container_width=True, key="dash_layer2_debug"):
+            st.session_state.show_debug = not st.session_state.show_debug
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    hk3, hk4 = st.columns(2, gap="small")
+    with hk3:
+        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+        if st.button("S 📖 Help", use_container_width=True, key="dash_layer2_help"):
+            st.session_state.page = "help"
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+    with hk4:
+        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+        if st.button("Reset app", use_container_width=True, key="dash_layer2_reset"):
+            for key, value in SESSION_DEFAULTS.items():
+                st.session_state[key] = value
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    nav_button("◉ Dashboard", "dashboard")
+    nav_button("◉ Live Performance", "live")
+    nav_button("◉ Simulator", "sim")
+    nav_button("◉ Shadow Review", "shadow")
+    nav_button("◉ Portfolio", "portfolio")
+    nav_button("◉ Help & Data Mapping", "help")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    if st.button("↳ Log Out", key="dash_layer2_logout", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
+
 def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, scoreboard_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     section_open()
     render_hero_top_section(history_df, real_df)
     section_close()
     subtle_divider()
-    section_open()
-    filtered = render_filters(history_df, include_trade_type=True)
+
+    layer2_left, layer2_right = st.columns([0.78, 3.10], gap="small")
+    with layer2_left:
+        render_dashboard_sidebar_panel(history_df)
+    with layer2_right:
+        section_open()
+        filtered = render_filters(history_df, include_trade_type=True)
     summary = performance_summary(filtered)
 
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
@@ -3310,63 +3375,66 @@ st.markdown(
 left_col, content_col = st.columns([0.78, 3.10], gap="small")
 
 with left_col:
-    st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="page-chip">Nu actief: {}</div>'.format(page_display_name(st.session_state.page)), unsafe_allow_html=True)
-    st.markdown('<div class="nav-header">Trading Overview</div>', unsafe_allow_html=True)
-    st.markdown('<div class="nav-caption">Klikbare navigatie. De actieve pagina krijgt een duidelijke highlight zodat je altijd ziet waar je zit.</div>', unsafe_allow_html=True)
+    if st.session_state.page != "dashboard":
+        st.markdown('<div class="panel">', unsafe_allow_html=True)
+        st.markdown('<div class="page-chip">Nu actief: {}</div>'.format(page_display_name(st.session_state.page)), unsafe_allow_html=True)
+        st.markdown('<div class="nav-header">Trading Overview</div>', unsafe_allow_html=True)
+        st.markdown('<div class="nav-caption">Klikbare navigatie. De actieve pagina krijgt een duidelijke highlight zodat je altijd ziet waar je zit.</div>', unsafe_allow_html=True)
 
-    hk1, hk2 = st.columns(2, gap="small")
-    with hk1:
-        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("W ⚡ Volgende trade", use_container_width=True):
-            if not history_df.empty:
-                ids = history_df["trade_id"].astype(str).tolist()
-                current = st.session_state.selected_page_trade_id
-                if current in ids:
-                    idx = ids.index(current)
-                    st.session_state.selected_page_trade_id = ids[(idx + 1) % len(ids)]
+        hk1, hk2 = st.columns(2, gap="small")
+        with hk1:
+            st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+            if st.button("W ⚡ Volgende trade", use_container_width=True, key="sidebar_next_trade"):
+                if not history_df.empty:
+                    ids = history_df["trade_id"].astype(str).tolist()
+                    current = st.session_state.selected_page_trade_id
+                    if current in ids:
+                        idx = ids.index(current)
+                        st.session_state.selected_page_trade_id = ids[(idx + 1) % len(ids)]
+                    else:
+                        st.session_state.selected_page_trade_id = ids[0]
+                    st.session_state.status_notice = "Volgende trade geselecteerd."
                 else:
-                    st.session_state.selected_page_trade_id = ids[0]
-                st.session_state.status_notice = "Volgende trade geselecteerd."
-            else:
-                st.session_state.status_notice = "Geen trades beschikbaar."
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with hk2:
-        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("D 🧠 Debug", use_container_width=True):
-            st.session_state.show_debug = not st.session_state.show_debug
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+                    st.session_state.status_notice = "Geen trades beschikbaar."
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with hk2:
+            st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+            if st.button("D 🧠 Debug", use_container_width=True, key="sidebar_debug"):
+                st.session_state.show_debug = not st.session_state.show_debug
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    hk3, hk4 = st.columns(2, gap="small")
-    with hk3:
-        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("S 📖 Help", use_container_width=True):
-            st.session_state.page = "help"
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-    with hk4:
-        st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("Reset app", use_container_width=True):
-            for key, value in SESSION_DEFAULTS.items():
-                st.session_state[key] = value
-            st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+        hk3, hk4 = st.columns(2, gap="small")
+        with hk3:
+            st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+            if st.button("S 📖 Help", use_container_width=True, key="sidebar_help"):
+                st.session_state.page = "help"
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        with hk4:
+            st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+            if st.button("Reset app", use_container_width=True, key="sidebar_reset"):
+                for key, value in SESSION_DEFAULTS.items():
+                    st.session_state[key] = value
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    nav_button("◉ Dashboard", "dashboard")
-    nav_button("◉ Live Performance", "live")
-    nav_button("◉ Simulator", "sim")
-    nav_button("◉ Shadow Review", "shadow")
-    nav_button("◉ Portfolio", "portfolio")
-    nav_button("◉ Help & Data Mapping", "help")
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        nav_button("◉ Dashboard", "dashboard")
+        nav_button("◉ Live Performance", "live")
+        nav_button("◉ Simulator", "sim")
+        nav_button("◉ Shadow Review", "shadow")
+        nav_button("◉ Portfolio", "portfolio")
+        nav_button("◉ Help & Data Mapping", "help")
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    if st.button("↳ Log Out", key="logout_button", use_container_width=True):
-        st.session_state.clear()
-        st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+        if st.button("↳ Log Out", key="sidebar_logout_button", use_container_width=True):
+            st.session_state.clear()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        st.markdown('<div style="height:1px;"></div>', unsafe_allow_html=True)
 
 with content_col:
     if st.session_state.page == "dashboard":
