@@ -266,9 +266,35 @@ st.markdown(
 
         .divider {
             height:1px;
-            background: rgba(255,255,255,0.07);
+            background: rgba(255,255,255,0.04);
             border-radius:999px;
             margin: 10px 0 12px 0;
+        }
+
+        .section-shell {
+            background: linear-gradient(180deg, rgba(255,255,255,0.012), rgba(255,255,255,0.006));
+            border: 1px solid rgba(255,255,255,0.035);
+            border-radius: 20px;
+            padding: 14px;
+            margin-top: 10px;
+            margin-bottom: 10px;
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.01);
+        }
+
+        .section-shell-tight {
+            background: linear-gradient(180deg, rgba(255,255,255,0.010), rgba(255,255,255,0.005));
+            border: 1px solid rgba(255,255,255,0.03);
+            border-radius: 18px;
+            padding: 10px 12px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+
+        .section-divider-subtle {
+            height: 1px;
+            background: linear-gradient(90deg, rgba(255,255,255,0.00), rgba(255,255,255,0.045), rgba(255,255,255,0.00));
+            margin: 14px 2px;
+            border-radius: 999px;
         }
 
         .nav-header {
@@ -574,13 +600,28 @@ st.markdown(
             padding:18px;
             box-shadow: 0 18px 48px rgba(0,0,0,0.28);
         }
-        .hero-card {
+        
+        .hero-top-grid {
+            display:grid;
+            grid-template-columns: 1fr 1.2fr 0.95fr;
+            gap:16px;
+        }
+        .hero-card-left {
+            min-height: 520px;
+        }
+        .hero-card-main {
+            min-height: 520px;
+        }
+        .hero-card-right {
+            min-height: 520px;
+        }
+.hero-card {
             background:
                 radial-gradient(circle at top center, rgba(255,0,90,0.06), rgba(0,0,0,0) 38%),
                 linear-gradient(180deg, rgba(10,13,22,0.98), rgba(8,11,18,0.98));
             border:1px solid rgba(255,255,255,0.05);
             border-radius:22px;
-            padding:22px;
+            padding:24px;
             min-height:100%;
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
             overflow:hidden;
@@ -2433,6 +2474,7 @@ def nav_button(label: str, page_key: str) -> None:
         st.session_state.page = page_key
         st.session_state.selected_page_trade_id = None
         st.rerun()
+    section_close()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2596,6 +2638,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
 
 def render_activity_panel(feed: List[Dict[str, Any]], source_mode: str, history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, snapshot_mode: str) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_open()
     st.markdown('<div class="section-title">Systeemstatus</div>', unsafe_allow_html=True)
 
     status_html = (
@@ -2677,6 +2720,7 @@ def render_activity_panel(feed: List[Dict[str, Any]], source_mode: str, history_
                 "debug_events": st.session_state.debug_events[:10],
             }
         )
+    section_close()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -2738,34 +2782,35 @@ def chart_source_distribution(df: pd.DataFrame, title: str) -> go.Figure:
 
 
 
+
 def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     overall_trade_summary = overall_trade_win_summary(history_df)
     euro_sim5_summary = euro_five_sim_summary(history_df, 5.0)
     real_money_summary = real_trade_money_summary(real_df)
 
-    left_col, main_col, right_col = st.columns([0.95, 1.45, 0.92], gap="medium")
+    left_col, main_col, right_col = st.columns([0.95, 1.20, 0.92], gap="medium")
 
     with left_col:
-        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+        st.markdown('<div class="hero-card hero-card-left">', unsafe_allow_html=True)
 
-        top_l, top_r = st.columns([0.56, 0.44], gap="small")
-        with top_l:
+        # Trade win rate block
+        row1_a, row1_b = st.columns([0.55, 0.45], gap="small")
+        with row1_a:
             st.markdown('<div class="hero-title-small"><span class="green">Trade</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="hero-small-number">{overall_trade_summary["winrate"]:.1f}%</div>', unsafe_allow_html=True)
             st.markdown('<div class="hero-small-label">Trade Win Rate</div>', unsafe_allow_html=True)
-        with top_r:
+        with row1_b:
             st.plotly_chart(
                 render_donut(
                     safe_float(overall_trade_summary["winrate"], 0.0),
                     "",
-                    subtitle=f"% {int(overall_trade_summary['wins'])}",
-                    height=145,
+                    subtitle=f"% {int(overall_trade_summary["wins"])}",
+                    height=150,
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
                 key="hero_trade_winrate_small",
             )
-
         st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="hero-note"><span style="color:#34d399;">●</span> {int(overall_trade_summary["wins"])} win / {int(overall_trade_summary["losses"])} loss / {int(overall_trade_summary.get("open_count", 0))} open</div>',
@@ -2778,24 +2823,24 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
 
         st.markdown('<div class="hero-divider" style="margin-top:18px;margin-bottom:18px;"></div>', unsafe_allow_html=True)
 
-        bot_l, bot_r = st.columns([0.56, 0.44], gap="small")
-        with bot_l:
+        # Euro win rate block
+        row2_a, row2_b = st.columns([0.55, 0.45], gap="small")
+        with row2_a:
             st.markdown('<div class="hero-title-small"><span class="green">Euro</span> <span class="white">Win Rate</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="hero-small-number">{format_money(euro_sim5_summary["total_eur"])}</div>', unsafe_allow_html=True)
             st.markdown('<div class="hero-small-label">Euro Win Rate</div>', unsafe_allow_html=True)
-        with bot_r:
+        with row2_b:
             st.plotly_chart(
                 render_donut(
                     safe_float(euro_sim5_summary["money_winrate"], 0.0),
                     "",
-                    subtitle=f"{euro_sim5_summary['money_winrate']:.1f}%",
-                    height=145,
+                    subtitle=f"{euro_sim5_summary["money_winrate"]:.1f}",
+                    height=150,
                 ),
                 use_container_width=False,
                 config={"displayModeBar": False},
                 key="hero_euro_winrate_small",
             )
-
         st.markdown('<div class="hero-divider"></div>', unsafe_allow_html=True)
         st.markdown(
             f'<div class="hero-note"><span style="color:#34d399;">●</span> {format_money(euro_sim5_summary["gross_profit_eur"])} / {format_money(euro_sim5_summary["gross_loss_eur"])} / €0</div>',
@@ -2809,26 +2854,21 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
         st.markdown('</div>', unsafe_allow_html=True)
 
     with main_col:
-        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+        st.markdown('<div class="hero-card hero-card-main">', unsafe_allow_html=True)
         st.markdown(f'<div class="hero-main-amount">{format_money(real_money_summary["net_eur"])}</div>', unsafe_allow_html=True)
         st.markdown('<div class="hero-main-label">Win Rate</div>', unsafe_allow_html=True)
-
-        center_wrap = st.columns([0.10, 0.80, 0.10], gap="small")
-        with center_wrap[1]:
-            st.plotly_chart(
-                chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
-                use_container_width=False,
-                config={"displayModeBar": False},
-                key="hero_real_performance_big",
-            )
-
+        st.plotly_chart(
+            chart_combined_performance_donut(real_df if not real_df.empty else pd.DataFrame([]), "REAL Performance"),
+            use_container_width=True,
+            config={"displayModeBar": False},
+            key="hero_real_performance_big",
+        )
         st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
         dominant_label = "WINST DOMINEERT" if safe_str(real_money_summary.get("dominant")) == "green" else "VERLIES DOMINEERT"
         dominant_cls = "green" if safe_str(real_money_summary.get("dominant")) == "green" else "red"
-
-        st.markdown('<div class="hero-card">', unsafe_allow_html=True)
+        st.markdown('<div class="hero-card hero-card-right">', unsafe_allow_html=True)
         st.markdown(f'<div class="hero-dominance {dominant_cls}">{dominant_label}</div>', unsafe_allow_html=True)
         st.markdown('<div class="hero-stats-head">STATISTIEKEN</div>', unsafe_allow_html=True)
 
@@ -2841,7 +2881,9 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
             ("Netto Resultaat", format_money(real_money_summary.get("net_eur", 0.0)), ""),
         ]
         for label, value, badge in rows:
-            badge_cls = "green" if ("Win" in label or label == "Aantal echte trades" or label == "Netto Resultaat") else "red"
+            badge_cls = "green" if ("Win" in label or label == "Aantal echte trades") else "red"
+            if label == "Netto Resultaat":
+                badge_cls = "green" if safe_float(real_money_summary.get("net_eur", 0.0)) >= 0 else "red"
             badge_html = f'<span class="hero-stat-badge {badge_cls}">{badge}</span>' if badge else ""
             st.markdown(
                 f'<div class="hero-stat-row"><div class="hero-stat-label">{label}</div><div class="hero-stat-value">{value}{badge_html}</div></div>',
@@ -2853,8 +2895,11 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
 
 def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, scoreboard_df: pd.DataFrame) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_open()
     render_hero_top_section(history_df, real_df)
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    section_close()
+    subtle_divider()
+    section_open()
     filtered = render_filters(history_df, include_trade_type=True)
     summary = performance_summary(filtered)
 
@@ -2945,6 +2990,7 @@ def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool
     }
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_open()
     st.markdown(f'<div class="section-title">{title_map.get(page_name, "Trades")}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="section-subtitle">{subtitle_map.get(page_name, "")}</div>', unsafe_allow_html=True)
 
@@ -2982,12 +3028,14 @@ def render_trade_page(page_name: str, df: pd.DataFrame, include_trade_type: bool
         st.dataframe(filtered[display_cols], use_container_width=True, hide_index=True)
 
     render_table_export(filtered, f"{page_name}_trades_export.csv")
+    section_close()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 
 def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snapshot_mode: str) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_open()
     st.markdown('<div class="portfolio-kicker">Portfolio Overzicht</div>', unsafe_allow_html=True)
     st.markdown('<div class="section-title">Portfolio</div>', unsafe_allow_html=True)
     st.markdown(
@@ -3055,11 +3103,13 @@ def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snapshot_mode
             table_df["Aandeel %"] = pd.to_numeric(table_df["Aandeel %"], errors="coerce").fillna(0.0).map(lambda x: f"{x:.1f}%")
         st.dataframe(table_df, use_container_width=True, hide_index=True)
 
+    section_close()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd.DataFrame, shadow_df: pd.DataFrame, source_mode: str, snapshot_mode: str) -> None:
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+    section_open()
     st.markdown('<div class="section-title">Help & Data Mapping</div>', unsafe_allow_html=True)
     st.markdown('<div class="small-muted">Deze Help-pagina is klikbaar via het linkermenu en via de S-knop. Hier staat expliciet welke databron elk scherm gebruikt en hoe de grafieken worden gevuld.</div>', unsafe_allow_html=True)
     st.markdown(
@@ -3179,6 +3229,7 @@ def render_help_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_df: pd
             },
         }
     )
+    section_close()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
