@@ -906,6 +906,18 @@ def get_status_badge(status: str) -> str:
         return f'<span class="status-warn">{status_u}</span>'
     return f'<span class="status-bad">{status_u}</span>'
 
+def section_open() -> None:
+    st.markdown('<div class="section-shell">', unsafe_allow_html=True)
+
+
+def section_close() -> None:
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def subtle_divider() -> None:
+    st.markdown('<div class="section-divider-subtle"></div>', unsafe_allow_html=True)
+
+
 
 
 def render_donut(value: float, title: str, color: str = "#34d399", subtitle: str = "", height: int = 176) -> go.Figure:
