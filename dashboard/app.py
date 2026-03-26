@@ -2800,7 +2800,7 @@ def render_hero_top_section(history_df: pd.DataFrame, real_df: pd.DataFrame) -> 
     euro_sim5_summary = euro_five_sim_summary(history_df, 5.0)
     real_money_summary = real_trade_money_summary(real_df)
 
-    left_col, main_col, right_col = st.columns([0.95, 1.20, 0.92], gap="medium")
+    left_col, main_col, right_col = st.columns([1.18, 1.52, 1.00], gap="medium")
 
     with left_col:
         st.markdown('<div class="hero-card hero-card-left">', unsafe_allow_html=True)
@@ -2972,7 +2972,7 @@ def render_dashboard_page(history_df: pd.DataFrame, real_df: pd.DataFrame, sim_d
     section_close()
     subtle_divider()
 
-    layer2_left, layer2_right = st.columns([0.78, 3.10], gap="small")
+    layer2_left, layer2_right = st.columns([1.05, 2.95], gap="medium")
     with layer2_left:
         render_dashboard_sidebar_panel(history_df)
     with layer2_right:
@@ -3372,10 +3372,12 @@ st.markdown(
 # ==========================================================
 # MAIN LAYOUT
 # ==========================================================
-left_col, content_col = st.columns([0.78, 3.10], gap="small")
+if st.session_state.page == "dashboard":
+    render_dashboard_page(history_df, real_df, sim_df, shadow_df, scoreboard_df)
+else:
+    left_col, content_col = st.columns([0.78, 3.10], gap="small")
 
-with left_col:
-    if st.session_state.page != "dashboard":
+    with left_col:
         st.markdown('<div class="panel">', unsafe_allow_html=True)
         st.markdown('<div class="page-chip">Nu actief: {}</div>'.format(page_display_name(st.session_state.page)), unsafe_allow_html=True)
         st.markdown('<div class="nav-header">Trading Overview</div>', unsafe_allow_html=True)
@@ -3433,32 +3435,26 @@ with left_col:
             st.session_state.clear()
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
-    else:
-        st.markdown('<div style="height:1px;"></div>', unsafe_allow_html=True)
 
-with content_col:
-    if st.session_state.page == "dashboard":
-        render_dashboard_page(history_df, real_df, sim_df, shadow_df, scoreboard_df)
-        subtle_divider()
-        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
-    elif st.session_state.page == "live":
-        render_trade_page("live", real_df, include_trade_type=False)
-        subtle_divider()
-        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
-    elif st.session_state.page == "sim":
-        render_trade_page("sim", sim_df, include_trade_type=False)
-        subtle_divider()
-        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
-    elif st.session_state.page == "shadow":
-        render_trade_page("shadow", shadow_df, include_trade_type=False)
-        subtle_divider()
-        render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
-    elif st.session_state.page == "portfolio":
-        render_portfolio_page(snapshot, assets_df, snapshot_mode)
-    elif st.session_state.page == "help":
-        render_help_page(history_df, real_df, sim_df, shadow_df, source_mode, snapshot_mode)
-    else:
-        st.error("Onbekende pagina.")
+    with content_col:
+        if st.session_state.page == "live":
+            render_trade_page("live", real_df, include_trade_type=False)
+            subtle_divider()
+            render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+        elif st.session_state.page == "sim":
+            render_trade_page("sim", sim_df, include_trade_type=False)
+            subtle_divider()
+            render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+        elif st.session_state.page == "shadow":
+            render_trade_page("shadow", shadow_df, include_trade_type=False)
+            subtle_divider()
+            render_activity_panel(feed, source_mode, history_df, real_df, sim_df, shadow_df, snapshot_mode)
+        elif st.session_state.page == "portfolio":
+            render_portfolio_page(snapshot, assets_df, snapshot_mode)
+        elif st.session_state.page == "help":
+            render_help_page(history_df, real_df, sim_df, shadow_df, source_mode, snapshot_mode)
+        else:
+            st.error("Onbekende pagina.")
 
 st.markdown("</div>", unsafe_allow_html=True)
 
