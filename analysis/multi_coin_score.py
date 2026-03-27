@@ -1,1060 +1,1078 @@
+# analysis/multi_coin_score.py
+# ============================================================
+# Crypto AI Bot — Multi Coin Scorer v2.0
+# ============================================================
+# Zelfde gedachtegang als alle andere bestanden:
+#
+#   ✅ Zelfde ENV variabelen + limieten
+#   ✅ Zelfde send_whatsapp() implementatie
+#   ✅ Zelfde Claude health monitoring
+#   ✅ Zelfde bot state check (PostgreSQL)
+#   ✅ Zelfde sslmode="require" op DB connectie
+#   ✅ Zelfde safe_int / safe_float / safe_str helpers
+#   ✅ Zelfde trading hours filter (08:00-22:00 UTC)
+#   ✅ Zelfde weekend: gewoon doorgaan
+#
+# BUGS GEFIXED vs origineel:
+#   ✅ Bitvavo universe filter — gebruikt publieke get_tradable_markets()
+#   ✅ Simpele RSI → Wilder RSI (zoals indicators.py)
+#   ✅ Vaste 2% stop → ATR-based dynamische stop
+#   ✅ Geen rate limiting → 0.2s sleep tussen Binance calls
+#   ✅ Score drempel 80 → 85 voor hogere kwaliteit
+#
+# NIEUWE FEATURES:
+#   ✅ BTC regime filter — geen trades als BTC BEAR
+#   ✅ Volume confirmatie filter
+#   ✅ Multi-timeframe confirmatie (1H + 4H)
+#   ✅ Coin cooldown check (24u na verlies)
+#   ✅ Coin blacklist check (winrate <30% na 20 trades)
+#   ✅ Fee correctie in score berekening
+#   ✅ Slippage correctie
+#   ✅ Experience scoreboard integratie
+#   ✅ Auto BUY trigger via /auto_buy endpoint
+#   ✅ Claude analyseert elke Pre-BUY signal
+# ============================================================
+
 from __future__ import annotations
 
 import os
 import sys
 import time
-import math
-import hashlib
-from dataclasses import dataclass
+import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
-import requests
 import psycopg2
+import psycopg2.extras
+import requests
 
 
-# =========================
-# PATH / ROOT
-# =========================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+# ============================================================
+# ENV — identiek aan alle andere bestanden
+# ============================================================
+DATABASE_URL      = (os.getenv("DATABASE_URL") or "").strip()
+ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 
-# local import (live_trader only for market list, not for trading!)
-try:
-    from trading.live_trader import (
-        get_tradable_markets_cached,
-        symbol_usdt_to_bitvavo_market,
-    )
-except Exception:
-    get_tradable_markets_cached = None
-    symbol_usdt_to_bitvavo_market = None
-
-# shadow trades
-try:
-    from trading.shadow_trades import create_shadow
-except Exception:
-    create_shadow = None
-
-
-# =========================
-# ENV
-# =========================
-DATABASE_URL = (os.getenv("DATABASE_URL") or "").strip()
-
-BINANCE_BASE_URL = (os.getenv("BINANCE_BASE_URL") or "https://api.binance.com").rstrip("/")
-UNIVERSE_LIMIT = int(os.getenv("UNIVERSE_LIMIT") or "250")
-TF_MAIN = (os.getenv("TF_MAIN") or "4h").strip()
-TF_CTX = (os.getenv("TF_CTX") or "1h").strip()
-
-# BELANGRIJK:
-# MAX_PREBUY_PER_DAY = vanaf nu ALLEEN auto-push limiet per dag
-# dus NIET meer limiet op pending_approvals / LIST / TOP / BUY
-MAX_PREBUY_PER_DAY = int(os.getenv("MAX_PREBUY_PER_DAY") or "50")
-
-# Deze laten we bestaan voor compatibiliteit, maar blokkeren pending niet meer.
-MAX_ACTIVE_PREBUYS = int(os.getenv("MAX_ACTIVE_PREBUYS") or "10")
-
-INCLUDE_WATCH_IN_PENDING = (os.getenv("INCLUDE_WATCH_IN_PENDING") or "0").strip() == "1"
-PREBUY_VALID_SECONDS = int(os.getenv("PREBUY_VALID_SECONDS") or str(4 * 60 * 60))
-
-MIN_SCORE_TO_GO = int(os.getenv("MIN_SCORE_TO_GO") or "80")
-WATCH_MIN_SCORE = int(os.getenv("WATCH_MIN_SCORE") or "70")
-
-BITVAVO_FILTER_UNIVERSE = (os.getenv("BITVAVO_FILTER_UNIVERSE") or "1").strip() == "1"
-
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "20")
-
-# Experience layer
-EXPERIENCE_ENABLED = (os.getenv("EXPERIENCE_ENABLED") or "1").strip() == "1"
-EXPERIENCE_MIN_TRADES = int(os.getenv("EXPERIENCE_MIN_TRADES") or "15")
-EXPERIENCE_SCORE_WEIGHT = float(os.getenv("EXPERIENCE_SCORE_WEIGHT") or "12")
-EXPERIENCE_EDGE_WEIGHT = float(os.getenv("EXPERIENCE_EDGE_WEIGHT") or "4")
-EXPERIENCE_MAX_BOOST = int(os.getenv("EXPERIENCE_MAX_BOOST") or "15")
-EXPERIENCE_MAX_PENALTY = int(os.getenv("EXPERIENCE_MAX_PENALTY") or "15")
-
-# Shadow behaviour
-SHADOW_ENABLED = (os.getenv("SHADOW_ENABLED") or "1").strip() == "1"
-
-# WhatsApp push via Twilio (optioneel)
-TWILIO_ACCOUNT_SID = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
-TWILIO_AUTH_TOKEN = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
+TWILIO_ACCOUNT_SID   = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
+TWILIO_AUTH_TOKEN    = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
 TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
-TWILIO_WHATSAPP_TO = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
+TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
+
+BOT_INTERNAL_SECRET = (os.getenv("BOT_INTERNAL_SECRET") or "crypto_ai_bot").strip()
+WEBHOOK_BASE_URL    = (os.getenv("WEBHOOK_BASE_URL") or "").strip()
+
+# ============================================================
+# FASE 1 LIMIETEN — identiek aan alle andere bestanden
+# ============================================================
+MAX_PER_TRADE_EUR       = float(os.getenv("MAX_PER_TRADE_EUR") or "0.50")
+MAX_REAL_TRADES_PER_DAY = int(os.getenv("MAX_REAL_TRADES_PER_DAY") or "10")
+TRADING_HOURS_START     = int(os.getenv("TRADING_HOURS_START") or "8")
+TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "22")
+BOT_STATE_TABLE         = "public.bot_state"
+
+# Score instellingen
+MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "85")
+MIN_CHANCE          = int(os.getenv("MIN_CHANCE") or "70")
+MIN_CONFIDENCE      = int(os.getenv("MIN_CONFIDENCE") or "70")
+MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "50")
+
+# Fee + slippage — identiek aan live_trader
+BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
+SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")
+TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
+
+# Coin filter instellingen
+COIN_COOLDOWN_HOURS   = float(os.getenv("COIN_COOLDOWN_HOURS") or "24.0")
+BLACKLIST_MIN_TRADES  = int(os.getenv("BLACKLIST_MIN_TRADES") or "20")
+BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.30")
+EDGE_DECAY_THRESHOLD  = float(os.getenv("EDGE_DECAY_THRESHOLD") or "10.0")
+
+# Binance API
+BINANCE_BASE    = "https://api.binance.com/api/v3"
+BINANCE_SLEEP   = float(os.getenv("BINANCE_SLEEP") or "0.2")
+BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT") or "10")
+MAX_RETRIES     = int(os.getenv("MAX_RETRIES") or "3")
+
+# Bitvavo API
+BITVAVO_BASE = "https://api.bitvavo.com"
+
+# ATR instellingen
+ATR_PERIOD     = int(os.getenv("ATR_PERIOD") or "14")
+ATR_MULTIPLIER = float(os.getenv("ATR_MULTIPLIER") or "2.0")
+ATR_TARGET_R   = float(os.getenv("ATR_TARGET_R") or "2.0")
+
+# RSI instellingen
+RSI_PERIOD  = int(os.getenv("RSI_PERIOD") or "14")
+RSI_MIN     = int(os.getenv("RSI_MIN") or "35")
+RSI_MAX     = int(os.getenv("RSI_MAX") or "65")
+
+# Prebuy expiry
+PREBUY_EXPIRY_HOURS = int(os.getenv("PREBUY_EXPIRY_HOURS") or "4")
+
+# Markets cache
+_MARKETS_CACHE: Dict[str, Any] = {"ts": 0.0, "markets": set()}
+_MARKETS_TTL = 30 * 60
 
 
-# =========================
-# Models
-# =========================
-@dataclass
-class Prebuy:
-    prebuy_id: str
-    symbol: str
-    timeframe: str
-    setup_type: str
-    regime: str
-    score: int
-    raw_score: int
-    chance: int
-    confidence: int
-    entry: float
-    stop: float
-    target: float
-    expires_at: datetime
-    bitvavo_market: Optional[str] = None
-    label: str = "WATCH"
-    why_tag: str = ""
-    market_condition: str = "NORMAAL"
-    overextended_pct: float = 0.0
-
-    # experience layer
-    exp_n: int = 0
-    exp_win_rate: float = 0.0
-    exp_bias: int = 0
-    exp_avg_mfe: float = 0.0
-    exp_avg_mae: float = 0.0
-    exp_key: str = ""
-    exp_used: bool = False
+# ============================================================
+# BASIS HELPERS — identiek aan alle andere bestanden
+# ============================================================
+def now_utc() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-# =========================
-# Helpers
-# =========================
-def safe_str(value: Any, default: str = "") -> str:
-    if value is None:
+def log(msg: str) -> None:
+    print(f"[{now_utc().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+
+
+def safe_int(x: Any, default: int = 0) -> int:
+    try:
+        return int(x)
+    except Exception:
+        return default
+
+
+def safe_float(x: Any, default: float = 0.0) -> float:
+    try:
+        return float(x)
+    except Exception:
+        return default
+
+
+def safe_str(x: Any, default: str = "") -> str:
+    if x is None:
         return default
     try:
-        s = str(value).strip()
+        s = str(x).strip()
         return s if s else default
     except Exception:
         return default
 
 
-def clamp_int(value: float, min_value: int = 0, max_value: int = 100) -> int:
-    return max(min_value, min(max_value, int(round(value))))
+def utc_day_str() -> str:
+    return now_utc().strftime("%Y-%m-%d")
 
 
-def current_label_from_score(score: int) -> str:
-    return "GO" if score >= MIN_SCORE_TO_GO else "WATCH"
+def is_trading_hours() -> bool:
+    return TRADING_HOURS_START <= now_utc().hour < TRADING_HOURS_END
 
 
-# =========================
-# DB
-# =========================
-def db_conn():
+# ============================================================
+# WHATSAPP — identieke implementatie als alle andere bestanden
+# ============================================================
+def send_whatsapp(message: str) -> bool:
+    if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+                TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO]):
+        log(f"WhatsApp (geen Twilio): {message[:80]}")
+        return False
+    try:
+        resp = requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts"
+            f"/{TWILIO_ACCOUNT_SID}/Messages.json",
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            data={
+                "From": TWILIO_WHATSAPP_FROM,
+                "To":   TWILIO_WHATSAPP_TO,
+                "Body": message,
+            },
+            timeout=15,
+        )
+        if resp.status_code in (200, 201):
+            log(f"✅ WhatsApp verzonden ({len(message)} tekens)")
+            return True
+        log(f"❌ WhatsApp {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        log(f"❌ WhatsApp exception: {type(e).__name__}: {e}")
+        return False
+
+
+# ============================================================
+# CLAUDE HEALTH MONITORING — identiek aan alle bestanden
+# ============================================================
+def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
+    if not ANTHROPIC_API_KEY:
+        return ""
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":      "claude-sonnet-4-20250514",
+                "max_tokens": max_tokens,
+                "messages":   [{"role": "user", "content": prompt}],
+            },
+            timeout=25,
+        )
+        if resp.status_code == 200:
+            return resp.json()["content"][0]["text"].strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def report_error(error: Exception, function: str, severity: str = "HOOG") -> None:
+    log(f"[{severity}] {function}: {type(error).__name__}: {error}")
+    if severity not in ("KRITIEK", "HOOG"):
+        return
+
+    prompt = f"""
+Je bent een crypto trading bot monitor.
+Er is een fout in multi_coin_score.py opgetreden.
+
+Ernst:   {severity}
+Functie: {function}
+Fout:    {type(error).__name__}: {str(error)[:200]}
+
+Geef in 2-3 zinnen Nederlands:
+- Wat er mis is
+- Impact op nieuwe Pre-BUY signalen
+- Wat de gebruiker moet doen
+""".strip()
+
+    uitleg = _claude_analyse(prompt, max_tokens=150)
+    if not uitleg:
+        uitleg = f"{type(error).__name__}: {str(error)[:100]}"
+
+    send_whatsapp(
+        f"🚨 SCANNER FOUT — {severity}\n"
+        f"{'─' * 28}\n\n"
+        f"📁 Functie: {function}\n\n"
+        f"🧠 Claude:\n{uitleg}\n\n"
+        f"🤖 Bot bewaakt open trades.\n"
+        f"Nieuwe scans tijdelijk gestopt.\n\n"
+        f"Commands: STATUS | TRADES | STOP"
+    )
+
+
+# ============================================================
+# DATABASE — sslmode="require" identiek aan alle bestanden
+# ============================================================
+def db_connect():
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL ontbreekt.")
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
-def ensure_schema(cur):
-    # pending_approvals: alles wat jij met LIST/TOP moet kunnen zien
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS public.pending_approvals (
-        id TEXT PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        timeframe TEXT,
-        setup_type TEXT,
-        regime TEXT,
-        score INTEGER,
-        raw_score INTEGER,
-        chance INTEGER,
-        confidence INTEGER,
-        entry DOUBLE PRECISION,
-        stop DOUBLE PRECISION,
-        target DOUBLE PRECISION,
-        status TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        expires_at TIMESTAMPTZ,
-        approved_at TIMESTAMPTZ,
-        rejected_at TIMESTAMPTZ,
-        consumed_at TIMESTAMPTZ,
-        bitvavo_market TEXT
-    );
-    """)
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS raw_score INTEGER;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS confidence INTEGER;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS chance INTEGER;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS timeframe TEXT;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS bitvavo_market TEXT;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS status TEXT;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_n INTEGER;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_win_rate DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_bias INTEGER;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_avg_mfe DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_avg_mae DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.pending_approvals ADD COLUMN IF NOT EXISTS exp_key TEXT;")
-
-    # trade_fingerprints: deduplicatie van dezelfde trade
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS public.trade_fingerprints (
-        fingerprint TEXT UNIQUE,
-        last_created_at TIMESTAMPTZ
-    );
-    """)
-    cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
-    cur.execute("ALTER TABLE public.trade_fingerprints ADD COLUMN IF NOT EXISTS last_created_at TIMESTAMPTZ;")
-
-    # push_state: telt ALLEEN auto-push meldingen per dag
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS public.prebuy_state (
-        day TEXT PRIMARY KEY,
-        created_count INTEGER DEFAULT 0,
-        updated_at TIMESTAMPTZ DEFAULT NOW()
-    );
-    """)
-    cur.execute("ALTER TABLE public.prebuy_state ADD COLUMN IF NOT EXISTS created_count INTEGER DEFAULT 0;")
-    cur.execute("ALTER TABLE public.prebuy_state ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();")
-
-    # experience / leerlaag
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS public.prebuy_experience (
-        prebuy_id TEXT PRIMARY KEY,
-        fingerprint TEXT,
-        symbol TEXT NOT NULL,
-        timeframe TEXT,
-        setup_type TEXT,
-        regime TEXT,
-        score INTEGER,
-        raw_score INTEGER,
-        chance INTEGER,
-        confidence INTEGER,
-        label TEXT,
-        entry DOUBLE PRECISION,
-        stop DOUBLE PRECISION,
-        target DOUBLE PRECISION,
-        bitvavo_market TEXT,
-        why_tag TEXT,
-        market_condition TEXT,
-        overextended_pct DOUBLE PRECISION,
-        notified BOOLEAN DEFAULT FALSE,
-        notification_reason TEXT,
-        created_at TIMESTAMPTZ DEFAULT NOW(),
-        expires_at TIMESTAMPTZ
-    );
-    """)
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS fingerprint TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS why_tag TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS market_condition TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS overextended_pct DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS notified BOOLEAN DEFAULT FALSE;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS notification_reason TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS label TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_n INTEGER;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_win_rate DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_bias INTEGER;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_avg_mfe DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_avg_mae DOUBLE PRECISION;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_key TEXT;")
-    cur.execute("ALTER TABLE public.prebuy_experience ADD COLUMN IF NOT EXISTS exp_used BOOLEAN DEFAULT FALSE;")
-
-    cur.execute("""
-    CREATE INDEX IF NOT EXISTS idx_prebuy_experience_symbol_created_at
-    ON public.prebuy_experience(symbol, created_at DESC);
-    """)
-    cur.execute("""
-    CREATE INDEX IF NOT EXISTS idx_prebuy_experience_fingerprint
-    ON public.prebuy_experience(fingerprint);
-    """)
+def get_bot_state_value(conn, key: str, default: str = "") -> str:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT value FROM {BOT_STATE_TABLE} WHERE key=%s", (key,)
+            )
+            row = cur.fetchone()
+            return safe_str(row[0], default) if row else default
+    except Exception:
+        return default
 
 
-def utc_day_str() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def is_bot_active(conn) -> bool:
+    return get_bot_state_value(conn, "bot_active", "false").lower() == "true"
 
 
-def get_pushes_today(cur) -> int:
-    day = utc_day_str()
-    cur.execute("SELECT created_count FROM public.prebuy_state WHERE day=%s", (day,))
-    row = cur.fetchone()
-    if not row:
-        cur.execute(
-            "INSERT INTO public.prebuy_state(day, created_count, updated_at) VALUES(%s, %s, NOW())",
-            (day, 0),
+def is_bot_paused(conn) -> bool:
+    if get_bot_state_value(conn, "bot_paused", "false").lower() != "true":
+        return False
+    until_str = get_bot_state_value(conn, "bot_paused_until", "")
+    if not until_str:
+        return True
+    try:
+        until = datetime.fromisoformat(until_str)
+        if now_utc() > until:
+            return False
+        return True
+    except Exception:
+        return True
+
+
+# ============================================================
+# BITVAVO UNIVERSE FILTER — publiek, gecached
+# Gebruikt dezelfde get_tradable_markets als live_trader
+# ============================================================
+def get_tradable_markets() -> Set[str]:
+    """
+    Haalt actieve Bitvavo EUR markets op.
+    Identiek aan live_trader.get_tradable_markets().
+    Cache: 30 minuten.
+    """
+    now = time.time()
+    if _MARKETS_CACHE["markets"] and (now - _MARKETS_CACHE["ts"]) < _MARKETS_TTL:
+        return _MARKETS_CACHE["markets"]
+
+    try:
+        resp = requests.get(
+            f"{BITVAVO_BASE}/v2/markets",
+            timeout=10,
         )
-        return 0
-    return int(row[0] or 0)
+        resp.raise_for_status()
+        items = resp.json()
+
+        tradable: Set[str] = set()
+        for item in items:
+            market = safe_str(item.get("market"))
+            status = safe_str(item.get("status")).lower()
+            if market and status == "trading" and market.endswith("-EUR"):
+                tradable.add(market)
+
+        _MARKETS_CACHE["ts"]      = now
+        _MARKETS_CACHE["markets"] = tradable
+        log(f"✅ Bitvavo markets geladen: {len(tradable)} tradable")
+        return tradable
+
+    except Exception as e:
+        log(f"⚠️ Bitvavo markets fout: {e}")
+        return _MARKETS_CACHE.get("markets") or set()
 
 
-def inc_pushes_today(cur, n: int = 1):
-    day = utc_day_str()
-    cur.execute("""
-    INSERT INTO public.prebuy_state(day, created_count, updated_at)
-    VALUES(%s, %s, NOW())
-    ON CONFLICT(day) DO UPDATE SET created_count = public.prebuy_state.created_count + EXCLUDED.created_count,
-                                   updated_at = NOW()
-    """, (day, n))
+def symbol_to_bitvavo_market(symbol_usdt: str) -> Optional[str]:
+    """ETHUSDT → ETH-EUR. Geeft None als niet tradable op Bitvavo."""
+    s = safe_str(symbol_usdt).upper()
+    if not s.endswith("USDT"):
+        return None
+    base = s[:-4]
+    if not base:
+        return None
+    market = f"{base}-EUR"
+    tradable = get_tradable_markets()
+    return market if market in tradable else None
 
 
-def count_active_prebuys(cur) -> int:
-    cur.execute("""
-    SELECT COUNT(*) FROM public.pending_approvals
-    WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
-      AND (expires_at IS NULL OR expires_at > NOW())
-    """)
-    return int(cur.fetchone()[0] or 0)
+# ============================================================
+# BINANCE DATA OPHALEN
+# ============================================================
+def binance_get(endpoint: str, params: dict, retries: int = MAX_RETRIES) -> Optional[Any]:
+    """Binance public API met retry en rate limiting."""
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(
+                f"{BINANCE_BASE}{endpoint}",
+                params=params,
+                timeout=BINANCE_TIMEOUT,
+            )
+            if resp.ok:
+                return resp.json()
+            log(f"⚠️ Binance {resp.status_code} ({endpoint}) poging {attempt}/{retries}")
+        except Exception as e:
+            log(f"⚠️ Binance fout poging {attempt}/{retries}: {e}")
+        if attempt < retries:
+            time.sleep(2 ** attempt)
+    return None
 
 
-def fingerprint_for(pre: Prebuy) -> str:
-    payload = f"{pre.symbol}|{pre.timeframe}|{pre.setup_type}|{pre.entry:.8f}|{pre.target:.8f}"
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def is_duplicate(cur, fp: str) -> bool:
-    cur.execute("SELECT 1 FROM public.trade_fingerprints WHERE fingerprint=%s", (fp,))
-    return cur.fetchone() is not None
-
-
-def remember_fingerprint(cur, fp: str):
-    cur.execute("""
-    INSERT INTO public.trade_fingerprints(fingerprint, last_created_at)
-    VALUES(%s, NOW())
-    ON CONFLICT (fingerprint) DO UPDATE SET last_created_at = NOW()
-    """, (fp,))
-
-
-def insert_pending(cur, pre: Prebuy):
-    cur.execute("""
-    INSERT INTO public.pending_approvals(
-        id, symbol, timeframe, setup_type, regime, score, raw_score, chance, confidence,
-        entry, stop, target, status, created_at, expires_at, bitvavo_market,
-        exp_n, exp_win_rate, exp_bias, exp_avg_mfe, exp_avg_mae, exp_key
-    )
-    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'PENDING', NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
-    ON CONFLICT (id) DO NOTHING
-    """, (
-        pre.prebuy_id,
-        pre.symbol,
-        pre.timeframe,
-        pre.setup_type,
-        pre.regime,
-        pre.score,
-        pre.raw_score,
-        pre.chance,
-        pre.confidence,
-        pre.entry,
-        pre.stop,
-        pre.target,
-        pre.expires_at,
-        pre.bitvavo_market,
-        pre.exp_n,
-        pre.exp_win_rate,
-        pre.exp_bias,
-        pre.exp_avg_mfe,
-        pre.exp_avg_mae,
-        pre.exp_key,
-    ))
-
-
-def insert_experience(cur, pre: Prebuy, fp: str, notified: bool, notification_reason: str):
-    cur.execute("""
-    INSERT INTO public.prebuy_experience(
-        prebuy_id, fingerprint, symbol, timeframe, setup_type, regime, score, raw_score,
-        chance, confidence, label, entry, stop, target, bitvavo_market, why_tag,
-        market_condition, overextended_pct, notified, notification_reason, created_at, expires_at,
-        exp_n, exp_win_rate, exp_bias, exp_avg_mfe, exp_avg_mae, exp_key, exp_used
-    )
-    VALUES (
-        %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s,
-        %s,%s,%s,%s,%s,%s,%s
-    )
-    ON CONFLICT (prebuy_id) DO NOTHING
-    """, (
-        pre.prebuy_id,
-        fp,
-        pre.symbol,
-        pre.timeframe,
-        pre.setup_type,
-        pre.regime,
-        pre.score,
-        pre.raw_score,
-        pre.chance,
-        pre.confidence,
-        pre.label,
-        pre.entry,
-        pre.stop,
-        pre.target,
-        pre.bitvavo_market,
-        pre.why_tag,
-        pre.market_condition,
-        pre.overextended_pct,
-        notified,
-        notification_reason,
-        pre.expires_at,
-        pre.exp_n,
-        pre.exp_win_rate,
-        pre.exp_bias,
-        pre.exp_avg_mfe,
-        pre.exp_avg_mae,
-        pre.exp_key,
-        pre.exp_used,
-    ))
-
-
-def load_experience_scoreboard(cur) -> Dict[str, Dict[str, Any]]:
-    if not EXPERIENCE_ENABLED:
-        return {}
-
-    cur.execute("""
-    SELECT
-        score_key,
-        setup_type,
-        market_regime,
-        grade,
-        n,
-        wins,
-        losses,
-        timeouts,
-        avg_mfe,
-        avg_mae,
-        avg_time_minutes,
-        win_rate
-    FROM public.experience_scoreboard
-    """)
-    rows = cur.fetchall()
-
-    result: Dict[str, Dict[str, Any]] = {}
-    for row in rows:
-        key = safe_str(row[0])
-        result[key] = {
-            "score_key": key,
-            "setup_type": safe_str(row[1]),
-            "market_regime": safe_str(row[2]),
-            "grade": safe_str(row[3]),
-            "n": int(row[4] or 0),
-            "wins": int(row[5] or 0),
-            "losses": int(row[6] or 0),
-            "timeouts": int(row[7] or 0),
-            "avg_mfe": float(row[8] or 0.0),
-            "avg_mae": float(row[9] or 0.0),
-            "avg_time_minutes": float(row[10] or 0.0),
-            "win_rate": float(row[11] or 0.0),
-        }
-    return result
-
-
-def compute_experience_adjustment(
-    setup_type: str,
-    regime: str,
-    base_grade: str,
-    scoreboard: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
-    """
-    Geeft een conservatieve boost/penalty op basis van historische ervaring.
-    We blokkeren GEEN trades hard, maar sturen score/chance/confidence subtiel bij.
-    """
-    key = f"{setup_type}|{regime}|{base_grade}"
-    rec = scoreboard.get(key)
-
-    if not EXPERIENCE_ENABLED or not rec:
-        return {
-            "key": key,
-            "used": False,
-            "n": 0,
-            "win_rate": 0.0,
-            "avg_mfe": 0.0,
-            "avg_mae": 0.0,
-            "bias": 0,
-            "reason": "NO_SCOREBOARD_MATCH",
-        }
-
-    n = int(rec.get("n", 0) or 0)
-    win_rate = float(rec.get("win_rate", 0.0) or 0.0)
-    avg_mfe = float(rec.get("avg_mfe", 0.0) or 0.0)
-    avg_mae = float(rec.get("avg_mae", 0.0) or 0.0)
-
-    if n < EXPERIENCE_MIN_TRADES:
-        return {
-            "key": key,
-            "used": False,
-            "n": n,
-            "win_rate": win_rate,
-            "avg_mfe": avg_mfe,
-            "avg_mae": avg_mae,
-            "bias": 0,
-            "reason": f"NOT_ENOUGH_TRADES_{n}",
-        }
-
-    wr_component = ((win_rate - 50.0) / 50.0) * EXPERIENCE_SCORE_WEIGHT
-    edge = avg_mfe - avg_mae
-    edge_component = edge * EXPERIENCE_EDGE_WEIGHT
-
-    raw_bias = wr_component + edge_component
-
-    max_down = abs(EXPERIENCE_MAX_PENALTY)
-    max_up = abs(EXPERIENCE_MAX_BOOST)
-    bias = int(round(max(-max_down, min(max_up, raw_bias))))
-
-    return {
-        "key": key,
-        "used": True,
-        "n": n,
-        "win_rate": round(win_rate, 2),
-        "avg_mfe": round(avg_mfe, 4),
-        "avg_mae": round(avg_mae, 4),
-        "bias": bias,
-        "reason": f"N={n}|WR={round(win_rate,2)}|EDGE={round(edge,4)}",
-    }
-
-
-# =========================
-# Binance Data
-# =========================
-def binance_get(url_path: str, params: dict) -> Any:
-    url = f"{BINANCE_BASE_URL}{url_path}"
-    response = requests.get(url, params=params, timeout=HTTP_TIMEOUT)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_exchange_symbols_usdt(limit: int) -> List[str]:
-    info = binance_get("/api/v3/exchangeInfo", {})
-    symbols: List[str] = []
-
-    for symbol_info in info.get("symbols", []):
-        if symbol_info.get("status") != "TRADING":
+def fetch_candles(symbol: str, interval: str = "4h", limit: int = 100) -> List[dict]:
+    """Haalt candles op van Binance met OHLCV data."""
+    data = binance_get("/klines", {
+        "symbol": symbol, "interval": interval, "limit": limit
+    })
+    if not data:
+        return []
+    candles = []
+    for c in data:
+        try:
+            candles.append({
+                "open":   safe_float(c[1]),
+                "high":   safe_float(c[2]),
+                "low":    safe_float(c[3]),
+                "close":  safe_float(c[4]),
+                "volume": safe_float(c[5]),
+                "ts":     safe_int(c[0]),
+            })
+        except Exception:
             continue
-        if symbol_info.get("quoteAsset") != "USDT":
-            continue
-
-        symbol = symbol_info.get("symbol")
-        if symbol and symbol.endswith("USDT"):
-            symbols.append(symbol)
-
-        if len(symbols) >= limit:
-            break
-
-    return symbols
+    return candles
 
 
-def get_klines(symbol: str, interval: str, limit: int = 200) -> List[List[Any]]:
-    return binance_get("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+def fetch_ticker_24h(symbol: str) -> Optional[dict]:
+    """Haalt 24u ticker op van Binance."""
+    time.sleep(BINANCE_SLEEP)
+    return binance_get("/ticker/24hr", {"symbol": symbol})
 
 
-def closes_from_klines(klines: List[List[Any]]) -> List[float]:
-    return [float(k[4]) for k in klines]
+# ============================================================
+# TECHNISCHE INDICATOREN
+# ============================================================
+def rsi_wilder(closes: List[float], period: int = 14) -> Optional[float]:
+    """
+    Wilder RSI — identiek aan indicators.py.
+    Veel nauwkeuriger dan simpele RSI.
+    """
+    if len(closes) < period + 1:
+        return None
+    changes  = [closes[i] - closes[i-1] for i in range(1, len(closes))]
+    gains    = [max(c, 0) for c in changes]
+    losses   = [max(-c, 0) for c in changes]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
 
 
-# =========================
-# Indicators (simple)
-# =========================
-def sma(values: List[float], period: int) -> float:
+def sma(values: List[float], period: int) -> Optional[float]:
     if len(values) < period:
-        return float("nan")
+        return None
     return sum(values[-period:]) / period
 
 
-def rsi(values: List[float], period: int = 14) -> float:
-    if len(values) < period + 1:
-        return float("nan")
-
-    gains = 0.0
-    losses = 0.0
-
-    for i in range(-period, 0):
-        diff = values[i] - values[i - 1]
-        if diff >= 0:
-            gains += diff
-        else:
-            losses += abs(diff)
-
-    if losses == 0:
-        return 100.0
-
-    rs = gains / losses
-    return 100.0 - (100.0 / (1.0 + rs))
-
-
-def slope(values: List[float], period: int = 10) -> float:
+def ema(values: List[float], period: int) -> Optional[float]:
     if len(values) < period:
-        return 0.0
-    return values[-1] - values[-period]
+        return None
+    mult = 2 / (period + 1)
+    ema_val = sum(values[:period]) / period
+    for v in values[period:]:
+        ema_val = v * mult + ema_val * (1 - mult)
+    return ema_val
+
+
+def atr(candles: List[dict], period: int = 14) -> Optional[float]:
+    """
+    Average True Range — voor dynamische stop/target berekening.
+    Vervangt de vaste 2% stop.
+    """
+    if len(candles) < period + 1:
+        return None
+    trs = []
+    for i in range(1, len(candles)):
+        h  = candles[i]["high"]
+        l  = candles[i]["low"]
+        pc = candles[i-1]["close"]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    if len(trs) < period:
+        return None
+    atr_val = sum(trs[:period]) / period
+    for tr in trs[period:]:
+        atr_val = (atr_val * (period - 1) + tr) / period
+    return atr_val
 
 
 def detect_regime(closes: List[float]) -> str:
-    s50 = sma(closes, 50)
-    s50_prev = sma(closes[:-10], 50) if len(closes) > 60 else s50
+    """
+    Detecteert marktregime op basis van SMA20 vs SMA50.
+    BULL / BEAR / RANGE
+    """
+    if len(closes) < 50:
+        return "UNKNOWN"
+    sma20 = sma(closes, 20)
+    sma50 = sma(closes, 50)
+    if sma20 is None or sma50 is None:
+        return "UNKNOWN"
+    diff_pct = abs(sma20 - sma50) / sma50
 
-    if math.isnan(s50) or math.isnan(s50_prev):
+    if diff_pct < 0.015:
         return "RANGE"
-
-    if s50 > s50_prev and closes[-1] > s50:
-        return "BULL"
-
-    if s50 < s50_prev and closes[-1] < s50:
-        return "BEAR"
-
-    return "RANGE"
+    return "BULL" if sma20 > sma50 else "BEAR"
 
 
-def choose_setup(closes: List[float]) -> str:
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
+def detect_btc_regime(closes_btc: List[float]) -> str:
+    """
+    BTC regime op basis van EMA200.
+    BULL / BEAR / RANGE
+    """
+    if len(closes_btc) < 200:
+        return "UNKNOWN"
+    ema200 = ema(closes_btc, 200)
+    ema200_prev = ema(closes_btc[:-1], 200)
+    if ema200 is None or ema200_prev is None:
+        return "UNKNOWN"
 
-    if math.isnan(s20) or math.isnan(s50):
-        return "TREND_PULLBACK"
+    current = closes_btc[-1]
+    slope   = ema200 - ema200_prev
+    pct_diff = abs(current - ema200) / ema200
 
-    px = closes[-1]
-    if px > s50 and abs(px - s20) / px < 0.02:
-        return "TREND_PULLBACK"
-
-    return "BREAKOUT_RETEST"
-
-
-def detect_market_condition(closes: List[float], period: int = 20) -> str:
-    if len(closes) < period + 1:
-        return "NORMAAL"
-
-    returns: List[float] = []
-    recent = closes[-(period + 1):]
-
-    for i in range(1, len(recent)):
-        prev_close = recent[i - 1]
-        curr_close = recent[i]
-        if prev_close == 0:
-            continue
-        returns.append(abs((curr_close - prev_close) / prev_close))
-
-    if not returns:
-        return "NORMAAL"
-
-    avg_move = sum(returns) / len(returns)
-
-    if avg_move < 0.008:
-        return "RUSTIG"
-    if avg_move < 0.02:
-        return "NORMAAL"
-    return "VOLATIEL"
+    if pct_diff < 0.02 or abs(slope) < 0.001 * ema200:
+        return "RANGE"
+    return "BULL" if current >= ema200 else "BEAR"
 
 
-def calc_overextended_pct(closes: List[float]) -> float:
-    s20 = sma(closes, 20)
-    px = closes[-1]
+# ============================================================
+# SETUP DETECTIE
+# ============================================================
+def detect_setup(candles_4h: List[dict], candles_1h: List[dict]) -> Tuple[str, str]:
+    """
+    Detecteert setup type + richting op basis van 4H + 1H candles.
+    Geeft (setup_type, why_tag) terug.
+    """
+    if len(candles_4h) < 20:
+        return "UNKNOWN", ""
 
-    if math.isnan(s20) or s20 == 0:
-        return 0.0
+    closes_4h = [c["close"] for c in candles_4h]
+    closes_1h = [c["close"] for c in candles_1h] if candles_1h else []
 
-    return round(((px - s20) / s20) * 100.0, 2)
+    rsi_4h = rsi_wilder(closes_4h, RSI_PERIOD)
+    sma20_4h = sma(closes_4h, 20)
+    sma50_4h = sma(closes_4h, 50)
+    current  = closes_4h[-1]
+    prev     = closes_4h[-2] if len(closes_4h) > 1 else current
+
+    if rsi_4h is None or sma20_4h is None or sma50_4h is None:
+        return "UNKNOWN", ""
+
+    # TREND PULLBACK — prijs trekt terug naar SMA20 in BULL trend
+    if sma20_4h > sma50_4h and current > sma50_4h:
+        if abs(current - sma20_4h) / sma20_4h < 0.02 and RSI_MIN <= rsi_4h <= 55:
+            return "TREND_PULLBACK", f"RSI={rsi_4h:.0f} SMA20pullback"
+
+    # BREAKOUT — prijs breekt boven recente weerstand
+    high_20 = max(c["high"] for c in candles_4h[-20:])
+    if current > high_20 * 0.998 and prev < high_20:
+        return "BREAKOUT", f"RSI={rsi_4h:.0f} breakout_high20"
+
+    # BOUNCE — prijs bounced van SMA50 support
+    if abs(current - sma50_4h) / sma50_4h < 0.015 and rsi_4h < 50:
+        return "BOUNCE", f"RSI={rsi_4h:.0f} SMA50bounce"
+
+    # MOMENTUM — sterke stijging met gezonde RSI
+    if rsi_4h > 55 and current > sma20_4h > sma50_4h:
+        return "MOMENTUM", f"RSI={rsi_4h:.0f} momentum"
+
+    return "UNKNOWN", f"RSI={rsi_4h:.0f}"
 
 
-def build_why_tag(closes: List[float], setup: str, regime: str) -> str:
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    r = rsi(closes, 14)
-    px = closes[-1]
+# ============================================================
+# SCORE BEREKENING
+# ============================================================
+def calculate_score(
+    candles_4h:   List[dict],
+    candles_1h:   List[dict],
+    ticker:       dict,
+    regime:       str,
+    btc_regime:   str,
+    setup_type:   str,
+    exp_win_rate: float,
+    exp_n:        int,
+) -> Tuple[int, int, int, str]:
+    """
+    Berekent (score, chance, confidence, why_tag).
 
-    parts: List[str] = [setup, regime]
+    Score componenten:
+    - RSI in goede zone (0-20 punten)
+    - Trend alignment (0-20 punten)
+    - Volume bevestiging (0-15 punten)
+    - Experience win rate (0-20 punten)
+    - BTC regime (0-15 punten)
+    - Multi-timeframe (0-10 punten)
 
-    if not math.isnan(s20) and not math.isnan(s50):
-        if s20 > s50:
-            parts.append("trend_up")
-        elif s20 < s50:
-            parts.append("trend_down")
+    Totaal: max 100 punten
+    Min voor trade: 85 punten
+    """
+    if not candles_4h or len(candles_4h) < 20:
+        return 0, 0, 0, "te_weinig_data"
+
+    closes_4h  = [c["close"] for c in candles_4h]
+    closes_1h  = [c["close"] for c in candles_1h] if candles_1h else []
+    volumes_4h = [c["volume"] for c in candles_4h]
+
+    rsi_4h   = rsi_wilder(closes_4h, RSI_PERIOD)
+    sma20_4h = sma(closes_4h, 20)
+    sma50_4h = sma(closes_4h, 50)
+    current  = closes_4h[-1]
+    vol_now  = volumes_4h[-1] if volumes_4h else 0
+    vol_avg  = sma(volumes_4h[:-1], 20) or 1
+
+    score    = 0
+    why_tags = []
+
+    # 1. RSI in ideale zone (0-20 punten)
+    if rsi_4h is not None:
+        if RSI_MIN <= rsi_4h <= RSI_MAX:
+            rsi_score = 20 - abs(rsi_4h - 50) / 2
+            score += int(rsi_score)
+            why_tags.append(f"RSI={rsi_4h:.0f}✅")
+        elif rsi_4h < RSI_MIN:
+            score += 5
+            why_tags.append(f"RSI={rsi_4h:.0f}⬇️")
         else:
-            parts.append("trend_flat")
+            why_tags.append(f"RSI={rsi_4h:.0f}❌")
 
-    if not math.isnan(r):
-        if r > 75:
-            parts.append("rsi_hot")
-        elif r < 30:
-            parts.append("rsi_oversold")
-        elif 45 <= r <= 65:
-            parts.append("rsi_healthy")
-
-    if not math.isnan(s20):
-        if px >= s20:
-            parts.append("above_sma20")
+    # 2. Trend alignment SMA20 > SMA50 (0-20 punten)
+    if sma20_4h and sma50_4h:
+        if sma20_4h > sma50_4h and current > sma20_4h:
+            score += 20
+            why_tags.append("trend✅")
+        elif sma20_4h > sma50_4h:
+            score += 10
+            why_tags.append("trend↗️")
         else:
-            parts.append("below_sma20")
+            why_tags.append("trend❌")
 
-    return "|".join(parts[:5])
-
-
-def score_trade(closes: List[float]) -> Tuple[int, int, int, int]:
-    """
-    returns (raw_score, norm_score, chance, confidence)
-    """
-    s20 = sma(closes, 20)
-    s50 = sma(closes, 50)
-    r = rsi(closes, 14)
-    sl = slope(closes, 10)
-
-    if any(map(math.isnan, [s20, s50, r])):
-        return 0, 0, 0, 0
-
-    px = closes[-1]
-    raw = 50
-
-    if s20 > s50:
-        raw += 15
+    # 3. Volume bevestiging (0-15 punten)
+    vol_ratio = vol_now / vol_avg if vol_avg > 0 else 1.0
+    if vol_ratio >= 1.5:
+        score += 15
+        why_tags.append(f"vol={vol_ratio:.1f}x✅")
+    elif vol_ratio >= 1.0:
+        score += 8
+        why_tags.append(f"vol={vol_ratio:.1f}x➡️")
     else:
-        raw -= 10
+        score += 0
+        why_tags.append(f"vol={vol_ratio:.1f}x❌")
 
-    if 45 <= r <= 65:
-        raw += 10
-    elif r > 75:
-        raw -= 10
-    elif r < 30:
-        raw -= 5
-
-    if sl > 0:
-        raw += 10
+    # 4. Experience win rate (0-20 punten)
+    if exp_n >= 5:
+        if exp_win_rate >= 0.60:
+            score += 20
+            why_tags.append(f"exp={exp_win_rate:.0%}✅")
+        elif exp_win_rate >= 0.50:
+            score += 12
+            why_tags.append(f"exp={exp_win_rate:.0%}➡️")
+        elif exp_win_rate >= 0.40:
+            score += 5
+            why_tags.append(f"exp={exp_win_rate:.0%}⬇️")
+        else:
+            why_tags.append(f"exp={exp_win_rate:.0%}❌")
     else:
-        raw -= 5
+        score += 10
+        why_tags.append(f"exp=nieuw({exp_n})")
 
-    if px > s20:
-        raw += 5
+    # 5. BTC regime (0-15 punten)
+    if btc_regime == "BULL":
+        score += 15
+        why_tags.append("BTC=BULL✅")
+    elif btc_regime == "RANGE":
+        score += 7
+        why_tags.append("BTC=RANGE➡️")
+    elif btc_regime == "BEAR":
+        score += 0
+        why_tags.append("BTC=BEAR❌")
     else:
-        raw -= 5
+        score += 5
+        why_tags.append("BTC=?")
 
-    raw = max(0, min(100, raw))
-    norm = raw
+    # 6. Multi-timeframe bevestiging 1H (0-10 punten)
+    if closes_1h and len(closes_1h) >= 14:
+        rsi_1h = rsi_wilder(closes_1h, 14)
+        if rsi_1h and RSI_MIN <= rsi_1h <= RSI_MAX:
+            score += 10
+            why_tags.append(f"1H_RSI={rsi_1h:.0f}✅")
+        elif rsi_1h:
+            score += 3
+            why_tags.append(f"1H_RSI={rsi_1h:.0f}➡️")
 
-    chance = max(0, min(100, int(norm * 1.05)))
-    confidence = max(0, min(100, int((norm + chance) / 2)))
+    # Cap op 100
+    score = min(score, 100)
 
-    return raw, norm, chance, confidence
+    # Fee correctie — trades met kleine marge zijn minder waard
+    # Bij €0.50 trade zijn fees relatief groot
+    fee_impact = TOTAL_COST_PCT * 100  # bijv. 0.35%
+    if fee_impact > 0.3:
+        score = max(0, score - 3)
+        why_tags.append(f"fee={fee_impact:.2f}%")
 
-
-def build_levels(entry: float) -> Tuple[float, float]:
-    stop = entry * 0.98
-    risk = entry - stop
-    target = entry + (2.0 * risk)
-    return stop, target
-
-
-def make_prebuy(
-    symbol: str,
-    tf: str,
-    setup: str,
-    regime: str,
-    raw: int,
-    norm: int,
-    chance: int,
-    conf: int,
-    entry: float,
-    why_tag: str,
-    market_condition: str,
-    overextended_pct: float,
-    exp_meta: Optional[Dict[str, Any]] = None,
-) -> Prebuy:
-    stop, target = build_levels(entry)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=PREBUY_VALID_SECONDS)
-    uid = hashlib.md5(f"{symbol}-{time.time()}".encode("utf-8")).hexdigest()[:6]
-    prebuy_id = f"PB-{symbol}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uid}"
-
-    label = current_label_from_score(norm)
-
-    bitvavo_market = None
-    if symbol_usdt_to_bitvavo_market:
-        bitvavo_market = symbol_usdt_to_bitvavo_market(symbol)
-
-    exp_meta = exp_meta or {}
-
-    return Prebuy(
-        prebuy_id=prebuy_id,
-        symbol=symbol,
-        timeframe=tf,
-        setup_type=setup,
-        regime=regime,
-        score=norm,
-        raw_score=raw,
-        chance=chance,
-        confidence=conf,
-        entry=entry,
-        stop=stop,
-        target=target,
-        expires_at=expires_at,
-        bitvavo_market=bitvavo_market,
-        label=label,
-        why_tag=why_tag,
-        market_condition=market_condition,
-        overextended_pct=overextended_pct,
-        exp_n=int(exp_meta.get("n", 0) or 0),
-        exp_win_rate=float(exp_meta.get("win_rate", 0.0) or 0.0),
-        exp_bias=int(exp_meta.get("bias", 0) or 0),
-        exp_avg_mfe=float(exp_meta.get("avg_mfe", 0.0) or 0.0),
-        exp_avg_mae=float(exp_meta.get("avg_mae", 0.0) or 0.0),
-        exp_key=safe_str(exp_meta.get("key"), ""),
-        exp_used=bool(exp_meta.get("used", False)),
-    )
-
-
-# =========================
-# WhatsApp push (optional)
-# =========================
-def twilio_enabled() -> bool:
-    return all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO])
-
-
-def log_twilio_status():
-    if twilio_enabled():
-        print("📲 WhatsApp push: ON")
+    # Chance = kans op succes op basis van experience + regime
+    if exp_n >= 10 and exp_win_rate > 0:
+        chance = int(exp_win_rate * 100 * (score / 100))
     else:
-        print("📲 WhatsApp push overgeslagen (Twilio env vars ontbreken).")
+        chance = int(score * 0.7)
+    chance = max(0, min(100, chance))
+
+    # Confidence = hoeveel data we hebben
+    if exp_n >= 50:
+        confidence = min(95, 60 + int(exp_win_rate * 35))
+    elif exp_n >= 20:
+        confidence = min(80, 45 + int(exp_win_rate * 25))
+    elif exp_n >= 5:
+        confidence = min(65, 35 + int(exp_win_rate * 20))
+    else:
+        confidence = 40
+
+    why_tag = " | ".join(why_tags[:6])
+    return score, chance, confidence, why_tag
 
 
-def can_auto_push(cur) -> bool:
-    pushes_today = get_pushes_today(cur)
-    return pushes_today < MAX_PREBUY_PER_DAY
-
-
-# =========================
-# Bitvavo filter
-# =========================
-def filter_universe_by_bitvavo(universe: List[str]) -> List[str]:
-    if not BITVAVO_FILTER_UNIVERSE:
-        return universe
-
-    if not get_tradable_markets_cached or not symbol_usdt_to_bitvavo_market:
-        print("⚠️ Bitvavo filter: niet beschikbaar (import live_trader faalde). Universe blijft Binance-only.")
-        return universe
-
-    get_tradable_markets_cached()
-
-    from trading.live_trader import _get_tradable_markets  # type: ignore
-
-    tradable = _get_tradable_markets()
-    filtered: List[str] = []
-
-    for sym in universe:
-        market = symbol_usdt_to_bitvavo_market(sym)
-        if market in tradable:
-            filtered.append(sym)
-
-    print(f"✅ Bitvavo filter: {len(filtered)}/{len(universe)} symbols blijven over (tradable op Bitvavo).")
-    return filtered
-
-
-# =========================
-# SHADOW HELPER
-# =========================
-def create_shadow_safe(pre: Prebuy) -> Tuple[bool, str]:
+# ============================================================
+# EXPERIENCE SCOREBOARD
+# ============================================================
+def get_experience(conn, symbol: str, setup_type: str, regime: str) -> Tuple[float, int, str]:
     """
-    Maakt een shadow trade aan voor deze unieke setup.
-    Faalt shadow aanmaak, dan mag de scan niet crashen.
+    Haalt experience op uit scoreboard voor dit setup/regime.
+    Geeft (win_rate, n_trades, bias) terug.
     """
-    if not SHADOW_ENABLED:
-        return False, "SHADOW_DISABLED"
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT
+                COALESCE(win_rate, 0.0) AS win_rate,
+                COALESCE(n, 0)          AS n,
+                COALESCE(bias, 'NEUTRAL') AS bias
+            FROM public.experience_scoreboard
+            WHERE symbol = %s
+              AND setup_type = %s
+              AND regime = %s
+            LIMIT 1
+            """, (symbol, setup_type, regime))
+            row = cur.fetchone()
+            if row:
+                return safe_float(row[0]), safe_int(row[1]), safe_str(row[2], "NEUTRAL")
+    except Exception:
+        pass
+    return 0.5, 0, "NEUTRAL"
 
-    if create_shadow is None:
-        return False, "SHADOW_MODULE_NOT_AVAILABLE"
+
+def is_coin_on_cooldown(conn, symbol: str) -> bool:
+    """24u cooldown na verlies op die coin — identiek aan trade_monitor."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT exit_time FROM public.experience_trades
+            WHERE coin = %s
+              AND UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(outcome) = 'LOSS'
+              AND exit_time IS NOT NULL
+            ORDER BY exit_time DESC
+            LIMIT 1
+            """, (symbol,))
+            row = cur.fetchone()
+            if row and row[0]:
+                last_loss = row[0]
+                if hasattr(last_loss, 'tzinfo') and last_loss.tzinfo is None:
+                    last_loss = last_loss.replace(tzinfo=timezone.utc)
+                hours_since = (now_utc() - last_loss).total_seconds() / 3600
+                return hours_since < COIN_COOLDOWN_HOURS
+    except Exception:
+        pass
+    return False
+
+
+def is_coin_blacklisted(conn, symbol: str) -> bool:
+    """Blacklist check — identiek aan trade_monitor."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT
+                COUNT(*) AS n,
+                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins
+            FROM public.experience_trades
+            WHERE coin = %s
+              AND UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+            """, (symbol,))
+            row = cur.fetchone()
+            if row:
+                n    = safe_int(row[0])
+                wins = safe_int(row[1])
+                if n >= BLACKLIST_MIN_TRADES:
+                    return (wins / n) < BLACKLIST_MAX_WINRATE
+    except Exception:
+        pass
+    return False
+
+
+def get_prebuy_count_today(conn) -> int:
+    """Aantal pre-buys vandaag."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT COUNT(*) FROM public.pending_approvals
+            WHERE DATE(created_at AT TIME ZONE 'UTC') = %s
+            """, (utc_day_str(),))
+            row = cur.fetchone()
+            return safe_int(row[0]) if row else 0
+    except Exception:
+        return 0
+
+
+def symbol_already_pending(conn, symbol: str) -> bool:
+    """Controleert of coin al een actieve pending approval heeft."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT 1 FROM public.pending_approvals
+            WHERE symbol = %s
+              AND COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              AND (expires_at IS NULL OR expires_at > NOW())
+            LIMIT 1
+            """, (symbol,))
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
+# ============================================================
+# PRE-BUY AANMAKEN
+# ============================================================
+def insert_pending(conn, prebuy: dict) -> str:
+    """Voegt een Pre-BUY signal in in pending_approvals."""
+    prebuy_id = prebuy.get("id") or str(uuid.uuid4())
+    expires_at = now_utc() + timedelta(hours=PREBUY_EXPIRY_HOURS)
 
     try:
-        result = create_shadow(
-            prebuy_id=pre.prebuy_id,
-            symbol=pre.symbol,
-            entry=pre.entry,
-            stop=pre.stop,
-            target=pre.target,
-            timeframe=pre.timeframe,
-            setup_type=pre.setup_type,
-            regime=pre.regime,
-            label=pre.label,
-            score=pre.score,
-            raw_score=pre.raw_score,
-            chance=pre.chance,
-            confidence=pre.confidence,
-            exchange="BINANCE",
-        )
-
-        if isinstance(result, dict) and result.get("ok"):
-            shadow_id = safe_str(result.get("id"), "-")
-            storage = safe_str(result.get("storage"), "OK")
-            return True, f"{storage}|{shadow_id}"
-
-        return False, "SHADOW_CREATE_RETURNED_NOT_OK"
+        with conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO public.pending_approvals (
+                id, symbol, setup_type, regime, score, label,
+                entry, stop, target, expires_at,
+                raw_score, chance, confidence,
+                timeframe, bitvavo_market,
+                exp_n, exp_win_rate, exp_bias,
+                why_tag, created_at, status
+            )
+            VALUES (
+                %s,%s,%s,%s,%s,%s,
+                %s,%s,%s,%s,
+                %s,%s,%s,
+                %s,%s,
+                %s,%s,%s,
+                %s,NOW(),'PENDING'
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                score      = EXCLUDED.score,
+                expires_at = EXCLUDED.expires_at,
+                status     = 'PENDING'
+            """, (
+                prebuy_id,
+                prebuy["symbol"],
+                prebuy["setup_type"],
+                prebuy["regime"],
+                prebuy["score"],
+                "GO",
+                prebuy["entry"],
+                prebuy["stop"],
+                prebuy["target"],
+                expires_at,
+                prebuy["score"],
+                prebuy["chance"],
+                prebuy["confidence"],
+                prebuy.get("timeframe", "4h"),
+                prebuy.get("bitvavo_market", ""),
+                prebuy.get("exp_n", 0),
+                prebuy.get("exp_win_rate", 0.5),
+                prebuy.get("exp_bias", "NEUTRAL"),
+                prebuy.get("why_tag", ""),
+            ))
+        conn.commit()
+        log(f"✅ Pre-BUY aangemaakt: {prebuy['symbol']} score={prebuy['score']} id={prebuy_id}")
+        return prebuy_id
 
     except Exception as e:
-        return False, f"{type(e).__name__}: {e}"
+        log(f"⚠️ insert_pending fout ({prebuy['symbol']}): {e}")
+        return ""
 
 
-# =========================
+def trigger_auto_buy(prebuy_id: str) -> bool:
+    """
+    Roept de /auto_buy route aan op de webhook.
+    Webhook voert dan de BUY uit na alle limiet checks.
+    """
+    if not WEBHOOK_BASE_URL:
+        log("⚠️ WEBHOOK_BASE_URL niet ingesteld — geen auto_buy trigger")
+        return False
+    try:
+        resp = requests.post(
+            f"{WEBHOOK_BASE_URL}/auto_buy",
+            headers={"X-Bot-Auth": BOT_INTERNAL_SECRET},
+            json={"prebuy_id": prebuy_id},
+            timeout=15,
+        )
+        if resp.ok:
+            log(f"✅ Auto BUY getriggerd: {prebuy_id}")
+            return True
+        log(f"⚠️ Auto BUY trigger fout: {resp.status_code}: {resp.text[:100]}")
+        return False
+    except Exception as e:
+        log(f"⚠️ Auto BUY trigger exception: {e}")
+        return False
+
+
+# ============================================================
+# HOOFD SCAN LOOP
+# ============================================================
+def scan_universe(conn) -> int:
+    """
+    Scant alle Bitvavo-tradable coins.
+    Genereert Pre-BUY signals voor coins met score >= MIN_SCORE_TO_TRADE.
+    Geeft aantal gegenereerde pre-buys terug.
+    """
+    # Bot actief check
+    if not is_bot_active(conn):
+        log("Bot gestopt — geen scans")
+        return 0
+
+    if is_bot_paused(conn):
+        log("Bot gepauzeerd — geen scans")
+        return 0
+
+    # Trading hours check
+    if not is_trading_hours():
+        log(f"Buiten trading hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)")
+        return 0
+
+    # Daily pre-buy cap check
+    prebuy_today = get_prebuy_count_today(conn)
+    if prebuy_today >= MAX_PREBUY_PER_DAY:
+        log(f"Pre-buy daglimiet bereikt: {prebuy_today}/{MAX_PREBUY_PER_DAY}")
+        return 0
+
+    # BTC regime ophalen — filter voor BEAR
+    log("BTC regime ophalen...")
+    btc_candles = fetch_candles("BTCUSDT", "4h", 210)
+    btc_closes  = [c["close"] for c in btc_candles]
+    btc_regime  = detect_btc_regime(btc_closes)
+    log(f"BTC regime: {btc_regime}")
+
+    if btc_regime == "BEAR":
+        log("⚠️ BTC in BEAR regime — alleen shadow trades, geen echte BUYs")
+
+    # Bitvavo tradable markets
+    tradable = get_tradable_markets()
+    if not tradable:
+        log("❌ Geen tradable markets gevonden — scan gestopt")
+        return 0
+
+    log(f"Scannen: {len(tradable)} Bitvavo markets...")
+
+    # Haal alle USDT symbols op die ook op Bitvavo staan
+    bitvavo_usdt_symbols = []
+    for market in tradable:
+        if market.endswith("-EUR"):
+            base = market[:-4]
+            symbol_usdt = f"{base}USDT"
+            bitvavo_usdt_symbols.append((symbol_usdt, market))
+
+    prebuy_count = 0
+    scanned      = 0
+
+    for symbol_usdt, bitvavo_market in bitvavo_usdt_symbols:
+        scanned += 1
+
+        # Rate limiting
+        time.sleep(BINANCE_SLEEP)
+
+        # Coin filters
+        if is_coin_blacklisted(conn, symbol_usdt):
+            log(f"⚫ {symbol_usdt} — blacklist")
+            continue
+
+        if is_coin_on_cooldown(conn, symbol_usdt):
+            log(f"⏳ {symbol_usdt} — cooldown actief")
+            continue
+
+        if symbol_already_pending(conn, symbol_usdt):
+            continue
+
+        # Candles ophalen
+        candles_4h = fetch_candles(symbol_usdt, "4h", 100)
+        if len(candles_4h) < 30:
+            continue
+
+        candles_1h = fetch_candles(symbol_usdt, "1h", 50)
+
+        closes_4h = [c["close"] for c in candles_4h]
+        current   = closes_4h[-1]
+
+        if current <= 0:
+            continue
+
+        # Regime detectie voor deze coin
+        regime = detect_regime(closes_4h)
+
+        # Setup detectie
+        setup_type, why_base = detect_setup(candles_4h, candles_1h)
+        if setup_type == "UNKNOWN":
+            continue
+
+        # Experience scoreboard
+        exp_win_rate, exp_n, exp_bias = get_experience(conn, symbol_usdt, setup_type, regime)
+
+        # Ticker voor volume
+        ticker = fetch_ticker_24h(symbol_usdt) or {}
+
+        # Score berekening
+        score, chance, confidence, why_tag = calculate_score(
+            candles_4h, candles_1h, ticker, regime, btc_regime,
+            setup_type, exp_win_rate, exp_n,
+        )
+
+        if score < MIN_SCORE_TO_TRADE:
+            continue
+        if chance < MIN_CHANCE:
+            continue
+        if confidence < MIN_CONFIDENCE:
+            continue
+
+        log(f"🎯 {symbol_usdt}: score={score} chance={chance} conf={confidence} "
+            f"setup={setup_type} regime={regime} btc={btc_regime}")
+
+        # ATR-based stop en target
+        atr_val = atr(candles_4h, ATR_PERIOD)
+        if atr_val and atr_val > 0:
+            stop   = current - atr_val * ATR_MULTIPLIER
+            target = current + atr_val * ATR_MULTIPLIER * ATR_TARGET_R
+        else:
+            stop   = current * 0.98
+            target = current * 1.04
+
+        # Pre-BUY aanmaken
+        prebuy = {
+            "id":            str(uuid.uuid4()),
+            "symbol":        symbol_usdt,
+            "setup_type":    setup_type,
+            "regime":        regime,
+            "score":         score,
+            "chance":        chance,
+            "confidence":    confidence,
+            "entry":         current,
+            "stop":          stop,
+            "target":        target,
+            "timeframe":     "4h",
+            "bitvavo_market": bitvavo_market,
+            "exp_n":         exp_n,
+            "exp_win_rate":  exp_win_rate,
+            "exp_bias":      exp_bias,
+            "why_tag":       why_tag,
+        }
+
+        prebuy_id = insert_pending(conn, prebuy)
+
+        if prebuy_id:
+            prebuy_count += 1
+            prebuy_today += 1
+
+            # Auto BUY triggeren via webhook
+            if btc_regime != "BEAR":
+                trigger_auto_buy(prebuy_id)
+            else:
+                log(f"⚠️ {symbol_usdt} — Pre-BUY aangemaakt maar geen auto_buy (BTC BEAR)")
+
+        if prebuy_today >= MAX_PREBUY_PER_DAY:
+            log(f"Pre-buy daglimiet bereikt: {prebuy_today}")
+            break
+
+        if scanned % 25 == 0:
+            log(f"Voortgang: {scanned}/{len(bitvavo_usdt_symbols)} gescand, {prebuy_count} pre-buys")
+
+    log(f"✅ Scan klaar: {scanned} gescand, {prebuy_count} pre-buys gegenereerd")
+    return prebuy_count
+
+
+# ============================================================
 # MAIN
-# =========================
-def main():
-    start = time.time()
-
-    with db_conn() as conn:
-        conn.autocommit = True
-        with conn.cursor() as cur:
-            ensure_schema(cur)
-
-            scoreboard = load_experience_scoreboard(cur)
-            print(
-                f"experience_enabled={EXPERIENCE_ENABLED} | "
-                f"scoreboard_rows={len(scoreboard)} | "
-                f"min_trades={EXPERIENCE_MIN_TRADES}"
-            )
-            print(f"shadow_enabled={SHADOW_ENABLED} | shadow_module={'OK' if create_shadow is not None else 'MISSING'}")
-
-            push_count_today = get_pushes_today(cur)
-            day = utc_day_str()
-            print(f"multi_coin_score | day={day} | auto_push_today={push_count_today}/{MAX_PREBUY_PER_DAY}")
-
-            active_now = count_active_prebuys(cur)
-            print(f"pending_active_now={active_now} | MAX_ACTIVE_PREBUYS={MAX_ACTIVE_PREBUYS} (alleen info, blokkeert niets)")
-
-            log_twilio_status()
-
-            universe = get_exchange_symbols_usdt(UNIVERSE_LIMIT)
-            print(f"universe={len(universe)} (limit={UNIVERSE_LIMIT}) tf_main={TF_MAIN} tf_ctx={TF_CTX}")
-
-            universe = filter_universe_by_bitvavo(universe)
-
-            created_pending = 0
-            pushed_count = 0
-            skipped = 0
-            candidates = 0
-            experienced = 0
-            shadow_created = 0
-            shadow_failed = 0
-            exp_used_count = 0
-
-            for sym in universe:
-                try:
-                    kl = get_klines(sym, TF_MAIN, 200)
-                    closes = closes_from_klines(kl)
-
-                    if len(closes) < 60:
-                        skipped += 1
-                        continue
-
-                    raw, norm, chance, conf = score_trade(closes)
-                    if norm < WATCH_MIN_SCORE:
-                        skipped += 1
-                        continue
-
-                    candidates += 1
-                    regime = detect_regime(closes)
-                    setup = choose_setup(closes)
-                    entry = closes[-1]
-
-                    why_tag = build_why_tag(closes, setup, regime)
-                    market_condition = detect_market_condition(closes)
-                    overextended_pct = calc_overextended_pct(closes)
-
-                    base_grade = current_label_from_score(norm)
-
-                    exp_meta = compute_experience_adjustment(
-                        setup_type=setup,
-                        regime=regime,
-                        base_grade=base_grade,
-                        scoreboard=scoreboard,
-                    )
-
-                    adjusted_norm = clamp_int(norm + exp_meta["bias"])
-                    adjusted_chance = clamp_int(chance + (exp_meta["bias"] * 0.8))
-                    adjusted_conf = clamp_int(conf + (exp_meta["bias"] * 0.6))
-
-                    if exp_meta["used"]:
-                        exp_used_count += 1
-                        why_tag = (
-                            f"{why_tag}|exp_wr={exp_meta['win_rate']}"
-                            f"|exp_n={exp_meta['n']}"
-                            f"|exp_bias={exp_meta['bias']}"
-                        )
-
-                    pre = make_prebuy(
-                        symbol=sym,
-                        tf=TF_MAIN,
-                        setup=setup,
-                        regime=regime,
-                        raw=raw,
-                        norm=adjusted_norm,
-                        chance=adjusted_chance,
-                        conf=adjusted_conf,
-                        entry=entry,
-                        why_tag=why_tag,
-                        market_condition=market_condition,
-                        overextended_pct=overextended_pct,
-                        exp_meta=exp_meta,
-                    )
-
-                    fp = fingerprint_for(pre)
-
-                    notified = False
-                    notification_reason = "LEARNING_ONLY"
-
-                    # 1) eerst dedup check
-                    if is_duplicate(cur, fp):
-                        notification_reason = "DUPLICATE_BLOCKED"
-                        insert_experience(cur, pre, fp, notified, notification_reason)
-                        experienced += 1
-                        print(
-                            f"📘 {sym}: duplicate geblokkeerd | "
-                            f"label={pre.label} score={pre.score} chance={pre.chance} "
-                            f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
-                            f"reason={notification_reason}"
-                        )
-                        continue
-
-                    # 2) fingerprint onthouden zodat exact dezelfde trade niet opnieuw binnenkomt
-                    remember_fingerprint(cur, fp)
-
-                    # 3) ALTIJD shadow trade starten voor iedere unieke Pre-BUY
-                    shadow_ok, shadow_reason = create_shadow_safe(pre)
-                    if shadow_ok:
-                        shadow_created += 1
-                    else:
-                        shadow_failed += 1
-                        print(f"⚠️ {sym}: shadow create failed | reason={shadow_reason}")
-
-                    # 4) WATCH niet in pending tenzij expliciet aangezet
-                    should_insert_pending = True
-                    if pre.label == "WATCH" and not INCLUDE_WATCH_IN_PENDING:
-                        should_insert_pending = False
-                        notification_reason = "WATCH_ONLY_NOT_PENDING"
-
-                    # 5) pending maken = zichtbaar in LIST/TOP en dus BUY mogelijk
-                    if should_insert_pending:
-                        insert_pending(cur, pre)
-                        created_pending += 1
-
-                        if can_auto_push(cur):
-                            inc_pushes_today(cur, 1)
-                            pushed_count += 1
-                            notified = True
-                            notification_reason = "AUTO_PUSH_ALLOWED"
-                        else:
-                            notification_reason = "AUTO_PUSH_LIMIT_REACHED_PENDING_KEPT"
-
-                        print(
-                            f"🟢 {sym}: pending aangemaakt | "
-                            f"label={pre.label} raw={pre.raw_score} norm={pre.score} chance={pre.chance} "
-                            f"regime={pre.regime} exp_used={pre.exp_used} exp_bias={pre.exp_bias} "
-                            f"exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
-                            f"shadow_ok={shadow_ok} shadow={shadow_reason} "
-                            f"why={pre.why_tag} push={notification_reason} id={pre.prebuy_id}"
-                        )
-                    else:
-                        print(
-                            f"📘 {sym}: alleen leren | "
-                            f"label={pre.label} score={pre.score} chance={pre.chance} regime={pre.regime} "
-                            f"exp_used={pre.exp_used} exp_bias={pre.exp_bias} exp_wr={pre.exp_win_rate} exp_n={pre.exp_n} "
-                            f"shadow_ok={shadow_ok} shadow={shadow_reason} "
-                            f"why={pre.why_tag} reason={notification_reason}"
-                        )
-
-                    # 6) altijd prebuy experience opslaan
-                    insert_experience(cur, pre, fp, notified, notification_reason)
-                    experienced += 1
-
-                except Exception as e:
-                    skipped += 1
-                    print(f"⚠️ {sym} skip: {type(e).__name__}: {e}")
-
-            dur = time.time() - start
-            print(
-                f"DONE pending_created={created_pending} auto_push_sent={pushed_count} "
-                f"experienced={experienced} exp_used_count={exp_used_count} "
-                f"shadow_created={shadow_created} shadow_failed={shadow_failed} "
-                f"candidates={candidates} scanned={len(universe)} seconds={dur:.1f}"
-            )
-
-
+# ============================================================
 if __name__ == "__main__":
-    main()
+    log("=" * 50)
+    log("Multi Coin Scorer v2.0 — gestart")
+    log("=" * 50)
+    log(f"Database:     {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
+    log(f"Webhook URL:  {'✅' if WEBHOOK_BASE_URL else '⚠️ niet ingesteld'}")
+    log(f"Claude API:   {'✅' if ANTHROPIC_API_KEY else '❌ ONTBREEKT'}")
+    log(f"Min score:    {MIN_SCORE_TO_TRADE}")
+    log(f"Min chance:   {MIN_CHANCE}%")
+    log(f"ATR period:   {ATR_PERIOD} | multiplier: {ATR_MULTIPLIER}")
+    log(f"Fee+slip:     {TOTAL_COST_PCT*100:.2f}%")
+    log(f"Trading:      {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
+    log("=" * 50)
+
+    try:
+        with db_connect() as conn:
+            n = scan_universe(conn)
+            log(f"Resultaat: {n} pre-buys gegenereerd")
+    except Exception as e:
+        report_error(e, "__main__", severity="KRITIEK")
+        sys.exit(1)
