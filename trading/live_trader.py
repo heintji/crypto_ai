@@ -456,9 +456,8 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
     # Weekend: gewoon doorgaan — geen blokkering
     _, _, daily_pnl = get_daily_pnl(conn, utc_day_str())
     if daily_pnl <= -DAILY_STOP_LOSS_EUR:
-        pause_bot(conn, 24, f"Daily stop loss €{daily_pnl:.2f}")
-        log(f"Daily stop loss: €{daily_pnl:.2f}")
-        return False, f"Daily stop loss: €{daily_pnl:.2f}"
+        # Alleen loggen — jij beslist via STOP
+        log(f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — bot gaat door")
 
     trades_today = get_real_trades_today(conn)
     if trades_today >= MAX_REAL_TRADES_PER_DAY:
@@ -470,9 +469,8 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
 
     consecutive = get_consecutive_losses(conn)
     if consecutive >= MAX_CONSECUTIVE_LOSSES:
-        pause_bot(conn, CONSECUTIVE_LOSS_PAUSE_HOURS, f"{consecutive}x verlies op rij")
-        log(f"{consecutive}x verlies — bot gepauzeerd")
-        return False, f"{consecutive}x verlies op rij"
+        # Alleen loggen — jij beslist via STOP
+        log(f"ℹ️ {consecutive}x verlies op rij — bot gaat door (jij beslist via STOP)")
 
     return True, "OK"
 
