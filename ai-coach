@@ -4237,11 +4237,12 @@ def check_open_posities_realtime(conn) -> Dict:
     Detecteert discrepanties: trades in DB maar niet op exchange, of vice versa.
     """
     try:
-        # DB open trades
+        # DB open trades — schema: entry (niet entry_price), amount_eur
         db_open = run_query(conn, """
-        SELECT coin, COALESCE(entry_price, buy_price) AS entry_prijs,
-               COALESCE(amount_eur, position_eur) AS inzet,
-               COALESCE(entry_time, created_at) AS open_sinds
+        SELECT coin,
+               COALESCE(entry, stop_loss * 1.02) AS entry_prijs,
+               COALESCE(amount_eur, position_size, 0.5) AS inzet,
+               COALESCE(entry_time, created_at, timestamp) AS open_sinds
         FROM public.experience_trades
         WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
           AND UPPER(COALESCE(outcome,'OPEN')) NOT IN ('WIN','LOSS','CANCELLED')
