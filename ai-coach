@@ -366,6 +366,7 @@ def zorg_voor_coach_tabellen(conn) -> None:
 
 def sla_geheugen_op(conn, type_: str, sleutel: str, waarde: Any, score: float = 0) -> None:
     try:
+        conn.rollback()  # Reset eventuele fout-transactie
         w = json.dumps(waarde, ensure_ascii=False) if not isinstance(waarde, str) else waarde
         with conn.cursor() as cur:
             cur.execute("""
@@ -377,6 +378,10 @@ def sla_geheugen_op(conn, type_: str, sleutel: str, waarde: Any, score: float = 
         conn.commit()
     except Exception as e:
         log(f"⚠️ Geheugen opslaan: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def haal_geheugen_op(conn, type_: str, sleutel: str) -> Optional[Any]:
@@ -3947,11 +3952,17 @@ def schrijf_dagboek(conn, rapport: str, beslissingen: List[str],
                     anomalieen: List[Dict], totalen: Dict,
                     start_tijd: datetime) -> None:
     """
-    Schrijft een volledige journaalregel voor elke coach run.
-    Zodat je letterlijk elke run terugkunt lezen — wat was de situatie,
-    welke beslissingen zijn genomen, waren er problemen?
+    Schrijft een journaalregel voor elke coach run.
+    Robuust: reset transactie voor insert zodat eerdere fouten
+    (zoals 'column does not exist') de dagboek write niet blokkeren.
     """
     try:
+        # Reset eventuele fout-transactie VOOR de insert
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+
         run_duur = (now_utc() - start_tijd).total_seconds()
         samenvatting = (
             f"WR={safe_float(totalen.get('win_rate')):.1f}% | "
@@ -3960,26 +3971,48 @@ def schrijf_dagboek(conn, rapport: str, beslissingen: List[str],
             f"{safe_int(totalen.get('n'))} trades"
         )
         metrics_json = {
-            "win_rate": safe_float(totalen.get("win_rate")),
+            "win_rate":      safe_float(totalen.get("win_rate")),
             "profit_factor": safe_float(totalen.get("profit_factor")),
-            "net_pnl": safe_float(totalen.get("net_pnl")),
-            "n_trades": safe_int(totalen.get("n")),
+            "net_pnl":       safe_float(totalen.get("net_pnl")),
+            "n_trades":      safe_int(totalen.get("n")),
         }
+
+        # Zorg dat tabel de juiste kolommen heeft
         with conn.cursor() as cur:
             cur.execute("""
-            INSERT INTO public.coach_dagboek(samenvatting, metrics, beslissingen, anomalieen, run_duur_sec)
-            VALUES(%s, %s::jsonb, %s, %s, %s)
+            CREATE TABLE IF NOT EXISTS public.coach_dagboek (
+                id           SERIAL PRIMARY KEY,
+                datum        DATE DEFAULT CURRENT_DATE,
+                tijdstip     TIMESTAMPTZ DEFAULT NOW(),
+                samenvatting TEXT,
+                metrics      JSONB,
+                beslissingen TEXT,
+                anomalieen   TEXT,
+                run_duur_sec DOUBLE PRECISION
+            )
+            """)
+        conn.commit()
+
+        with conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO public.coach_dagboek
+                (samenvatting, metrics, beslissingen, anomalieen, run_duur_sec)
+            VALUES (%s, %s::jsonb, %s, %s, %s)
             """, (
                 samenvatting,
                 json.dumps(metrics_json, default=str),
                 "\n".join(beslissingen) if beslissingen else "Geen aanpassingen",
-                "\n".join(a["beschrijving"] for a in anomalieen) if anomalieen else "Geen",
+                "\n".join(a.get("beschrijving","") for a in anomalieen) if anomalieen else "Geen",
                 round(run_duur, 1),
             ))
         conn.commit()
         log(f"📖 Dagboek geschreven ({run_duur:.0f}s run)")
     except Exception as e:
         log(f"⚠️ Dagboek fout: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def get_dagboek_history(conn, n: int = 10) -> List[Dict]:
