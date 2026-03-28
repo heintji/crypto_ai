@@ -1529,9 +1529,14 @@ def build_help_bericht() -> str:
         f"RAPPORT      → dagrapport nu\n"
         f"WEEKRAPPORT  → weekoverzicht\n"
         f"MAANDRAPPORT → maandoverzicht\n"
-        f"ADVIES       → leeranalyse\n"
+        f"ADVIES       → Claude leeranalyse\n"
         f"HEALTH       → health check\n\n"
-        f"ℹ️ INFORMATIE:\n"
+        f"🧠 AI COACH:\n"
+        f"ANALYSE      → volledige analyse 60d\n"
+        f"ANALYSE 30   → analyse 30 dagen\n"
+        f"ANALYSE 90   → analyse 90 dagen\n"
+        f"ANALYSEKORT  → snel overzicht 30d\n\n"
+        f"ℹ️ OVERIG:\n"
         f"HELP         → dit bericht\n\n"
         f"{'─' * 32}\n"
         f"⚙️ FASE 1 LIMIETEN:\n"
@@ -1552,7 +1557,8 @@ def process_command(body: str, conn) -> str:
     Geeft antwoord terug als string.
 
     Commands: START, STOP, STATUS, TRADES, RAPPORT,
-              WEEKRAPPORT, MAANDRAPPORT, ADVIES, HEALTH, HELP
+              WEEKRAPPORT, MAANDRAPPORT, ADVIES, HEALTH,
+              ANALYSE [dagen], ANALYSEKORT, HELP
     """
     cmd = body.strip().upper()
 
@@ -1632,16 +1638,103 @@ def process_command(body: str, conn) -> str:
 
     # ── HEALTH ─────────────────────────────────────────
     if cmd == "HEALTH":
-        status_line   = get_bot_status_line(conn)
-        health_tekst  = claude_health_check(conn)
+        status_line  = get_bot_status_line(conn)
+        health_tekst = claude_health_check(conn)
         return (
             f"🏥 HEALTH CHECK\n"
             f"{'─' * 32}\n"
             f"{status_line}\n\n"
             f"🧠 Claude health analyse:\n{health_tekst}\n\n"
             f"{'─' * 32}\n"
-            f"Commands: STATUS | ADVIES | STOP"
+            f"Commands: STATUS | ADVIES | ANALYSE | STOP"
         )
+
+    # ── ANALYSE ────────────────────────────────────────
+    # Roept ai_coach.py aan voor een volledige data-analyse
+    # met concrete parameter aanbevelingen.
+    # ANALYSE       → standaard 60 dagen
+    # ANALYSE 30    → laatste 30 dagen
+    # ANALYSE 90    → laatste 90 dagen
+    if cmd == "ANALYSE" or cmd.startswith("ANALYSE "):
+        # Bepaal analyseperiode — default 60 dagen
+        dagen = 60
+        if " " in cmd:
+            try:
+                dagen = max(7, min(int(cmd.split(" ", 1)[1].strip()), 365))
+            except (ValueError, IndexError):
+                dagen = 60
+
+        # Stuur eerst een bevestiging — analyse duurt 20-60 seconden
+        send_whatsapp(
+            f"🧠 AI COACH GESTART\n"
+            f"{'─' * 32}\n\n"
+            f"Analyse periode: {dagen} dagen\n"
+            f"Dit duurt 20-60 seconden...\n\n"
+            f"Claude analyseert:\n"
+            f"• Setup performance en trends\n"
+            f"• Score drempel optimalisatie\n"
+            f"• Stop loss effectiviteit (MAE)\n"
+            f"• Beste trading uren en dagen\n"
+            f"• Coin blacklist aanbevelingen\n"
+            f"• Edge decay detectie\n"
+            f"• Profit factor trend\n\n"
+            f"Rapport volgt direct..."
+        )
+
+        try:
+            # Importeer ai_coach — zelfde map als dit bestand
+            from ai_coach import run_coach
+            log(f"📊 AI Coach gestart voor {dagen} dagen")
+            rapport = run_coach(dagen=dagen, stuur_whatsapp=True)
+            log(f"✅ AI Coach klaar: {len(rapport)} tekens")
+            # run_coach stuurt zelf al via WhatsApp
+            # Stuur alleen een korte bevestiging terug
+            return (
+                f"✅ AI COACH ANALYSE KLAAR\n"
+                f"Rapport is verzonden via WhatsApp.\n\n"
+                f"Commands: STATUS | HEALTH | STOP"
+            )
+        except ImportError:
+            log("❌ ai_coach.py niet gevonden in dezelfde map")
+            return (
+                f"❌ ai_coach.py niet beschikbaar.\n\n"
+                f"Zorg dat ai_coach.py in dezelfde\n"
+                f"map staat als whatsapp_webhook.py\n"
+                f"en deploy opnieuw.\n\n"
+                f"Commands: HEALTH | ADVIES | HELP"
+            )
+        except Exception as e:
+            log(f"❌ AI Coach fout: {type(e).__name__}: {e}")
+            return (
+                f"❌ AI COACH FOUT\n"
+                f"{'─' * 32}\n\n"
+                f"Fout: {type(e).__name__}\n"
+                f"{str(e)[:150]}\n\n"
+                f"Check Render logs voor details.\n"
+                f"Commands: HEALTH | ADVIES"
+            )
+
+    # ── ANALYSEKORT ────────────────────────────────────
+    # Snelle versie van ANALYSE zonder WhatsApp verzending
+    # — geeft rapport direct terug in dit bericht (ingekort)
+    if cmd == "ANALYSEKORT":
+        try:
+            from ai_coach import run_coach
+            log("📊 AI Coach kort rapport gestart (30 dagen, geen WhatsApp)")
+            rapport = run_coach(dagen=30, stuur_whatsapp=False)
+            # Stuur alleen de eerste 1400 tekens — past in één WhatsApp
+            if len(rapport) > 1400:
+                rapport_kort = rapport[:1380] + "\n...[zie volledig ANALYSE]"
+            else:
+                rapport_kort = rapport
+            return rapport_kort
+        except ImportError:
+            return (
+                f"❌ ai_coach.py niet beschikbaar.\n"
+                f"Gebruik ANALYSE voor volledig rapport."
+            )
+        except Exception as e:
+            return f"❌ Fout: {type(e).__name__}: {str(e)[:100]}"
 
     # ── HELP ───────────────────────────────────────────
     if cmd == "HELP":
