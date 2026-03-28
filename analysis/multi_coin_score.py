@@ -1465,52 +1465,84 @@ def trigger_auto_buy(prebuy_id: str) -> bool:
 def scan_universe(conn, drempels: Dict) -> int:
     """
     Scant alle Bitvavo-tradable coins via Binance data.
-    Geeft aantal gegenereerde pre-buys terug.
+
+    ARCHITECTUUR:
+    - Scanner draait ALTIJD binnen trading hours — ongeacht bot aan/uit
+    - bot_active=false  → alleen LIVE trades geblokkeerd, shadow gaat door
+    - bot_paused=true   → alleen LIVE trades geblokkeerd, shadow gaat door
+    - BTC BEAR          → alleen LIVE trades geblokkeerd, shadow gaat door
+    - Dagbudget bereikt → alleen LIVE trades geblokkeerd, shadow gaat door
+    - Shadow trades = leerdata, worden ALTIJD geopend
+    - SIM trades = aparte cron via history_simulator.py
+
+    START/STOP via WhatsApp stuurt ALLEEN de echte live trades aan.
     """
-    # ── Checks voor we beginnen ──────────────────────────
-    if not is_bot_active(conn):
-        log("Bot gestopt -- geen scans")
-        return 0
+def scan_universe(conn, drempels: Dict) -> int:
+    """
+    Scant alle Bitvavo-tradable coins via Binance data.
 
-    if is_bot_paused(conn):
-        log("Bot gepauzeerd -- geen scans")
-        return 0
+    ARCHITECTUUR — 24/7 ACTIEF:
+    ┌─────────────────────────────────────────────────────────┐
+    │  Scanner draait ALTIJD — 24 uur per dag, 7 dagen/week  │
+    │  Shadow trades → ALTIJD geopend (leerdata voor coach)  │
+    │  Live trades   → alleen als bot AAN + trading hours OK │
+    │                                                         │
+    │  START/STOP via WhatsApp stuurt ALLEEN live trades!    │
+    └─────────────────────────────────────────────────────────┘
+    """
+    # Bot status: bepaalt of LIVE trades toegestaan zijn
+    bot_actief = is_bot_active(conn)
+    bot_gepauz = is_bot_paused(conn)
+    live_ok    = bot_actief and not bot_gepauz
 
-    if not is_trading_hours():
-        log(f"Buiten trading hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)")
-        return 0
+    if not bot_actief:
+        log("Bot GESTOPT — scanner zoekt 24/7 door voor shadow trades")
+    elif bot_gepauz:
+        reden = get_bot_state_value(conn, "bot_paused_reason", "onbekend")
+        log(f"Bot GEPAUZEERD ({reden}) — shadow trades blijven actief")
 
-    # Dagbudget check
-    dagpnl = get_daily_pnl(conn)
-    if dagpnl <= -DAILY_STOP_LOSS_EUR:
-        log(f"Dagbudget bereikt: {dagpnl:.4f} / -{DAILY_STOP_LOSS_EUR}")
-        return 0
+    # Trading hours: alleen voor live trades, niet voor shadow
+    if live_ok and not is_trading_hours():
+        log(f"Buiten trading hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
+            f" — geen LIVE trades, shadow gaat door")
+        live_ok = False
 
-    # Limieten check
-    dag_trades  = get_daily_trade_count(conn)
-    open_count  = get_open_live_count(conn)
+    # Daglimieten: alleen voor live
+    if live_ok:
+        dagpnl = get_daily_pnl(conn)
+        if dagpnl <= -DAILY_STOP_LOSS_EUR:
+            log(f"Dagbudget bereikt ({dagpnl:.4f}) — geen LIVE meer, shadow gaat door")
+            live_ok = False
+
+    if live_ok:
+        dag_trades = get_daily_trade_count(conn)
+        if dag_trades >= MAX_REAL_TRADES_PER_DAY:
+            log(f"Daglimiet {dag_trades}/{MAX_REAL_TRADES_PER_DAY} — geen LIVE meer, shadow gaat door")
+            live_ok = False
+
+    if live_ok:
+        open_count = get_open_live_count(conn)
+        if open_count >= MAX_OPEN_REAL_TRADES:
+            log(f"Max open {open_count}/{MAX_OPEN_REAL_TRADES} — geen LIVE meer, shadow gaat door")
+            live_ok = False
+
+    # Pre-buy dagplafond — geldt voor alles
     prebuy_today = get_prebuy_count_today(conn)
-
-    if dag_trades >= MAX_REAL_TRADES_PER_DAY:
-        log(f"Daglimiet trades: {dag_trades}/{MAX_REAL_TRADES_PER_DAY}")
-        return 0
-    if open_count >= MAX_OPEN_REAL_TRADES:
-        log(f"Open trades limiet: {open_count}/{MAX_OPEN_REAL_TRADES}")
-        return 0
     if prebuy_today >= MAX_PREBUY_PER_DAY:
-        log(f"Pre-buy daglimiet: {prebuy_today}/{MAX_PREBUY_PER_DAY}")
+        log(f"Pre-buy daglimiet bereikt: {prebuy_today}/{MAX_PREBUY_PER_DAY}")
         return 0
 
-    # ── BTC regime ───────────────────────────────────────
+    # BTC BEAR: blokkeert alleen live, shadow gaat door
     btc_regime  = get_btc_regime(conn)
     btc_sterkte = get_btc_sterkte(conn)
-    log(f"BTC regime: {btc_regime} ({btc_sterkte:.0f}%)")
+    if btc_regime == "BEAR" and BTC_SKIP_BEAR and live_ok:
+        log("BTC BEAR — geen LIVE trades, shadow gaat door")
+        live_ok = False
 
-    if btc_regime == "BEAR" and BTC_SKIP_BEAR:
-        log("BTC BEAR -- scans overgeslagen")
-        set_bot_state_value(conn, "scanner_actief", "false")
-        set_bot_state_value(conn, "laatste_scan_reden", "BTC BEAR")
-        return 0
+    log(f"BTC: {btc_regime} ({btc_sterkte:.0f}%) | "
+        f"LIVE: {'JA' if live_ok else 'NEE'} | "
+        f"SHADOW: ALTIJD | "
+        f"TIJD: {now_utc().strftime('%H:%M')} UTC")
 
     # ── Bitvavo markets ───────────────────────────────────
     tradable = get_tradable_markets()
@@ -1604,7 +1636,8 @@ def scan_universe(conn, drempels: Dict) -> int:
             tel_filter("conf_laag"); continue
 
         log(f"SIGNAAL {symbol_usdt}: score={score} chance={chance}% "
-            f"conf={confidence}% setup={setup_type} regime={coin_regime}")
+            f"conf={confidence}% setup={setup_type} "
+            f"LIVE={'JA' if live_ok else 'NEE'} SHADOW=JA")
 
         # ── ATR-based stop en target ──────────────────
         atr_eff = drempels.get("atr_multiplier", ATR_MULTIPLIER)
@@ -1655,27 +1688,26 @@ def scan_universe(conn, drempels: Dict) -> int:
             "exp_bias":       exp_bias,
             "why_tag":        why_tag,
             "claude_beoordeling": claude_txt,
+            "live_toegestaan": live_ok,   # webhook gebruikt dit
             "score_details": {
-                "rsi_4h":       rsi_4h,
-                "vol_ratio":    vol_ratio,
-                "atr_pct":      round(atr_pct * 100, 2),
-                "vol_label":    vol_label,
-                "coin_stats":   coin_stats,
-                "why_base":     why_base,
-                "btc_sterkte":  btc_sterkte,
+                "rsi_4h":          rsi_4h,
+                "vol_ratio":       vol_ratio,
+                "atr_pct":         round(atr_pct * 100, 2),
+                "vol_label":       vol_label,
+                "coin_stats":      coin_stats,
+                "why_base":        why_base,
+                "btc_sterkte":     btc_sterkte,
+                "live_toegestaan": live_ok,
             },
         }
 
         prebuy_id = insert_pending(conn, prebuy)
         if prebuy_id:
             prebuy_count += 1
-            prebuy_today += 1
-
-            # Auto BUY triggeren
-            if btc_regime != "BEAR" or not BTC_SKIP_BEAR:
-                trigger_auto_buy(prebuy_id)
-            else:
-                log(f"{symbol_usdt} -- Pre-BUY aangemaakt, geen auto_buy (BTC BEAR)")
+            prebuy_today  += 1
+            # Stuur ALTIJD naar /auto_buy
+            # Webhook besluit zelf: shadow altijd, live alleen als bot actief
+            trigger_auto_buy(prebuy_id)
 
         if prebuy_today >= MAX_PREBUY_PER_DAY:
             log(f"Pre-buy daglimiet bereikt: {prebuy_today}")
