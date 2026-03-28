@@ -1376,6 +1376,36 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
 
         sla_analyse_op(conn, rapport, aanpassingen, totalen, dagen)
 
+        # Extra learning modules
+        try:
+            update_experience_scoreboard(conn)
+        except Exception as e:
+            log(f"⚠️ Scoreboard update: {e}")
+
+        try:
+            setup_patronen = analyseer_setup_leerpatronen(conn, dagen)
+            if setup_patronen.get("aanbevelingen"):
+                set_bot_state(conn, "coach_setup_aanbevelingen",
+                              json.dumps(setup_patronen["aanbevelingen"][:3], ensure_ascii=False))
+        except Exception as e:
+            log(f"⚠️ Setup patronen: {e}")
+
+        try:
+            regime_effect = detecteer_regime_effect(conn, dagen)
+            set_bot_state(conn, "coach_regime_effect",
+                          json.dumps({k: v.get("gem_wr",0) for k,v in regime_effect.items()},
+                                     ensure_ascii=False))
+        except Exception as e:
+            log(f"⚠️ Regime effect: {e}")
+
+        try:
+            verwachting = bereken_verwachte_maandwinst(conn)
+            if not verwachting.get("onvoldoende_data"):
+                set_bot_state(conn, "coach_verwachte_maandwinst",
+                              json.dumps(verwachting, ensure_ascii=False))
+        except Exception as e:
+            log(f"⚠️ Maandverwachting: {e}")
+
         log(f"✅ Klaar | {len(aanpassingen)} aanpassingen | {len(kansen_lijst)} kansen")
         log_event(conn, "COACH", "KLAAR",
                   f"Coach klaar in {(now_utc()-start_tijd).total_seconds():.0f}s",
@@ -2577,16 +2607,16 @@ def analyseer_pending_approvals(conn) -> Dict:
           AND COALESCE(status,'PENDING') = 'PENDING'
         """, default=0)
 
-        # Hoeveel uitgevoerd vs verlopen ratio
+        # Hoeveel uitgevoerd vs verlopen ratio (op basis van created_at)
         uitgevoerd = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
-        WHERE COALESCE(status,'PENDING') IN ('CONSUMED','EXECUTED')
-          AND COALESCE(exit_time, updated_at, created_at) >= NOW() - INTERVAL '7 days'
+        WHERE COALESCE(status,'PENDING') IN ('CONSUMED','EXECUTED','APPROVED')
+          AND created_at >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         totaal_7d = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
-        WHERE COALESCE(exit_time, updated_at, created_at) >= NOW() - INTERVAL '7 days'
+        WHERE created_at >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         executie_ratio = (safe_int(uitgevoerd) / max(safe_int(totaal_7d), 1)) * 100
@@ -3702,31 +3732,32 @@ def analyseer_trade_flow(conn) -> Dict:
     """
     try:
         # Signalen gegenereerd (pending_approvals)
+        # Schema: created_at (niet aangemaakt)
         signalen = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
-        WHERE aangemaakt >= NOW() - INTERVAL '7 days'
+        WHERE created_at >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         # Goedgekeurde signalen
         goedgekeurd = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
         WHERE UPPER(COALESCE(status,'')) = 'APPROVED'
-          AND aangemaakt >= NOW() - INTERVAL '7 days'
+          AND created_at >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         # Verlopen signalen
         verlopen = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
-        WHERE COALESCE(expires_at, aangemaakt + INTERVAL '4 hours') < NOW()
+        WHERE COALESCE(expires_at, created_at + INTERVAL '4 hours') < NOW()
           AND UPPER(COALESCE(status,'PENDING')) = 'PENDING'
-          AND aangemaakt >= NOW() - INTERVAL '7 days'
+          AND created_at >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         # Live trades aangemaakt
         live = run_scalar(conn, """
         SELECT COUNT(*) FROM public.experience_trades
         WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
-          AND COALESCE(created_at, entry_time) >= NOW() - INTERVAL '7 days'
+          AND COALESCE(created_at, entry_time, timestamp) >= NOW() - INTERVAL '7 days'
         """, default=0)
 
         # Gesloten trades
@@ -3752,13 +3783,15 @@ def analyseer_trade_flow(conn) -> Dict:
             bottlenecks.append(f"Trades open maar niet gesloten — max houdtijd niet bereikt of bot probleem")
 
         # Gem. tijd van signaal tot entry
+        # pending_approvals.symbol + experience_trades.coin/symbol
         timing = run_query(conn, """
         SELECT ROUND(AVG(
-            EXTRACT(EPOCH FROM (COALESCE(t.entry_time, t.created_at) - p.aangemaakt))/60
+            EXTRACT(EPOCH FROM (COALESCE(t.entry_time, t.created_at, t.timestamp) - p.created_at))/60
         )::numeric, 1) AS min_signaal_tot_entry
         FROM public.pending_approvals p
-        JOIN public.experience_trades t ON t.coin = p.coin
-        WHERE p.aangemaakt >= NOW() - INTERVAL '7 days'
+        JOIN public.experience_trades t
+            ON UPPER(COALESCE(t.coin, t.symbol,'')) = UPPER(COALESCE(p.coin, p.symbol,''))
+        WHERE p.created_at >= NOW() - INTERVAL '7 days'
           AND UPPER(COALESCE(t.source,'')) IN ('REAL','LIVE')
         """)
         gem_min = safe_float((timing[0].get("min_signaal_tot_entry") if timing else None), 0)
@@ -4355,6 +4388,722 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
             context_delen.append(f"Coach {datum}: {sam}")
 
     return "\n".join(context_delen) if context_delen else "Geen geheugen beschikbaar"
+
+
+
+# ============================================================
+# UITBREIDING — GEAVANCEERDE LEERMODULE
+# Elke gesloten trade wordt geanalyseerd en opgeslagen
+# zodat de bot steeds selectiever wordt over tijd
+# ============================================================
+
+def analyseer_individuele_trade(conn, trade: Dict) -> Dict:
+    """
+    Analyseert één gesloten trade diep.
+    Slaat WHY-tags, setup kwaliteit en leerinzichten op.
+    Wordt aangeroepen na elke trade sluiting.
+    """
+    trade_key  = safe_str(trade.get("trade_key",""))
+    coin       = safe_str(trade.get("coin",""))
+    setup      = safe_str(trade.get("setup_type","UNKNOWN"))
+    outcome    = safe_str(trade.get("outcome","")).upper()
+    pnl_r      = safe_float(trade.get("pnl_r") or trade.get("result_r") or 0)
+    score      = safe_float(trade.get("score", 0))
+    regime     = safe_str(trade.get("market_regime") or trade.get("regime","UNKNOWN"))
+    entry      = safe_float(trade.get("entry", 0))
+    stop       = safe_float(trade.get("stop") or trade.get("stop_loss", 0))
+    target     = safe_float(trade.get("target", 0))
+    mfe        = safe_float(trade.get("mfe", 0))
+    mae        = safe_float(trade.get("mae", 0))
+
+    # R/R berekening
+    risico = entry - stop if entry > 0 and stop > 0 else 1
+    winst  = target - entry if target > 0 and entry > 0 else 1
+    rr     = round(winst / max(risico, 0.00001), 2)
+
+    # MAE als % van risico — hoe diep ging de trade onder water?
+    mae_pct_van_stop = round(mae / max(abs(risico), 0.00001) * 100, 1) if mae > 0 else 0
+
+    # MFE als % van target — hoe ver bereikte de trade het doel?
+    mfe_pct_van_target = round(mfe / max(winst, 0.00001) * 100, 1) if mfe > 0 else 0
+
+    # WHY tag genereren
+    why_delen = []
+    if outcome == "WIN":
+        if pnl_r >= 2.0:
+            why_delen.append("GROOT_WIN")
+        elif pnl_r >= 1.0:
+            why_delen.append("NORMAAL_WIN")
+        else:
+            why_delen.append("KLEIN_WIN")
+        if mfe_pct_van_target >= 90:
+            why_delen.append("TARGET_BIJNA_BEREIKT")
+    elif outcome == "LOSS":
+        if mae_pct_van_stop >= 90:
+            why_delen.append("STOP_GERAAKT")
+        elif mae_pct_van_stop < 30:
+            why_delen.append("VROEG_GESTOPT")
+        if pnl_r < -1.5:
+            why_delen.append("GROOT_VERLIES")
+
+    if score >= 95:
+        why_delen.append("HOGE_SCORE")
+    elif score < 85:
+        why_delen.append("LAGE_SCORE")
+
+    if "BULL" in regime:
+        why_delen.append("BULL_MARKT")
+    elif "BEAR" in regime:
+        why_delen.append("BEAR_MARKT")
+
+    why_tag = "|".join(why_delen) if why_delen else "NORMAAL"
+
+    analyse = {
+        "trade_key":           trade_key,
+        "coin":                coin,
+        "setup":               setup,
+        "outcome":             outcome,
+        "pnl_r":               round(pnl_r, 3),
+        "score":               score,
+        "regime":              regime,
+        "rr":                  rr,
+        "mae_pct":             mae_pct_van_stop,
+        "mfe_pct":             mfe_pct_van_target,
+        "why_tag":             why_tag,
+        "leerinzicht":         _genereer_leerinzicht(outcome, pnl_r, mae_pct_van_stop,
+                                                      mfe_pct_van_target, score, setup),
+    }
+
+    # Sla op in geheugen
+    sla_geheugen_op(conn, "trade_analyse", trade_key[:30], analyse)
+    return analyse
+
+
+def _genereer_leerinzicht(outcome: str, pnl_r: float, mae_pct: float,
+                           mfe_pct: float, score: float, setup: str) -> str:
+    """Genereert een menselijk leesbaar leerinzicht voor elke trade."""
+    if outcome == "WIN":
+        if mfe_pct >= 90:
+            return f"{setup}: Trade bereikte bijna volledig target ({mfe_pct:.0f}%). Goed R/R."
+        elif mfe_pct >= 60:
+            return f"{setup}: Trade deed het goed ({mfe_pct:.0f}% van target)."
+        else:
+            return f"{setup}: Win maar target niet bereikt ({mfe_pct:.0f}%). Te vroeg gesloten?"
+    else:
+        if mae_pct >= 90:
+            return f"{setup}: Stop volledig geraakt. MAE={mae_pct:.0f}%. Setup werkte niet."
+        elif mae_pct < 30 and score >= 90:
+            return f"{setup}: Hoge score ({score:.0f}) maar toch verlies. Markt te snel."
+        else:
+            return f"{setup}: Verlies met MAE={mae_pct:.0f}%. Normaal stop gedrag."
+
+
+def analyseer_setup_leerpatronen(conn, dagen: int = 30) -> Dict:
+    """
+    Analyseert leerpatronen per setup type.
+    Detecteert welke setups structureel werken en welke niet.
+    Geeft concrete aanbevelingen.
+    """
+    rows = run_query(conn, """
+    SELECT
+        COALESCE(setup_type,'UNKNOWN') AS setup,
+        COUNT(*) AS n,
+        COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+              /NULLIF(COUNT(*),0)*100, 1) AS win_rate,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
+        ROUND(STDDEV(COALESCE(pnl_r,result_r,0))::numeric,3) AS stddev_r,
+        ROUND(AVG(COALESCE(score,0))::numeric,1) AS gem_score,
+        ROUND(COALESCE(
+            SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
+        ,2) AS profit_factor
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+    GROUP BY 1 HAVING COUNT(*) >= 3
+    ORDER BY win_rate DESC
+    """, (dagen,))
+
+    aanbevelingen = []
+    top_setups    = []
+    zwakke_setups = []
+
+    for r in rows:
+        setup = safe_str(r.get("setup"))
+        wr    = safe_float(r.get("win_rate"))
+        pf    = safe_float(r.get("profit_factor"), 1.0)
+        n     = safe_int(r.get("n"))
+        gem_r = safe_float(r.get("gem_r"))
+
+        if wr >= 60 and pf >= 1.5:
+            top_setups.append(setup)
+            aanbevelingen.append(f"PRIORITEER {setup}: {wr:.1f}% WR, PF={pf:.2f} — top performer")
+        elif wr < 40 and n >= 5:
+            zwakke_setups.append(setup)
+            aanbevelingen.append(f"VERMIJD {setup}: {wr:.1f}% WR, PF={pf:.2f} — structureel zwak")
+        elif gem_r > 0 and pf < 1.0:
+            aanbevelingen.append(f"ONDERZOEK {setup}: positief gem R maar PF<1 — exits te vroeg?")
+
+    sla_geheugen_op(conn, "setup_patronen", f"analyse_{dagen}d", {
+        "top":          top_setups,
+        "zwak":         zwakke_setups,
+        "aanbevelingen": aanbevelingen[:5],
+        "n_setups":     len(rows),
+    })
+
+    return {
+        "rows":           rows,
+        "top_setups":     top_setups,
+        "zwakke_setups":  zwakke_setups,
+        "aanbevelingen":  aanbevelingen,
+    }
+
+
+def analyseer_uur_patronen_diep(conn, dagen: int = 60) -> Dict:
+    """
+    Diepe uur-patroon analyse.
+    Detecteert exacte beste handelsvensters per setup type.
+    Vergelijkt weekdag vs weekend prestaties.
+    """
+    # Per uur
+    uur_rows = run_query(conn, """
+    SELECT
+        EXTRACT(HOUR FROM COALESCE(entry_time, created_at, timestamp)
+                AT TIME ZONE 'UTC') AS uur,
+        COUNT(*) AS n,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+              /NULLIF(COUNT(*),0)*100,1) AS win_rate,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
+        ROUND(SUM(COALESCE(pnl_eur,0))::numeric,4) AS pnl_eur
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+    GROUP BY 1 HAVING COUNT(*) >= 3
+    ORDER BY win_rate DESC
+    """, (dagen,))
+
+    # Per weekdag
+    dag_rows = run_query(conn, """
+    SELECT
+        EXTRACT(DOW FROM COALESCE(entry_time, created_at, timestamp)
+                AT TIME ZONE 'UTC') AS dag_nr,
+        TO_CHAR(COALESCE(entry_time, created_at, timestamp)
+                AT TIME ZONE 'UTC','Day') AS dag_naam,
+        COUNT(*) AS n,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+              /NULLIF(COUNT(*),0)*100,1) AS win_rate,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+    GROUP BY 1, 2 HAVING COUNT(*) >= 3
+    ORDER BY win_rate DESC
+    """, (dagen,))
+
+    # Beste en slechtste uren
+    beste_uren   = [r for r in uur_rows if safe_float(r.get("win_rate")) >= 60][:4]
+    slechte_uren = [r for r in uur_rows if safe_float(r.get("win_rate")) < 40][:3]
+
+    # Aanbevolen trading window
+    if beste_uren:
+        uren_nrs = sorted([safe_int(r.get("uur")) for r in beste_uren])
+        aanbevolen_start = uren_nrs[0]
+        aanbevolen_end   = min(uren_nrs[-1] + 2, 23)
+    else:
+        aanbevolen_start = 9
+        aanbevolen_end   = 17
+
+    data = {
+        "beste_uren":       beste_uren,
+        "slechte_uren":     slechte_uren,
+        "beste_dagen":      [r for r in dag_rows if safe_float(r.get("win_rate")) >= 55][:3],
+        "slechtste_dagen":  [r for r in dag_rows if safe_float(r.get("win_rate")) < 45][:2],
+        "aanbevolen_start": aanbevolen_start,
+        "aanbevolen_end":   aanbevolen_end,
+    }
+
+    sla_geheugen_op(conn, "uur_patronen_diep", f"analyse_{dagen}d", data)
+    return data
+
+
+def analyseer_coin_lifecycle(conn, coin: str, dagen: int = 90) -> Dict:
+    """
+    Analyseert de volledige lifecycle van een coin.
+    Win rate trend over tijd — verbetert of verslechtert de coin?
+    Detecteert seasonality en patroonwisselingen.
+    """
+    rows = run_query(conn, """
+    SELECT
+        DATE_TRUNC('week', COALESCE(exit_time, updated_at)) AS week,
+        COUNT(*) AS n,
+        COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+              /NULLIF(COUNT(*),0)*100,1) AS win_rate,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(coin,'')) = UPPER(%s)
+      AND UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+    GROUP BY 1 HAVING COUNT(*) >= 2
+    ORDER BY week
+    """, (coin, dagen))
+
+    if len(rows) < 2:
+        return {"coin": coin, "trend": "ONVOLDOENDE_DATA", "n_weken": len(rows)}
+
+    # Trend berekening
+    wrs = [safe_float(r.get("win_rate")) for r in rows]
+    n   = len(wrs)
+    x_gem = (n - 1) / 2
+    y_gem = sum(wrs) / n
+    teller = sum((i - x_gem) * (wrs[i] - y_gem) for i in range(n))
+    noemer = sum((i - x_gem) ** 2 for i in range(n))
+    helling = teller / noemer if noemer > 0 else 0
+
+    trend = "STIJGEND" if helling > 1 else "DALEND" if helling < -1 else "STABIEL"
+
+    return {
+        "coin":       coin,
+        "trend":      trend,
+        "helling":    round(helling, 2),
+        "eerste_wr":  wrs[0],
+        "laatste_wr": wrs[-1],
+        "n_weken":    n,
+    }
+
+
+def genereer_claude_weekoverzicht(conn) -> str:
+    """
+    Genereert een wekelijkse Claude analyse van de bot prestaties.
+    Vergelijkt met vorige week, geeft concrete aanbevelingen.
+    Wordt opgeslagen in coach_analyses voor het dashboard.
+    """
+    # Data verzamelen
+    deze_week = run_query(conn, """
+    SELECT
+        COUNT(*) AS n,
+        COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS wr,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
+        ROUND(SUM(COALESCE(pnl_eur,0))::numeric,4) AS pnl_eur,
+        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+              /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS pf
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'
+    """)
+
+    vorige_week = run_query(conn, """
+    SELECT
+        COUNT(*) AS n,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS wr,
+        ROUND(SUM(COALESCE(pnl_eur,0))::numeric,4) AS pnl_eur
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days'
+    """)
+
+    d = deze_week[0] if deze_week else {}
+    v = vorige_week[0] if vorige_week else {}
+
+    n     = safe_int(d.get("n"))
+    wr    = safe_float(d.get("wr"))
+    pnl   = safe_float(d.get("pnl_eur"))
+    pf    = safe_float(d.get("pf", 1))
+    gem_r = safe_float(d.get("gem_r"))
+    vwr   = safe_float(v.get("wr"))
+    vpnl  = safe_float(v.get("pnl_eur"))
+
+    if n < 2:
+        return "Te weinig data voor weekoverzicht."
+
+    prompt = (
+        f"Je bent een senior crypto trading coach. Geef een wekelijks overzicht in het Nederlands.\n\n"
+        f"DEZE WEEK:\n"
+        f"- {n} trades | Win rate: {wr:.1f}% | PnL: €{pnl:.4f} | PF: {pf:.2f} | Gem R: {gem_r:.3f}\n\n"
+        f"VORIGE WEEK:\n"
+        f"- {safe_int(v.get('n'))} trades | Win rate: {vwr:.1f}% | PnL: €{vpnl:.4f}\n\n"
+        f"Vergelijking: WR {wr-vwr:+.1f}% | PnL {pnl-vpnl:+.4f}€\n\n"
+        f"Geef een analyse van 5-7 zinnen:\n"
+        f"1. Is de performance verbeterd of verslechterd?\n"
+        f"2. Wat is de belangrijkste oorzaak?\n"
+        f"3. Welke concrete actie moet er de komende week genomen worden?\n"
+        f"4. Is de score drempel correct of moet die aangepast?\n"
+        f"5. Wat is de verwachting voor volgende week?"
+    )
+
+    analyse = _claude_analyse(prompt, max_tokens=400)
+    if analyse:
+        log_event(conn, "COACH", "WEEKOVERZICHT", f"Weekoverzicht gegenereerd ({n} trades)")
+    return analyse or "Claude analyse niet beschikbaar."
+
+
+def update_experience_scoreboard(conn) -> int:
+    """
+    Herberekent het volledige experience scoreboard.
+    Win rate, profit factor, expectancy per setup+regime combinatie.
+    Wordt wekelijks gedraaid voor accurate gewichten.
+    """
+    try:
+        # Maak scoreboard tabel aan als die niet bestaat
+        with conn.cursor() as cur:
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.experience_scoreboard (
+                id         SERIAL PRIMARY KEY,
+                symbol     TEXT,
+                setup_type TEXT,
+                setup_label TEXT,
+                regime     TEXT,
+                wins       INTEGER DEFAULT 0,
+                losses     INTEGER DEFAULT 0,
+                n          INTEGER DEFAULT 0,
+                win_rate   DOUBLE PRECISION DEFAULT 0.5,
+                avg_r      DOUBLE PRECISION DEFAULT 0,
+                profit_factor DOUBLE PRECISION DEFAULT 1.0,
+                expectancy DOUBLE PRECISION DEFAULT 0,
+                bias       TEXT DEFAULT 'NEUTRAL',
+                bijgewerkt TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(symbol, setup_type, regime)
+            )
+            """)
+        conn.commit()
+
+        # Bereken statistieken per symbol + setup + regime
+        rows = run_query(conn, """
+        SELECT
+            UPPER(COALESCE(coin,'ALL')) AS symbol,
+            COALESCE(setup_type,'UNKNOWN') AS setup_type,
+            COALESCE(market_regime, regime, 'UNKNOWN') AS regime,
+            COUNT(*) AS n,
+            COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+            COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses,
+            ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0),3) AS win_rate,
+            ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS avg_r,
+            ROUND(COALESCE(
+                SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+                /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
+            ,2) AS profit_factor
+        FROM public.experience_trades
+        WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+          AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+          AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '90 days'
+        GROUP BY 1, 2, 3 HAVING COUNT(*) >= 3
+        """)
+
+        bijgewerkt = 0
+        for r in rows:
+            symbol    = safe_str(r.get("symbol","ALL"))
+            setup     = safe_str(r.get("setup_type","UNKNOWN"))
+            regime    = safe_str(r.get("regime","UNKNOWN"))
+            n         = safe_int(r.get("n"))
+            wins      = safe_int(r.get("wins"))
+            losses    = safe_int(r.get("losses"))
+            wr        = safe_float(r.get("win_rate", 0.5))
+            avg_r     = safe_float(r.get("avg_r"))
+            pf        = safe_float(r.get("profit_factor", 1.0))
+
+            # Expectancy = WR * gem_win_r - (1-WR) * gem_loss_r (schatting)
+            expectancy = round(wr * avg_r - (1 - wr) * abs(avg_r) * 0.8, 3)
+
+            # Bias bepalen
+            if wr >= 0.60 and pf >= 1.5:
+                bias = "STRONG_BUY"
+            elif wr >= 0.50 and pf >= 1.2:
+                bias = "BUY"
+            elif wr < 0.35 or pf < 0.8:
+                bias = "AVOID"
+            else:
+                bias = "NEUTRAL"
+
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                    INSERT INTO public.experience_scoreboard
+                        (symbol, setup_type, setup_label, regime, wins, losses, n,
+                         win_rate, avg_r, profit_factor, expectancy, bias, bijgewerkt)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (symbol, setup_type, regime) DO UPDATE SET
+                        wins=EXCLUDED.wins, losses=EXCLUDED.losses, n=EXCLUDED.n,
+                        win_rate=EXCLUDED.win_rate, avg_r=EXCLUDED.avg_r,
+                        profit_factor=EXCLUDED.profit_factor, expectancy=EXCLUDED.expectancy,
+                        bias=EXCLUDED.bias, bijgewerkt=NOW()
+                    """, (symbol, setup, setup, regime, wins, losses, n,
+                          wr, avg_r, pf, expectancy, bias))
+                conn.commit()
+                bijgewerkt += 1
+            except Exception as e:
+                log(f"⚠️ Scoreboard update {symbol}/{setup}/{regime}: {e}")
+                try: conn.rollback()
+                except Exception: pass
+
+        log(f"✅ Scoreboard bijgewerkt: {bijgewerkt} entries")
+        sla_geheugen_op(conn, "scoreboard", "laatste_update", {
+            "tijdstip": now_utc().isoformat(),
+            "n_entries": bijgewerkt,
+        })
+        return bijgewerkt
+
+    except Exception as e:
+        log(f"⚠️ Scoreboard update fout: {e}")
+        try: conn.rollback()
+        except Exception: pass
+        return 0
+
+
+def detecteer_regime_effect(conn, dagen: int = 60) -> Dict:
+    """
+    Analyseert hoe het BTC regime de bot prestaties beïnvloedt.
+    Per regime: win rate, PF, gem R, beste setup types.
+    """
+    rows = run_query(conn, """
+    SELECT
+        COALESCE(market_regime, regime, 'UNKNOWN') AS regime,
+        COALESCE(setup_type,'UNKNOWN') AS setup,
+        COUNT(*) AS n,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
+        ROUND(COALESCE(
+            SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
+        ,2) AS profit_factor
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+    GROUP BY 1, 2 HAVING COUNT(*) >= 3
+    ORDER BY regime, win_rate DESC
+    """, (dagen,))
+
+    # Per regime de beste setups
+    regime_data: Dict[str, Dict] = {}
+    for r in rows:
+        regime = safe_str(r.get("regime","UNKNOWN"))
+        setup  = safe_str(r.get("setup","UNKNOWN"))
+        wr     = safe_float(r.get("win_rate"))
+        gem_r  = safe_float(r.get("gem_r"))
+        pf     = safe_float(r.get("profit_factor",1))
+        n      = safe_int(r.get("n"))
+
+        if regime not in regime_data:
+            regime_data[regime] = {"setups": [], "gem_wr": 0, "n": 0}
+
+        regime_data[regime]["setups"].append({
+            "setup": setup, "wr": wr, "gem_r": gem_r, "pf": pf, "n": n
+        })
+
+    # Bereken gemiddelde WR per regime
+    for regime, data in regime_data.items():
+        if data["setups"]:
+            wrs = [s["wr"] for s in data["setups"]]
+            ns  = [s["n"]  for s in data["setups"]]
+            data["gem_wr"] = round(sum(w*n for w,n in zip(wrs,ns)) / max(sum(ns),1), 1)
+            data["n"]      = sum(ns)
+            # Beste setup voor dit regime
+            data["beste_setup"] = max(data["setups"], key=lambda x: x["wr"])["setup"]
+
+    sla_geheugen_op(conn, "regime_effect", f"analyse_{dagen}d", regime_data)
+    return regime_data
+
+
+def format_regime_effect(data: Dict) -> str:
+    if not data:
+        return ""
+    r = "🌐 REGIME EFFECT:\n"
+    for regime, info in data.items():
+        wr   = info.get("gem_wr", 0)
+        n    = info.get("n", 0)
+        best = info.get("beste_setup","?")
+        emoji = "✅" if wr >= 55 else "⚠️" if wr >= 45 else "❌"
+        r += f"• {regime}: {wr:.1f}% WR ({n} trades) | Beste: {best} {emoji}\n"
+    r += "\n"
+    return r
+
+
+def bereken_verwachte_maandwinst(conn) -> Dict:
+    """
+    Berekent de statistische verwachte maandwinst op basis van historische data.
+    Geeft ook confidence interval en vereist aantal trades.
+    """
+    rows = run_query(conn, """
+    SELECT
+        COUNT(*) AS n,
+        ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0),3) AS wr,
+        ROUND(AVG(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS gem_win_eur,
+        ROUND(AVG(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS gem_loss_eur,
+        ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS expectancy_r,
+        ROUND(STDDEV(COALESCE(pnl_eur,0))::numeric,4) AS stddev_eur
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '60 days'
+    """)
+
+    if not rows or safe_int(rows[0].get("n")) < 5:
+        return {"onvoldoende_data": True}
+
+    d = rows[0]
+    n           = safe_int(d.get("n"))
+    wr          = safe_float(d.get("wr", 0.5))
+    gem_win     = safe_float(d.get("gem_win_eur"))
+    gem_loss    = safe_float(d.get("gem_loss_eur"))
+    expectancy  = safe_float(d.get("expectancy_r"))
+    stddev      = safe_float(d.get("stddev_eur"))
+
+    # Verwachte maandwinst (aanname: zelfde trade frequentie)
+    trades_per_dag = n / 60
+    trades_per_maand = trades_per_dag * 30
+    gem_pnl_per_trade = wr * gem_win - (1 - wr) * gem_loss
+    verwachte_maandwinst = round(trades_per_maand * gem_pnl_per_trade, 4)
+
+    # 95% confidence interval (1.96 * stddev / sqrt(n))
+    import math
+    ci = round(1.96 * stddev / math.sqrt(max(n, 1)) * trades_per_maand, 4)
+
+    data = {
+        "n_trades_60d":           n,
+        "win_rate":               round(wr * 100, 1),
+        "expectancy_r":           round(expectancy, 3),
+        "gem_win_eur":            round(gem_win, 4),
+        "gem_loss_eur":           round(gem_loss, 4),
+        "trades_per_maand":       round(trades_per_maand, 1),
+        "verwachte_maandwinst":   verwachte_maandwinst,
+        "ci_95":                  ci,
+        "ci_laag":                round(verwachte_maandwinst - ci, 4),
+        "ci_hoog":                round(verwachte_maandwinst + ci, 4),
+    }
+    sla_geheugen_op(conn, "verwachting", "maandwinst", data)
+    return data
+
+
+def format_maandverwachting(data: Dict) -> str:
+    if not data or data.get("onvoldoende_data"):
+        return ""
+    vw  = data.get("verwachte_maandwinst", 0)
+    ci  = data.get("ci_95", 0)
+    wr  = data.get("win_rate", 0)
+    exp = data.get("expectancy_r", 0)
+    tpm = data.get("trades_per_maand", 0)
+    s   = "+" if vw >= 0 else ""
+    return (
+        f"📈 VERWACHTE MAANDWINST:\n"
+        f"• Win rate: {wr:.1f}% | Expectancy: {exp:.3f}R\n"
+        f"• ~{tpm:.0f} trades/maand verwacht\n"
+        f"• Verwacht: {s}€{vw:.4f}\n"
+        f"• 95% interval: €{data.get('ci_laag',0):.4f} – €{data.get('ci_hoog',0):.4f}\n\n"
+    )
+
+
+def log_coach_whatsapp_commando(conn, commando: str, afzender: str = "",
+                                 resultaat: str = "", bot_status: str = "") -> None:
+    """
+    Logt elk WhatsApp commando dat de coach ontvangt of verstuurt.
+    Zodat je de complete commando-history kunt zien op het dashboard.
+    """
+    try:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS public.coach_commando_log (
+                id            SERIAL PRIMARY KEY,
+                tijdstip      TIMESTAMPTZ DEFAULT NOW(),
+                commando      TEXT,
+                afzender      TEXT,
+                resultaat     TEXT,
+                bot_status_na TEXT
+            )
+            """)
+            cur.execute("""
+            INSERT INTO public.coach_commando_log
+                (commando, afzender, resultaat, bot_status_na)
+            VALUES (%s, %s, %s, %s)
+            """, (commando[:100], afzender[:50], resultaat[:200], bot_status[:20]))
+        conn.commit()
+    except Exception as e:
+        log(f"⚠️ Commando log fout: {e}")
+        try: conn.rollback()
+        except Exception: pass
+
+
+def genereer_trade_coaching_tip(conn, trade: Dict) -> str:
+    """
+    Claude genereert een coaching tip voor elke individuele trade.
+    Wordt opgeslagen bij de trade voor later terugkijken.
+    Kort en actionabel — max 2 zinnen.
+    """
+    outcome = safe_str(trade.get("outcome","")).upper()
+    setup   = safe_str(trade.get("setup_type","?"))
+    pnl_r   = safe_float(trade.get("pnl_r") or trade.get("result_r") or 0)
+    score   = safe_float(trade.get("score", 0))
+    coin    = safe_str(trade.get("coin","?"))
+    regime  = safe_str(trade.get("market_regime") or trade.get("regime","?"))
+
+    prompt = (
+        f"Crypto trading coach tip (2 zinnen Nederlands):\n"
+        f"Trade: {coin} | {setup} | {regime} | Score: {score:.0f} | "
+        f"{'WIN' if outcome=='WIN' else 'LOSS'} {pnl_r:+.2f}R\n"
+        f"Geef een concrete tip om de volgende trade van dit type te verbeteren."
+    )
+    return _claude_analyse(prompt, max_tokens=80)
+
+
+def bouw_volledig_leerrapport(conn, dagen: int = 30) -> str:
+    """
+    Bouwt een volledig leerrapport dat alle analyses combineert.
+    Inclusief setup patronen, uur patronen, regime effect,
+    maandverwachting en concrete actiepunten.
+    """
+    log("Volledig leerrapport opbouwen...")
+
+    setup_data   = analyseer_setup_leerpatronen(conn, dagen)
+    uur_data     = analyseer_uur_patronen_diep(conn, dagen)
+    regime_data  = detecteer_regime_effect(conn, dagen)
+    verwachting  = bereken_verwachte_maandwinst(conn)
+
+    r = f"📚 LEERRAPPORT — {dagen} dagen\n{'═'*36}\n\n"
+
+    # Setup patronen
+    if setup_data.get("top_setups"):
+        r += f"🏆 TOP SETUPS: {', '.join(setup_data['top_setups'][:3])}\n"
+    if setup_data.get("zwakke_setups"):
+        r += f"⛔ VERMIJD: {', '.join(setup_data['zwakke_setups'][:3])}\n"
+    r += "\n"
+
+    # Aanbevelingen
+    if setup_data.get("aanbevelingen"):
+        r += "💡 AANBEVELINGEN:\n"
+        for a in setup_data["aanbevelingen"][:4]:
+            r += f"  → {a}\n"
+        r += "\n"
+
+    # Uur patronen
+    if uur_data.get("beste_uren"):
+        beste = [f"{safe_int(u.get('uur')):02d}:00" for u in uur_data["beste_uren"][:3]]
+        r += f"⏰ BESTE UREN: {', '.join(beste)}\n"
+    if uur_data.get("beste_dagen"):
+        dagen_namen = [safe_str(d.get("dag_naam","")).strip() for d in uur_data["beste_dagen"][:3]]
+        r += f"📅 BESTE DAGEN: {', '.join(dagen_namen)}\n"
+    r += f"💡 Aanbevolen window: {uur_data.get('aanbevolen_start',9)}:00-{uur_data.get('aanbevolen_end',17)}:00 UTC\n\n"
+
+    # Regime effect
+    r += format_regime_effect(regime_data)
+
+    # Maandverwachting
+    r += format_maandverwachting(verwachting)
+
+    # Claude weekoverzicht toevoegen
+    week_analyse = genereer_claude_weekoverzicht(conn)
+    if week_analyse:
+        r += f"{'─'*36}\n🧠 CLAUDE WEEKOVERZICHT:\n{week_analyse}\n\n"
+
+    r += f"{'═'*36}\n"
+    return r
 
 
 # ============================================================
