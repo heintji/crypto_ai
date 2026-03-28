@@ -690,6 +690,165 @@ pre, code, .stCodeBlock {
 .signal-score    { color: #34d399; font-size: 13px; font-weight: 900; }
 .signal-details  { color: #94a3b8; font-size: 11px; margin-top: 4px; }
 
+/* ── OVERALL WIN/LOSS BAR — permanent bovenaan ─────────────── */
+.winloss-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+}
+.winloss-source {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.06);
+    min-width: 180px;
+}
+.winloss-label  { color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.winloss-pct-w  { color: #34d399; font-size: 15px; font-weight: 900; }
+.winloss-pct-l  { color: #fb7185; font-size: 15px; font-weight: 900; }
+.winloss-count  { color: #94a3b8; font-size: 11px; }
+.winloss-divider{ width: 1px; height: 28px; background: rgba(255,255,255,0.08); }
+
+/* ── FLOATING PNL CARDS ────────────────────────────────────── */
+.float-card {
+    background: linear-gradient(180deg,rgba(14,22,40,0.98),rgba(10,16,30,0.98));
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 12px;
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.float-left  { color: #ffffff; font-size: 13px; font-weight: 800; }
+.float-right { font-size: 13px; font-weight: 900; text-align: right; }
+.float-green { color: #34d399; }
+.float-red   { color: #fb7185; }
+.float-sub   { color: #94a3b8; font-size: 11px; margin-top: 2px; }
+
+/* ── SCANNER STATUS ────────────────────────────────────────── */
+.scanner-card {
+    background: rgba(96,165,250,0.05);
+    border: 1px solid rgba(96,165,250,0.12);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 8px;
+}
+.scanner-title { color: #ffffff; font-size: 13px; font-weight: 900; margin-bottom: 6px; }
+.scanner-row   { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.scanner-key   { color: #94a3b8; font-size: 12px; }
+.scanner-val   { color: #ffffff; font-size: 12px; font-weight: 700; }
+
+/* ── DAGBUDGET BAR ─────────────────────────────────────────── */
+.budget-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,0.08);
+    overflow: hidden;
+    margin: 6px 0;
+}
+.budget-fill-safe { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#34d399,#60a5fa); }
+.budget-fill-warn { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#fbbf24,#fb7185); }
+
+/* ── KALENDER HEATMAP ──────────────────────────────────────── */
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    margin-top: 8px;
+}
+.cal-day {
+    aspect-ratio: 1;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 9px;
+    font-weight: 700;
+    cursor: default;
+    min-height: 28px;
+}
+.cal-win   { background: rgba(52,211,153,0.35); color: #34d399; }
+.cal-loss  { background: rgba(239,68,68,0.35);  color: #fb7185; }
+.cal-flat  { background: rgba(255,255,255,0.05);color: #94a3b8; }
+.cal-empty { background: transparent; }
+.cal-header{ color: #94a3b8; font-size: 10px; font-weight: 700; text-align: center; padding: 2px 0; }
+
+/* ── CORRELATIE BARS ───────────────────────────────────────── */
+.corr-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.corr-label { color: #ffffff; font-size: 12px; font-weight: 800; width: 80px; flex-shrink: 0; }
+.corr-bar-wrap { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
+.corr-bar-fill { height: 100%; border-radius: 999px; }
+.corr-pct   { color: #ffffff; font-size: 12px; font-weight: 900; width: 48px; text-align: right; flex-shrink: 0; }
+.corr-count { color: #94a3b8; font-size: 11px; width: 60px; text-align: right; flex-shrink: 0; }
+
+/* ── STREAK HISTORY ────────────────────────────────────────── */
+.streak-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+.streak-dot-w { width: 14px; height: 14px; border-radius: 3px; background: #34d399; display: inline-block; }
+.streak-dot-l { width: 14px; height: 14px; border-radius: 3px; background: #fb7185; display: inline-block; }
+
+/* ── BESTE/SLECHTSTE TRADES ────────────────────────────────── */
+.top-trade-card {
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.top-trade-left  { color: #ffffff; font-size: 12px; font-weight: 800; }
+.top-trade-right { font-size: 13px; font-weight: 900; }
+.top-trade-sub   { color: #94a3b8; font-size: 10px; margin-top: 2px; }
+
+/* ── FEE TRACKING ──────────────────────────────────────────── */
+.fee-card {
+    background: rgba(251,191,36,0.05);
+    border: 1px solid rgba(251,191,36,0.12);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 8px;
+}
+
+/* ── COIN STATUS RIJEN ─────────────────────────────────────── */
+.coin-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 10px;
+    margin-bottom: 4px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+}
+.coin-row-black { border-left: 3px solid #fb7185; }
+.coin-row-cool  { border-left: 3px solid #fbbf24; }
+.coin-row-white { border-left: 3px solid #34d399; }
+.coin-name      { color: #ffffff; font-size: 12px; font-weight: 800; }
+.coin-stats     { color: #94a3b8; font-size: 11px; }
+
 /* ── TINY BUTTON ───────────────────────────────────────────── */
 .tiny-button div.stButton > button {
     min-height: 36px !important;
@@ -1478,6 +1637,590 @@ def get_daily_pnl_today(df: pd.DataFrame) -> float:
 
 
 # ============================================================
+# NIEUWE DATA FUNCTIES — alle ontbrekende metrics
+# ============================================================
+def get_overall_winloss(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Berekent overall win/loss % per source.
+    Dit is de centrale metric die altijd zichtbaar moet zijn.
+    """
+    result: Dict[str, Any] = {}
+    for source_key, sources in [
+        ("ALLES",  ["WIN","LOSS"]),
+        ("REAL",   ["WIN","LOSS"]),
+        ("SIM",    ["WIN","LOSS"]),
+        ("SHADOW", ["WIN","LOSS"]),
+    ]:
+        if source_key == "ALLES":
+            work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+        else:
+            work = df[
+                (df["trade_type"] == source_key) &
+                df["outcome"].isin(["WIN","LOSS"])
+            ].copy()
+
+        if work.empty:
+            result[source_key] = {"wins":0,"losses":0,"total":0,"win_pct":0.0,"loss_pct":0.0}
+            continue
+
+        wins   = int((work["outcome"] == "WIN").sum())
+        losses = int((work["outcome"] == "LOSS").sum())
+        total  = wins + losses
+        result[source_key] = {
+            "wins":     wins,
+            "losses":   losses,
+            "total":    total,
+            "win_pct":  (wins / total * 100) if total > 0 else 0.0,
+            "loss_pct": (losses / total * 100) if total > 0 else 0.0,
+        }
+    return result
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def get_floating_pnl() -> List[Dict[str, Any]]:
+    """
+    Haalt open live trades op met huidige prijs van Bitvavo.
+    Berekent floating PnL per open trade.
+    """
+    live_state, _ = safe_json(LIVE_STATE_PATH)
+    if not live_state:
+        return []
+
+    positions = (live_state or {}).get("positions", {})
+    if not positions:
+        return []
+
+    try:
+        prices = fetch_bitvavo_prices()
+    except Exception:
+        prices = {}
+
+    result = []
+    for symbol, pos in positions.items():
+        entry  = safe_float(pos.get("entry"))
+        qty    = safe_float(pos.get("qty"))
+        stop   = safe_float(pos.get("stop_loss") or pos.get("stop"))
+        target = safe_float(pos.get("target"))
+        amount = safe_float(pos.get("amount_eur"))
+        setup  = safe_str(pos.get("setup_type"), "-")
+        opened = safe_float(pos.get("opened_at"))
+        market = safe_str(pos.get("market"), f"{symbol[:-4]}-EUR" if symbol.endswith("USDT") else symbol)
+
+        current = prices.get(market)
+        if current is None:
+            base = symbol[:-4] if symbol.endswith("USDT") else symbol
+            current = prices.get(f"{base}-EUR")
+
+        if current and entry > 0 and qty > 0:
+            float_pnl = (current - entry) * qty
+            float_r   = (current - entry) / abs(entry - stop) if stop > 0 and abs(entry - stop) > 0 else 0.0
+        else:
+            float_pnl = 0.0
+            float_r   = 0.0
+
+        hold_min = (time.time() - opened) / 60 if opened > 0 else 0
+        rr = abs(target - entry) / abs(entry - stop) if stop > 0 and target > 0 and abs(entry-stop) > 0 else 0.0
+
+        result.append({
+            "symbol":     symbol,
+            "market":     market,
+            "setup":      setup,
+            "entry":      entry,
+            "stop":       stop,
+            "target":     target,
+            "current":    current or 0.0,
+            "qty":        qty,
+            "amount_eur": amount,
+            "float_pnl":  float_pnl,
+            "float_r":    float_r,
+            "hold_min":   hold_min,
+            "rr":         rr,
+        })
+
+    return sorted(result, key=lambda x: x["float_pnl"], reverse=True)
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def get_scanner_status() -> Dict[str, Any]:
+    """
+    Haalt scanner status op uit bot_state tabel en pending_approvals.
+    Toont wanneer de scanner voor het last draaide en hoeveel signals.
+    """
+    result = {
+        "bot_active":        get_bot_state_val("bot_active", "false"),
+        "bot_paused":        get_bot_state_val("bot_paused", "false"),
+        "last_scan":         get_bot_state_val("last_scan_ts", ""),
+        "signals_today":     0,
+        "signals_executed":  0,
+        "signals_pending":   0,
+        "mins_since_scan":   -1,
+    }
+
+    # Toon hoelang geleden de laatste scan was
+    if result["last_scan"]:
+        try:
+            last = datetime.fromisoformat(result["last_scan"])
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            result["mins_since_scan"] = int((now_utc() - last).total_seconds() / 60)
+        except Exception:
+            pass
+
+    # Signals van vandaag
+    if table_exists("pending_approvals"):
+        today = now_utc().strftime("%Y-%m-%d")
+        df_today = run_query(
+            "SELECT status, COUNT(*) AS n FROM public.pending_approvals "
+            "WHERE DATE(created_at AT TIME ZONE 'UTC') = %s GROUP BY 1",
+            (today,)
+        )
+        if not df_today.empty and "status" in df_today.columns:
+            for _, row in df_today.iterrows():
+                s = safe_str(row.get("status","")).upper()
+                n = safe_int(row.get("n",0))
+                result["signals_today"] += n
+                if s in ("CONSUMED","EXECUTED"):
+                    result["signals_executed"] += n
+                if s in ("PENDING","APPROVED"):
+                    result["signals_pending"] += n
+
+    return result
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def get_dagbudget_status(real_df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Berekent hoeveel van het dagbudget gebruikt is.
+    Dagbudget = DAILY_STOP_LOSS_EUR (€5.00 standaard).
+    """
+    today = now_utc().strftime("%Y-%m-%d")
+    work  = real_df[
+        real_df["outcome"].isin(["WIN","LOSS"]) &
+        (real_df["day"] == today)
+    ].copy() if not real_df.empty else pd.DataFrame()
+
+    wins_today   = int((work["outcome"] == "WIN").sum()) if not work.empty else 0
+    losses_today = int((work["outcome"] == "LOSS").sum()) if not work.empty else 0
+    pnl_today    = float(pd.to_numeric(work.get("pnl_eur", pd.Series()), errors="coerce").fillna(0.0).sum()) if not work.empty else 0.0
+    trades_today = wins_today + losses_today
+
+    verlies_abs = abs(min(pnl_today, 0.0))
+    budget_pct  = min((verlies_abs / max(DAILY_STOP_LOSS_EUR, 0.01)) * 100, 100.0)
+    ruimte      = max(DAILY_STOP_LOSS_EUR - verlies_abs, 0.0)
+
+    return {
+        "pnl_today":     pnl_today,
+        "verlies_abs":   verlies_abs,
+        "budget_max":    DAILY_STOP_LOSS_EUR,
+        "budget_pct":    budget_pct,
+        "ruimte":        ruimte,
+        "trades_today":  trades_today,
+        "wins_today":    wins_today,
+        "losses_today":  losses_today,
+        "max_trades":    MAX_REAL_TRADES_PER_DAY,
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_blacklist_cooldown_coins() -> Dict[str, List[Dict]]:
+    """
+    Haalt coins op die geblokkeerd zijn.
+    Blacklist: win rate <30% na 20+ trades.
+    Cooldown:  24u na verlies.
+    Whitelist: win rate >60% na 20+ trades.
+    """
+    if not table_exists("experience_trades"):
+        return {"blacklist":[], "cooldown":[], "whitelist":[]}
+
+    # Blacklist — slechte performers
+    df_bl = run_query("""
+    SELECT COALESCE(coin,'?') AS coin, COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+           ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+    GROUP BY 1
+    HAVING COUNT(*) >= 20
+      AND COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0) < 0.30
+    ORDER BY win_rate ASC LIMIT 20
+    """)
+
+    # Cooldown — verlies in laatste 24u
+    df_cd = run_query("""
+    SELECT DISTINCT ON (coin) coin,
+           MAX(exit_time) AS last_loss,
+           ROUND(EXTRACT(EPOCH FROM (NOW()-MAX(exit_time)))/3600,1) AS hours_since
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(outcome) = 'LOSS'
+      AND exit_time IS NOT NULL
+      AND exit_time >= NOW() - INTERVAL '24 hours'
+    GROUP BY coin
+    ORDER BY coin, last_loss DESC
+    LIMIT 30
+    """)
+
+    # Whitelist — goede performers
+    df_wl = run_query("""
+    SELECT COALESCE(coin,'?') AS coin, COUNT(*) AS n,
+           COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+           ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
+           ROUND(AVG(COALESCE(pnl_eur,0))::numeric,4) AS avg_pnl
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+    GROUP BY 1
+    HAVING COUNT(*) >= 20
+      AND COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0) >= 0.60
+    ORDER BY win_rate DESC LIMIT 20
+    """)
+
+    def df_to_list(df: pd.DataFrame) -> List[Dict]:
+        return [dict(r) for _, r in df.iterrows()] if not df.empty else []
+
+    return {
+        "blacklist": df_to_list(df_bl),
+        "cooldown":  df_to_list(df_cd),
+        "whitelist": df_to_list(df_wl),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_fee_stats(real_df: pd.DataFrame) -> Dict[str, float]:
+    """
+    Schat totale fees betaald op basis van trades.
+    Bitvavo fee = 0.25% per kant.
+    """
+    if real_df.empty:
+        return {"total_fees": 0.0, "fee_impact_pct": 0.0, "avg_fee_per_trade": 0.0, "gross_profit": 0.0}
+
+    work = real_df[real_df["outcome"].isin(["WIN","LOSS"])].copy()
+    if work.empty:
+        return {"total_fees": 0.0, "fee_impact_pct": 0.0, "avg_fee_per_trade": 0.0, "gross_profit": 0.0}
+
+    euros  = pd.to_numeric(work.get("pnl_eur", pd.Series()), errors="coerce").fillna(0.0)
+    fees_col = work.get("fee_eur") if "fee_eur" in work.columns else None
+    if fees_col is not None:
+        total_fees = float(pd.to_numeric(fees_col, errors="coerce").fillna(0.0).sum())
+    else:
+        total_fees = float(len(work) * MAX_PER_TRADE_EUR * 0.005)  # schatting: 0.5% round-trip
+
+    gross_profit = float(euros[euros > 0].sum())
+    fee_impact   = (total_fees / max(gross_profit + total_fees, 0.001)) * 100
+    avg_fee      = total_fees / max(len(work), 1)
+
+    return {
+        "total_fees":        round(total_fees, 4),
+        "fee_impact_pct":    round(fee_impact, 1),
+        "avg_fee_per_trade": round(avg_fee, 4),
+        "gross_profit":      round(gross_profit, 4),
+    }
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_best_worst_trades(df: pd.DataFrame, n: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Geeft de N beste en slechtste trades terug op basis van pnl_r."""
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if work.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    work["pnl_r_num"] = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
+    best  = work.nlargest(n, "pnl_r_num")
+    worst = work.nsmallest(n, "pnl_r_num")
+    return best, worst
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_streak_history(df: pd.DataFrame) -> List[Dict[str, Any]]:
+    """
+    Berekent alle win/loss streaks in de trade geschiedenis.
+    Geeft lijst van {type, length, start, end}.
+    """
+    if df.empty:
+        return []
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if "_datetime_raw" in work.columns:
+        work = work.sort_values("_datetime_raw")
+    if work.empty:
+        return []
+
+    streaks = []
+    current_type   = None
+    current_count  = 0
+    current_start  = None
+
+    for _, row in work.iterrows():
+        outcome = row["outcome"]
+        dt      = row.get("_datetime_raw")
+        if outcome == current_type:
+            current_count += 1
+        else:
+            if current_type is not None:
+                streaks.append({"type": current_type, "length": current_count, "start": current_start, "end": dt})
+            current_type  = outcome
+            current_count = 1
+            current_start = dt
+
+    if current_type:
+        streaks.append({"type": current_type, "length": current_count, "start": current_start, "end": None})
+
+    return streaks
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_avg_hold_time(df: pd.DataFrame) -> pd.DataFrame:
+    """Gemiddelde houdtijd per setup type in minuten."""
+    if df.empty:
+        return pd.DataFrame()
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    work = work[~work["created_at"].isna() & ~work["closed_at"].isna()].copy()
+    if work.empty:
+        return pd.DataFrame()
+    work["hold_min"] = (work["closed_at"] - work["created_at"]).dt.total_seconds() / 60
+    grouped = (
+        work.groupby("setup_type", dropna=False)
+        .agg(n=("trade_id","count"), avg_hold=("hold_min","mean"),
+             win_rate=("outcome", lambda x: (x=="WIN").mean()*100))
+        .reset_index()
+        .sort_values("avg_hold", ascending=False)
+    )
+    grouped["avg_hold"] = grouped["avg_hold"].round(1)
+    grouped["win_rate"] = grouped["win_rate"].round(1)
+    return grouped
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_rolling_winrate(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
+    """Rolling win rate over de laatste N trades."""
+    if df.empty:
+        return pd.DataFrame()
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if "_datetime_raw" in work.columns:
+        work = work.sort_values("_datetime_raw")
+    if len(work) < window:
+        return pd.DataFrame()
+    work["is_win"] = (work["outcome"] == "WIN").astype(float)
+    work["rolling_wr"] = work["is_win"].rolling(window=window, min_periods=window).mean() * 100
+    return work[["_datetime_raw","rolling_wr"]].dropna()
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_btc_correlation(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Berekent win rate per BTC regime.
+    Toont hoe de bot presteert per marktomstandigheid.
+    """
+    if df.empty:
+        return pd.DataFrame()
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if "regime" not in work.columns or work.empty:
+        return pd.DataFrame()
+    grouped = (
+        work.groupby("regime", dropna=False)
+        .agg(n=("trade_id","count"),
+             wins=("outcome", lambda x: (x=="WIN").sum()),
+             win_rate=("outcome", lambda x: (x=="WIN").mean()*100),
+             avg_r=("pnl_r","mean"))
+        .reset_index()
+        .sort_values("win_rate", ascending=False)
+    )
+    grouped["win_rate"] = grouped["win_rate"].round(1)
+    grouped["avg_r"]    = grouped["avg_r"].round(2)
+    return grouped
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_trade_frequency(df: pd.DataFrame) -> pd.DataFrame:
+    """Aantal trades per dag voor de laatste 30 dagen."""
+    if df.empty:
+        return pd.DataFrame()
+    work = df.copy()
+    if "day" not in work.columns:
+        return pd.DataFrame()
+    cutoff = (now_utc() - timedelta(days=30)).strftime("%Y-%m-%d")
+    work   = work[work["day"] >= cutoff].copy()
+    if work.empty:
+        return pd.DataFrame()
+    grouped = (
+        work.groupby("day")
+        .agg(n=("trade_id","count"),
+             wins=("outcome", lambda x: (x=="WIN").sum()),
+             losses=("outcome", lambda x: (x=="LOSS").sum()))
+        .reset_index()
+        .sort_values("day")
+    )
+    return grouped
+
+
+def get_recovery_factor(df: pd.DataFrame) -> float:
+    """
+    Recovery Factor = Totale netto PnL / Max Drawdown (absoluut).
+    Doel: >2.0
+    """
+    summary = perf_summary(df)
+    total_r = summary["total_r"]
+    max_dd  = abs(summary["max_dd"])
+    if max_dd == 0:
+        return 0.0
+    return round(total_r / max_dd, 2)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float]:
+    """P&L per dag voor de kalender heatmap."""
+    if df.empty:
+        return {}
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if work.empty:
+        return {}
+    target_prefix = f"{year}-{month:02d}"
+    work = work[work["day"].str.startswith(target_prefix)].copy() if "day" in work.columns else pd.DataFrame()
+    if work.empty:
+        return {}
+    euros = pd.to_numeric(work.get("pnl_eur", pd.Series()), errors="coerce").fillna(0.0)
+    work["pnl_eur_num"] = euros
+    grouped = work.groupby("day")["pnl_eur_num"].sum()
+    return dict(grouped)
+
+
+# ============================================================
+# NIEUWE GRAFIEKEN
+# ============================================================
+def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
+    """Drawdown grafiek — toont wanneer en hoe diep de drawdowns waren."""
+    if df.empty:
+        return empty_fig("Geen data voor drawdown grafiek")
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if work.empty:
+        return empty_fig("Geen WIN/LOSS data")
+    if "_datetime_raw" in work.columns:
+        work = work.sort_values("_datetime_raw")
+    pnl  = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
+    cum  = pnl.cumsum()
+    peak = cum.cummax()
+    dd   = cum - peak
+    work = downsample(work.assign(dd=dd.values), 800)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=work.get("_datetime_raw", work.index),
+        y=work["dd"],
+        mode="lines",
+        fill="tozeroy",
+        name="Drawdown",
+        line=dict(color="#fb7185", width=1.5),
+        fillcolor="rgba(239,68,68,0.15)",
+        hovertemplate="DD: %{y:.2f} R<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+    return style_fig(fig, 280, title)
+
+
+def chart_rolling_winrate(df: pd.DataFrame, window: int = 20) -> go.Figure:
+    """Rolling win rate trend grafiek."""
+    rwr = get_rolling_winrate(df, window)
+    if rwr.empty:
+        return empty_fig(f"Min {window} trades nodig voor rolling win rate")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=rwr["_datetime_raw"],
+        y=rwr["rolling_wr"],
+        mode="lines",
+        name=f"Rolling WR ({window})",
+        line=dict(color="#c084fc", width=2.5),
+        hovertemplate="WR: %{y:.1f}%<extra></extra>",
+    ))
+    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)",
+                  annotation_text="50%", annotation_font_color="#94a3b8")
+    fig.add_hline(y=60, line_dash="dot", line_color="rgba(52,211,153,0.3)",
+                  annotation_text="60% doel", annotation_font_color="#34d399")
+    return style_fig(fig, 280, f"Rolling Win Rate ({window} trades)")
+
+
+def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
+    """Trade frequentie per dag."""
+    freq = get_trade_frequency(df)
+    if freq.empty:
+        return empty_fig("Geen frequentie data")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=freq["day"],
+        y=freq["wins"],
+        name="Wins",
+        marker=dict(color="#34d399"),
+    ))
+    fig.add_trace(go.Bar(
+        x=freq["day"],
+        y=freq["losses"],
+        name="Losses",
+        marker=dict(color="#fb7185"),
+    ))
+    fig.update_layout(barmode="stack")
+    return style_fig(fig, 260, "Trade Frequentie (30 dagen)")
+
+
+def chart_btc_correlation_bar(df: pd.DataFrame) -> go.Figure:
+    """Win rate per marktregime — BTC correlatie grafiek."""
+    corr = get_btc_correlation(df)
+    if corr.empty:
+        return empty_fig("Geen regime data")
+    color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
+    colors = [color_map.get(safe_str(r).upper(), "#60a5fa") for r in corr["regime"]]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=corr["regime"],
+        y=corr["win_rate"],
+        marker=dict(color=colors),
+        text=[f"{v:.1f}% ({int(n)})" for v, n in zip(corr["win_rate"], corr["n"])],
+        textposition="outside",
+        hovertemplate="Regime: %{x}<br>WR: %{y:.1f}%<extra></extra>",
+    ))
+    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)")
+    return style_fig(fig, 260, "Win Rate per Regime (BTC Correlatie)")
+
+
+def chart_hold_time_bar(df: pd.DataFrame) -> go.Figure:
+    """Gemiddelde houdtijd per setup type."""
+    hold = get_avg_hold_time(df)
+    if hold.empty:
+        return empty_fig("Geen houdtijd data")
+    fig = go.Figure(go.Bar(
+        x=hold["setup_type"],
+        y=hold["avg_hold"],
+        text=[f"{v:.0f}m ({int(n)})" for v, n in zip(hold["avg_hold"], hold["n"])],
+        textposition="outside",
+        marker=dict(color="#60a5fa"),
+        hovertemplate="Setup: %{x}<br>Gem. houdtijd: %{y:.0f} min<extra></extra>",
+    ))
+    return style_fig(fig, 260, "Gemiddelde Houdtijd per Setup (minuten)")
+
+
+def chart_pnl_histogram(df: pd.DataFrame) -> go.Figure:
+    """P&L histogram — verdeling van trade uitkomsten in euro."""
+    if df.empty:
+        return empty_fig("Geen data")
+    work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
+    if work.empty:
+        return empty_fig("Geen WIN/LOSS data")
+    euros = pd.to_numeric(work["pnl_eur"], errors="coerce").dropna()
+    if euros.empty:
+        return empty_fig("Geen PnL data")
+    fig = go.Figure(go.Histogram(
+        x=euros,
+        nbinsx=20,
+        marker=dict(
+            color=["#34d399" if v >= 0 else "#fb7185" for v in euros],
+            line=dict(width=0),
+        ),
+        opacity=0.8,
+    ))
+    fig.add_vline(x=0, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+    return style_fig(fig, 260, "P&L Verdeling (euro)")
+
+
+# ============================================================
 # FILTERS
 # ============================================================
 def apply_filters(
@@ -2030,16 +2773,21 @@ def claude_btn(label: str, prompt: str, max_tokens: int = 300, key: str = "") ->
 # NAVIGATIE HELPERS
 # ============================================================
 PAGE_NAMES = {
-    "dashboard":  "◉ Dashboard",
-    "live":       "◉ Live Performance",
-    "sim":        "◉ Simulator",
-    "shadow":     "◉ Shadow Review",
-    "portfolio":  "◉ Portfolio",
-    "signals":    "◉ Pre-BUY Signals",
-    "scoreboard": "◉ Scoreboard",
-    "regime":     "◉ BTC Regime",
-    "settings":   "◉ Instellingen",
-    "help":       "◉ Help & Debug",
+    "dashboard":   "◉ Dashboard",
+    "positions":   "◉ Open Posities (P&L)",
+    "live":        "◉ Live Performance",
+    "sim":         "◉ Simulator",
+    "shadow":      "◉ Shadow Review",
+    "analyse":     "◉ Analyse & Drawdown",
+    "coins":       "◉ Coin Analyse",
+    "kalender":    "◉ P&L Kalender",
+    "correlatie":  "◉ BTC Correlatie",
+    "portfolio":   "◉ Portfolio",
+    "signals":     "◉ Pre-BUY Signals",
+    "scoreboard":  "◉ Scoreboard",
+    "regime":      "◉ BTC Regime",
+    "settings":    "◉ Instellingen",
+    "help":        "◉ Help & Debug",
 }
 
 
@@ -2077,11 +2825,28 @@ def render_sidebar() -> None:
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="nav-header">📊 Overzicht</div>', unsafe_allow_html=True)
+    nav_btn("◉ Dashboard",          "dashboard")
+    nav_btn("◉ Open Posities (P&L)", "positions")
 
-    # Nav knoppen
-    for page_key, label in PAGE_NAMES.items():
-        nav_btn(label, page_key)
+    st.markdown('<div class="nav-header" style="margin-top:8px;">📈 Trade Analyse</div>', unsafe_allow_html=True)
+    nav_btn("◉ Live Performance",    "live")
+    nav_btn("◉ Simulator",           "sim")
+    nav_btn("◉ Shadow Review",       "shadow")
+    nav_btn("◉ Analyse & Drawdown",  "analyse")
+    nav_btn("◉ Coin Analyse",        "coins")
+
+    st.markdown('<div class="nav-header" style="margin-top:8px;">🗓️ Kalender & Correlatie</div>', unsafe_allow_html=True)
+    nav_btn("◉ P&L Kalender",        "kalender")
+    nav_btn("◉ BTC Correlatie",      "correlatie")
+
+    st.markdown('<div class="nav-header" style="margin-top:8px;">💼 Systeem</div>', unsafe_allow_html=True)
+    nav_btn("◉ Portfolio",            "portfolio")
+    nav_btn("◉ Pre-BUY Signals",      "signals")
+    nav_btn("◉ Scoreboard",           "scoreboard")
+    nav_btn("◉ BTC Regime",           "regime")
+    nav_btn("◉ Instellingen",         "settings")
+    nav_btn("◉ Help & Debug",         "help")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -2298,7 +3063,24 @@ def render_dashboard(
     """Dashboard pagina — hero metrics + grafieken + trade tape."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
 
-    # Hero metrics rij
+    # ── PERMANENTE WIN/LOSS BAR ──────────────────────────────
+    render_overall_winloss_bar(history_df)
+
+    # ── SCANNER + DAGBUDGET WIDGETS ─────────────────────────
+    wb1, wb2, wb3 = st.columns([1.5, 1.0, 1.0], gap="small")
+    with wb1:
+        render_scanner_status_widget()
+    with wb2:
+        render_dagbudget_widget(real_df)
+    with wb3:
+        # Consecutive losses waarschuwing
+        cons = get_consecutive_losses(real_df)
+        pf30 = get_profit_factor_30d(real_df)
+        rf   = get_recovery_factor(real_df)
+        st.markdown(metric_card("Verlies Streak nu", f"{cons}x {'🔴' if cons >= 3 else '🟡' if cons >= 1 else '✅'}", "verliezen op rij", "red" if cons >= 3 else "orange" if cons >= 1 else "green"), unsafe_allow_html=True)
+        st.markdown(metric_card("Recovery Factor", f"{rf:.2f}", "doel: >2.0 | PF:" + f"{pf30:.2f}", "green" if rf >= 2.0 else "orange" if rf >= 1.0 else "red"), unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     summary_all  = perf_summary(history_df)
     summary_real = perf_summary(real_df)
 
@@ -2973,8 +3755,757 @@ def render_help_page(
 
 
 # ============================================================
-# DATA LADEN
+# PERMANENTE WIN/LOSS BAR — altijd zichtbaar
 # ============================================================
+def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
+    """
+    De meest fundamentele metric — altijd zichtbaar boven de content.
+    Toont overall win/loss % voor ALLES, REAL, SIM en SHADOW trades.
+    """
+    stats = get_overall_winloss(history_df)
+
+    def src_block(label: str, key: str, emoji: str) -> str:
+        s = stats.get(key, {})
+        win_pct  = safe_float(s.get("win_pct"))
+        loss_pct = safe_float(s.get("loss_pct"))
+        wins     = safe_int(s.get("wins"))
+        losses   = safe_int(s.get("losses"))
+        total    = safe_int(s.get("total"))
+        return f"""
+        <div class="winloss-source">
+            <div>
+                <div class="winloss-label">{emoji} {label}</div>
+                <div style="display:flex;gap:6px;align-items:center;margin-top:3px;">
+                    <span class="winloss-pct-w">{win_pct:.1f}%</span>
+                    <span style="color:#555;">|</span>
+                    <span class="winloss-pct-l">{loss_pct:.1f}%</span>
+                </div>
+                <div class="winloss-count">{wins}W / {losses}L — {total} trades</div>
+            </div>
+        </div>
+        """
+
+    st.markdown(f"""
+    <div class="winloss-bar">
+        <div style="color:#94a3b8;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.06em;flex-shrink:0;">
+            Win % / Loss %
+        </div>
+        <div class="winloss-divider"></div>
+        {src_block("Alle Trades", "ALLES", "📊")}
+        <div class="winloss-divider"></div>
+        {src_block("Live (REAL)", "REAL", "💶")}
+        <div class="winloss-divider"></div>
+        {src_block("Simulatie", "SIM", "🔮")}
+        <div class="winloss-divider"></div>
+        {src_block("Shadow", "SHADOW", "🎭")}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ============================================================
+# SCANNER STATUS WIDGET
+# ============================================================
+def render_scanner_status_widget() -> None:
+    """Toont scanner status — wanneer voor het last gescand, hoeveel signals."""
+    scanner = get_scanner_status()
+    bot_active = scanner["bot_active"].lower() == "true"
+    mins = scanner["mins_since_scan"]
+
+    if mins < 0:
+        scan_str = "Onbekend"
+        scan_cls = "chip-gray"
+    elif mins <= 35:
+        scan_str = f"{mins} min geleden"
+        scan_cls = "chip-green"
+    elif mins <= 90:
+        scan_str = f"{mins} min geleden"
+        scan_cls = "chip-yellow"
+    else:
+        scan_str = f"{mins} min geleden ⚠️"
+        scan_cls = "chip-red"
+
+    active_chip = (
+        '<span class="top-status-chip chip-green">🟢 Bot ACTIEF</span>'
+        if bot_active else
+        '<span class="top-status-chip chip-red">🔴 Bot GESTOPT</span>'
+    )
+
+    st.markdown(f"""
+    <div class="scanner-card">
+        <div class="scanner-title">⚡ Scanner Status</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            {active_chip}
+            <span class="top-status-chip {scan_cls}">🕐 Scan: {scan_str}</span>
+            <span class="top-status-chip chip-blue">📋 Signals vandaag: {scanner['signals_today']}</span>
+            <span class="top-status-chip chip-green">✅ Uitgevoerd: {scanner['signals_executed']}</span>
+            <span class="top-status-chip chip-orange">⏳ Pending: {scanner['signals_pending']}</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ============================================================
+# DAGBUDGET WIDGET
+# ============================================================
+def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
+    """Toont dagbudget status — hoeveel van de €5 is al gebruikt."""
+    budget = get_dagbudget_status(real_df)
+    pct    = budget["budget_pct"]
+    fill_cls = "budget-fill-safe" if pct < 60 else "budget-fill-warn"
+
+    pnl = budget["pnl_today"]
+    pnl_cls  = "chip-green" if pnl >= 0 else "chip-red"
+    pnl_sign = "+" if pnl >= 0 else ""
+
+    trades_pct = min((budget["trades_today"] / max(budget["max_trades"], 1)) * 100, 100)
+
+    st.markdown(f"""
+    <div class="metric-card orange-accent">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+            <div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
+            <span class="top-status-chip {pnl_cls}">{pnl_sign}€{abs(pnl):.2f} vandaag</span>
+        </div>
+        <div style="color:#ffffff;font-size:18px;font-weight:900;margin-bottom:2px;">
+            {budget['trades_today']}/{budget['max_trades']} trades
+        </div>
+        <div style="color:#94a3b8;font-size:11px;margin-bottom:6px;">
+            Verliesruimte: €{budget['verlies_abs']:.2f} / €{budget['budget_max']:.2f} gebruikt
+        </div>
+        <div class="budget-bar">
+            <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#ff8c00,#fbbf24);"></div>
+        </div>
+        <div style="color:#555;font-size:10px;margin-top:3px;">{trades_pct:.0f}% daglimiet gebruikt</div>
+        <div class="budget-bar" style="margin-top:4px;">
+            <div class="{fill_cls}" style="width:{pct:.0f}%;"></div>
+        </div>
+        <div style="color:#555;font-size:10px;margin-top:3px;">{pct:.0f}% verliesbudget gebruikt — nog €{budget['ruimte']:.2f} ruimte</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ============================================================
+# FLOATING P&L PAGINA
+# ============================================================
+def render_open_positions_page() -> None:
+    """Open posities met live floating P&L van Bitvavo."""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📂 Open Posities — Live Floating P&L</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">'
+        'Alle open live trades met actuele prijs van Bitvavo. '
+        'Floating P&L = (huidige prijs - entry) × hoeveelheid. '
+        'Ververst elke 30 seconden.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    positions = get_floating_pnl()
+
+    if not positions:
+        st.info("Geen open posities. Bot wacht op nieuwe signalen van de scanner.")
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    # Totale floating P&L
+    total_float = sum(p["float_pnl"] for p in positions)
+    total_invested = sum(p["amount_eur"] for p in positions)
+    total_cls = "chip-green" if total_float >= 0 else "chip-red"
+    sign = "+" if total_float >= 0 else ""
+
+    m1, m2, m3 = st.columns(3, gap="small")
+    with m1:
+        st.markdown(metric_card("Totale Float P&L", f"{sign}€{abs(total_float):.4f}", f"{len(positions)} posities", "green" if total_float >= 0 else "red"), unsafe_allow_html=True)
+    with m2:
+        st.markdown(metric_card("Geïnvesteerd", f"€{total_invested:.2f}", "totaal open", "blue"), unsafe_allow_html=True)
+    with m3:
+        float_pct = (total_float / max(total_invested, 0.001)) * 100
+        st.markdown(metric_card("Float %", f"{float_pct:+.2f}%", "rendement op geïnvesteerd", "orange" if abs(float_pct) < 2 else "green" if float_pct >= 0 else "red"), unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    for pos in positions:
+        sym       = safe_str(pos["symbol"])
+        entry     = safe_float(pos["entry"])
+        current   = safe_float(pos["current"])
+        float_pnl = safe_float(pos["float_pnl"])
+        float_r   = safe_float(pos["float_r"])
+        hold_min  = safe_float(pos["hold_min"])
+        rr        = safe_float(pos["rr"])
+        setup     = safe_str(pos["setup"])
+        stop      = safe_float(pos["stop"])
+        target    = safe_float(pos["target"])
+        amount    = safe_float(pos["amount_eur"])
+
+        is_profit = float_pnl >= 0
+        card_cls  = "tc-win" if is_profit else "tc-loss"
+        pnl_sign  = "+" if is_profit else ""
+        pnl_color = "#34d399" if is_profit else "#fb7185"
+        r_color   = "#34d399" if float_r >= 0 else "#fb7185"
+        hold_str  = f"{int(hold_min//60)}h {int(hold_min%60)}m" if hold_min > 60 else f"{int(hold_min)}m"
+
+        pnl_pct = (float_pnl / max(amount, 0.001)) * 100
+
+        st.markdown(f"""
+        <div class="tc {card_cls}">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <div>
+                    <span style="color:#ffffff;font-size:14px;font-weight:900;">{sym}</span>
+                    <span class="trade-chip" style="margin-left:8px;">{setup}</span>
+                </div>
+                <div style="text-align:right;">
+                    <div style="color:{pnl_color};font-size:16px;font-weight:900;">{pnl_sign}€{abs(float_pnl):.4f}</div>
+                    <div style="color:{r_color};font-size:12px;font-weight:700;">{float_r:+.2f} R | {pnl_pct:+.1f}%</div>
+                </div>
+            </div>
+            <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                <div><span style="color:#555;font-size:10px;">ENTRY</span><br><span style="color:#fff;font-size:12px;font-weight:700;">{format_price(entry)}</span></div>
+                <div><span style="color:#555;font-size:10px;">NU</span><br><span style="color:{pnl_color};font-size:12px;font-weight:700;">{format_price(current) if current > 0 else '?'}</span></div>
+                <div><span style="color:#555;font-size:10px;">STOP</span><br><span style="color:#fb7185;font-size:12px;font-weight:700;">{format_price(stop)}</span></div>
+                <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#34d399;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
+                <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#60a5fa;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
+                <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#94a3b8;font-size:12px;font-weight:700;">{hold_str}</span></div>
+                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#94a3b8;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.caption("💡 Floating P&L is niet gerealiseerd. Prijs ophalen mislukt als Bitvavo API niet beschikbaar is.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# ANALYSE PAGINA — drawdown, rolling WR, recovery, streaks
+# ============================================================
+def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    """Diepgaande analyse pagina met alle geavanceerde metrics."""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📉 Diepgaande Analyse</div>', unsafe_allow_html=True)
+
+    # Recovery Factor
+    rf_all  = get_recovery_factor(history_df)
+    rf_real = get_recovery_factor(real_df)
+    s_all   = perf_summary(history_df)
+    s_real  = perf_summary(real_df)
+
+    m1, m2, m3, m4, m5 = st.columns(5, gap="small")
+    with m1:
+        rf_acc = "green" if rf_all >= 2.0 else "orange" if rf_all >= 1.0 else "red"
+        st.markdown(metric_card("Recovery Factor (all)", f"{rf_all:.2f}", "doel: >2.0", rf_acc), unsafe_allow_html=True)
+    with m2:
+        rf_acc2 = "green" if rf_real >= 2.0 else "orange" if rf_real >= 1.0 else "red"
+        st.markdown(metric_card("Recovery Factor (live)", f"{rf_real:.2f}", "doel: >2.0", rf_acc2), unsafe_allow_html=True)
+    with m3:
+        st.markdown(metric_card("Max Drawdown (all)", f"{s_all['max_dd']:.2f} R", "", "red"), unsafe_allow_html=True)
+    with m4:
+        st.markdown(metric_card("Max Drawdown (live)", f"{s_real['max_dd']:.2f} R", "", "red"), unsafe_allow_html=True)
+    with m5:
+        st.markdown(metric_card("Expectancy", f"{s_all['expectancy']:.2f} R", "per trade gemiddeld", "purple"), unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # Tabs
+    tab_dd, tab_rolling, tab_streak, tab_hold, tab_hist, tab_freq = st.tabs([
+        "📉 Drawdown", "📈 Rolling WR", "🔥 Streaks",
+        "⏱️ Houdtijd", "📊 P&L Verdeling", "📅 Frequentie"
+    ])
+
+    with tab_dd:
+        dc1, dc2 = st.columns(2, gap="small")
+        with dc1:
+            st.plotly_chart(chart_drawdown(history_df, "Drawdown Alle Trades"), use_container_width=True, config={"displayModeBar":False}, key="dd_all")
+        with dc2:
+            st.plotly_chart(chart_drawdown(real_df, "Drawdown Live Trades"), use_container_width=True, config={"displayModeBar":False}, key="dd_real")
+        st.markdown("""
+        <div class="trade-note">
+            <b>Drawdown uitleg:</b> Een drawdown is een daling van de equity peak naar een nieuw dieptepunt.
+            Een diepe langdurige drawdown is een teken dat de strategie tijdelijk niet werkt.
+            Recovery Factor = totale R winst / max drawdown. Hoe hoger, hoe beter het systeem herstelt.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_rolling:
+        w_opt = st.slider("Window (trades)", 5, 50, 20, key="rolling_window")
+        rc1, rc2 = st.columns(2, gap="small")
+        with rc1:
+            st.plotly_chart(chart_rolling_winrate(history_df, w_opt), use_container_width=True, config={"displayModeBar":False}, key="roll_all")
+        with rc2:
+            st.plotly_chart(chart_rolling_winrate(real_df, w_opt), use_container_width=True, config={"displayModeBar":False}, key="roll_real")
+        st.markdown("""
+        <div class="trade-note">
+            <b>Rolling Win Rate:</b> Win rate berekend over de laatste N trades.
+            Als de lijn daalt, presteren de meest recente trades slechter.
+            Dit is een vroeg signaal van edge decay voordat het in de totalen zichtbaar wordt.
+        </div>
+        """, unsafe_allow_html=True)
+
+    with tab_streak:
+        streaks = get_streak_history(history_df)
+        if streaks:
+            win_streaks  = [s for s in streaks if s["type"] == "WIN"]
+            loss_streaks = [s for s in streaks if s["type"] == "LOSS"]
+            max_win  = max((s["length"] for s in win_streaks),  default=0)
+            max_loss = max((s["length"] for s in loss_streaks), default=0)
+            cons_now = get_consecutive_losses(real_df)
+
+            sc1, sc2, sc3 = st.columns(3, gap="small")
+            with sc1:
+                st.markdown(metric_card("Huidige Streak", f"{cons_now}x {'🔴' if cons_now > 0 else '—'}", "verliezen op rij", "red" if cons_now >= 3 else "blue"), unsafe_allow_html=True)
+            with sc2:
+                st.markdown(metric_card("Langste Win Streak", f"{max_win}x 🟢", "ooit", "green"), unsafe_allow_html=True)
+            with sc3:
+                st.markdown(metric_card("Langste Loss Streak", f"{max_loss}x 🔴", "ooit", "red"), unsafe_allow_html=True)
+
+            st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+            st.markdown("**Streak Geschiedenis (meest recent)**")
+            st.markdown('<div class="streak-row">', unsafe_allow_html=True)
+            dots_html = ""
+            for s in streaks[-60:]:
+                cls = "streak-dot-w" if s["type"] == "WIN" else "streak-dot-l"
+                for _ in range(min(s["length"], 10)):
+                    dots_html += f'<span class="{cls}"></span>'
+            st.markdown(f'<div class="streak-row">{dots_html}</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+            st.caption("Groen = win, Rood = loss. Max 10 dots per streak getoond.")
+
+            # Top 10 langste streaks
+            top_streaks = sorted(streaks, key=lambda x: x["length"], reverse=True)[:10]
+            st.markdown("**Top 10 langste streaks:**")
+            for s in top_streaks:
+                emoji = "🟢" if s["type"] == "WIN" else "🔴"
+                st.markdown(
+                    f'<div class="score-row">'
+                    f'<div class="score-left">{emoji} {s["type"]} — {s["length"]} trades op rij</div>'
+                    f'<div class="score-right">{format_dt(s["start"])} → {format_dt(s["end"])}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.info("Nog geen streak data beschikbaar.")
+
+    with tab_hold:
+        hc1, hc2 = st.columns(2, gap="small")
+        with hc1:
+            st.plotly_chart(chart_hold_time_bar(history_df), use_container_width=True, config={"displayModeBar":False}, key="hold_all")
+        with hc2:
+            hold_df = get_avg_hold_time(history_df)
+            if not hold_df.empty:
+                for _, row in hold_df.iterrows():
+                    setup = safe_str(row.get("setup_type"))
+                    hrs   = safe_float(row.get("avg_hold")) / 60
+                    n     = safe_int(row.get("n"))
+                    wr    = safe_float(row.get("win_rate"))
+                    st.markdown(
+                        f'<div class="score-row">'
+                        f'<div class="score-left">{setup}</div>'
+                        f'<div class="score-right">{hrs:.1f}u gem. | {wr:.1f}% WR | {n} trades</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+    with tab_hist:
+        hh1, hh2 = st.columns(2, gap="small")
+        with hh1:
+            st.plotly_chart(chart_pnl_histogram(history_df), use_container_width=True, config={"displayModeBar":False}, key="hist_all")
+        with hh2:
+            st.plotly_chart(chart_pnl_histogram(real_df), use_container_width=True, config={"displayModeBar":False}, key="hist_real")
+
+    with tab_freq:
+        st.plotly_chart(chart_trade_frequency(history_df), use_container_width=True, config={"displayModeBar":False}, key="freq_all")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# COINS PAGINA — blacklist, cooldown, whitelist, fees, best/worst
+# ============================================================
+def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    """Complete coin analyse pagina."""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🪙 Coin Analyse & Filters</div>', unsafe_allow_html=True)
+
+    coins_data = get_blacklist_cooldown_coins()
+    fees       = get_fee_stats(real_df)
+    best, worst = get_best_worst_trades(history_df, 5)
+
+    # Fee metrics
+    f1, f2, f3, f4 = st.columns(4, gap="small")
+    with f1:
+        st.markdown(metric_card("Totale Fees Betaald", f"€{fees['total_fees']:.4f}", "Bitvavo 0.25% per kant", "yellow"), unsafe_allow_html=True)
+    with f2:
+        st.markdown(metric_card("Fee Impact", f"{fees['fee_impact_pct']:.1f}%", "van bruto winst", "yellow"), unsafe_allow_html=True)
+    with f3:
+        st.markdown(metric_card("Gem. Fee / Trade", f"€{fees['avg_fee_per_trade']:.4f}", "", "yellow"), unsafe_allow_html=True)
+    with f4:
+        st.markdown(metric_card("Bruto Winst", f"€{fees['gross_profit']:.4f}", "voor fees", "green"), unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    tab_bl, tab_cd, tab_wl, tab_best, tab_corr = st.tabs([
+        "⚫ Blacklist", "⏳ Cooldown", "🌟 Whitelist",
+        "🏅 Beste/Slechtste", "📊 BTC Correlatie"
+    ])
+
+    with tab_bl:
+        st.markdown(
+            '<div class="section-subtitle">'
+            'Coins met win rate <30% na 20+ trades. '
+            'Worden automatisch overgeslagen door de scanner (multi_coin_score.py).'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        blacklist = coins_data.get("blacklist", [])
+        if blacklist:
+            for coin in blacklist:
+                name = safe_str(coin.get("coin"))
+                n    = safe_int(coin.get("n"))
+                wr   = safe_float(coin.get("win_rate"))
+                wins = safe_int(coin.get("wins"))
+                st.markdown(f"""
+                <div class="coin-row coin-row-black">
+                    <div>
+                        <div class="coin-name">⚫ {name}</div>
+                        <div class="coin-stats">Win rate: {wr:.1f}% | {wins} wins / {n-wins} losses / {n} trades</div>
+                    </div>
+                    <span class="top-status-chip chip-red">GEBLOKKEERD</span>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("✅ Geen coins op de blacklist. Alle coins presteren acceptabel.")
+
+    with tab_cd:
+        st.markdown(
+            '<div class="section-subtitle">'
+            '24u cooldown na verlies. Worden tijdelijk overgeslagen door de scanner.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        cooldown = coins_data.get("cooldown", [])
+        if cooldown:
+            for coin in cooldown:
+                name  = safe_str(coin.get("coin"))
+                hours = safe_float(coin.get("hours_since"))
+                remaining = max(24.0 - hours, 0.0)
+                st.markdown(f"""
+                <div class="coin-row coin-row-cool">
+                    <div>
+                        <div class="coin-name">⏳ {name}</div>
+                        <div class="coin-stats">Verlies {hours:.1f}u geleden — nog {remaining:.1f}u cooldown</div>
+                    </div>
+                    <span class="top-status-chip chip-yellow">COOLDOWN</span>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.success("✅ Geen coins in cooldown momenteel.")
+
+    with tab_wl:
+        st.markdown(
+            '<div class="section-subtitle">'
+            'Coins met win rate >60% na 20+ trades. '
+            'Hoge prioriteit in de scanner — hogere betrouwbaarheid.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        whitelist = coins_data.get("whitelist", [])
+        if whitelist:
+            for coin in whitelist:
+                name    = safe_str(coin.get("coin"))
+                n       = safe_int(coin.get("n"))
+                wr      = safe_float(coin.get("win_rate"))
+                avg_pnl = safe_float(coin.get("avg_pnl"))
+                st.markdown(f"""
+                <div class="coin-row coin-row-white">
+                    <div>
+                        <div class="coin-name">🌟 {name}</div>
+                        <div class="coin-stats">Win rate: {wr:.1f}% | {n} trades | Gem. PnL: {format_money(avg_pnl)}</div>
+                    </div>
+                    <span class="top-status-chip chip-green">TOPPERFORMER</span>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("Nog geen coins met >60% win rate na 20+ trades.")
+
+    with tab_best:
+        bb1, bb2 = st.columns(2, gap="small")
+        with bb1:
+            st.markdown("#### 🏆 Top 5 Beste Trades")
+            if not best.empty:
+                for _, row in best.iterrows():
+                    sym  = safe_str(row.get("symbol"))
+                    r    = safe_float(row.get("pnl_r"))
+                    eur  = safe_float(row.get("pnl_eur"))
+                    setup = safe_str(row.get("setup_type"))
+                    dt   = safe_str(row.get("datetime"))
+                    st.markdown(f"""
+                    <div class="top-trade-card">
+                        <div>
+                            <div class="top-trade-left">{sym} — {setup}</div>
+                            <div class="top-trade-sub">{dt}</div>
+                        </div>
+                        <div class="top-trade-right float-green">+{r:.2f} R / {format_money(eur)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Geen data.")
+
+        with bb2:
+            st.markdown("#### 💀 Top 5 Slechtste Trades")
+            if not worst.empty:
+                for _, row in worst.iterrows():
+                    sym   = safe_str(row.get("symbol"))
+                    r     = safe_float(row.get("pnl_r"))
+                    eur   = safe_float(row.get("pnl_eur"))
+                    setup = safe_str(row.get("setup_type"))
+                    dt    = safe_str(row.get("datetime"))
+                    st.markdown(f"""
+                    <div class="top-trade-card">
+                        <div>
+                            <div class="top-trade-left">{sym} — {setup}</div>
+                            <div class="top-trade-sub">{dt}</div>
+                        </div>
+                        <div class="top-trade-right float-red">{r:.2f} R / {format_money(eur)}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Geen data.")
+
+    with tab_corr:
+        st.markdown(
+            '<div class="section-subtitle">'
+            'Win rate per marktregime. Laat zien hoe de bot presteert in verschillende marktomstandigheden.'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        corr_df = get_btc_correlation(history_df)
+        cc1, cc2 = st.columns(2, gap="small")
+        with cc1:
+            st.plotly_chart(chart_btc_correlation_bar(history_df), use_container_width=True, config={"displayModeBar":False}, key="corr_chart")
+        with cc2:
+            if not corr_df.empty:
+                color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
+                for _, row in corr_df.iterrows():
+                    regime  = safe_str(row.get("regime")).upper()
+                    wr      = safe_float(row.get("win_rate"))
+                    n       = safe_int(row.get("n"))
+                    avg_r   = safe_float(row.get("avg_r"))
+                    bar_w   = min(wr, 100)
+                    bar_col = color_map.get(regime, "#60a5fa")
+                    st.markdown(f"""
+                    <div class="corr-row">
+                        <div class="corr-label">{regime}</div>
+                        <div class="corr-bar-wrap">
+                            <div class="corr-bar-fill" style="width:{bar_w}%;background:{bar_col};"></div>
+                        </div>
+                        <div class="corr-pct">{wr:.1f}%</div>
+                        <div class="corr-count">{n} trades / gem. {avg_r:+.2f}R</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# KALENDER PAGINA — P&L heatmap per maand
+# ============================================================
+def render_kalender_page(history_df: pd.DataFrame) -> None:
+    """Kalender P&L heatmap — visuele consistentie check."""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📅 P&L Kalender</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">'
+        'P&L per dag gevisualiseerd als kalender. '
+        'Groen = winstdag, Rood = verliesdag. '
+        'Geeft snel inzicht in consistentie over de maand.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    import calendar as cal_module
+
+    # Maand selectie
+    mc1, mc2, _ = st.columns([1, 1, 2], gap="small")
+    now = now_utc()
+    with mc1:
+        sel_year  = st.selectbox("Jaar", list(range(2024, now.year + 2)), index=now.year - 2024, key="cal_year")
+    with mc2:
+        sel_month = st.selectbox("Maand", list(range(1, 13)), index=now.month - 1,
+                                 format_func=lambda m: cal_module.month_name[m], key="cal_month")
+
+    pnl_data = get_calendar_pnl(history_df, sel_year, sel_month)
+
+    # Kalender grid
+    days_in_month = cal_module.monthrange(sel_year, sel_month)[1]
+    first_weekday = cal_module.monthrange(sel_year, sel_month)[0]
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # Weekdag headers
+    day_headers = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+    header_html = "".join(f'<div class="cal-header">{d}</div>' for d in day_headers)
+    st.markdown(f'<div class="cal-grid">{header_html}</div>', unsafe_allow_html=True)
+
+    # Dag cellen
+    cells = []
+    for _ in range(first_weekday):
+        cells.append('<div class="cal-day cal-empty"></div>')
+
+    month_wins = 0
+    month_losses = 0
+    month_pnl = 0.0
+
+    for day_num in range(1, days_in_month + 1):
+        dag_str = f"{sel_year}-{sel_month:02d}-{day_num:02d}"
+        pnl_val = pnl_data.get(dag_str)
+        if pnl_val is None:
+            cells.append(f'<div class="cal-day cal-flat">{day_num}</div>')
+        elif pnl_val > 0:
+            intensity = min(int(abs(pnl_val) * 50 + 20), 80)
+            cells.append(f'<div class="cal-day cal-win" style="background:rgba(52,211,153,0.{intensity:02d});" title="+€{pnl_val:.2f}">{day_num}</div>')
+            month_wins += 1
+            month_pnl  += pnl_val
+        elif pnl_val < 0:
+            intensity = min(int(abs(pnl_val) * 50 + 20), 80)
+            cells.append(f'<div class="cal-day cal-loss" style="background:rgba(239,68,68,0.{intensity:02d});" title="-€{abs(pnl_val):.2f}">{day_num}</div>')
+            month_losses += 1
+            month_pnl    += pnl_val
+        else:
+            cells.append(f'<div class="cal-day cal-flat">{day_num}</div>')
+
+    grid_html = '<div class="cal-grid">' + "".join(cells) + '</div>'
+    st.markdown(grid_html, unsafe_allow_html=True)
+
+    # Maand samenvatting
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    active_days = month_wins + month_losses
+    win_day_pct = (month_wins / max(active_days, 1)) * 100
+    sign = "+" if month_pnl >= 0 else ""
+
+    ms1, ms2, ms3, ms4 = st.columns(4, gap="small")
+    with ms1:
+        st.markdown(metric_card("Winstdagen", str(month_wins), f"{win_day_pct:.1f}% van actieve dagen", "green"), unsafe_allow_html=True)
+    with ms2:
+        st.markdown(metric_card("Verliessdagen", str(month_losses), f"{100-win_day_pct:.1f}% van actieve dagen", "red"), unsafe_allow_html=True)
+    with ms3:
+        st.markdown(metric_card("Maand P&L", f"{sign}€{abs(month_pnl):.2f}", "", "green" if month_pnl >= 0 else "red"), unsafe_allow_html=True)
+    with ms4:
+        st.markdown(metric_card("Actieve Handelsdagen", str(active_days), f"van {days_in_month} dagen", "blue"), unsafe_allow_html=True)
+
+    # Vergelijk meerdere maanden met Plotly heatmap
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("#### 📊 30-Dagen P&L Trend")
+    st.plotly_chart(chart_daily_r(history_df, "Dagelijkse P&L (euro)"), use_container_width=True, config={"displayModeBar":False}, key="cal_daily_eur")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# CORRELATIE PAGINA — BTC correlatie + markt analyse
+# ============================================================
+def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    """BTC Correlatie + edge decay + markt analyse."""
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">📊 BTC Correlatie & Edge Decay</div>', unsafe_allow_html=True)
+
+    # Edge decay
+    s_all  = perf_summary(history_df)
+    s_real = perf_summary(real_df)
+    sim_wr  = safe_float(perf_summary(history_df[history_df["trade_type"] == "SIM"] if not history_df.empty else pd.DataFrame()).get("winrate"))
+    live_wr = safe_float(s_real.get("winrate"))
+    diff    = sim_wr - live_wr
+
+    ed1, ed2, ed3, ed4 = st.columns(4, gap="small")
+    with ed1:
+        st.markdown(metric_card("Sim Win Rate", f"{sim_wr:.1f}%", "referentie (geen fees)", "purple"), unsafe_allow_html=True)
+    with ed2:
+        st.markdown(metric_card("Live Win Rate", f"{live_wr:.1f}%", f"{diff:+.1f}% vs sim", "orange" if abs(diff) < 5 else "red" if diff > 10 else "yellow"), unsafe_allow_html=True)
+    with ed3:
+        st.markdown(metric_card("Edge Decay", f"{diff:.1f}%", "grens: 10%", "green" if diff <= 5 else "yellow" if diff <= 10 else "red"), unsafe_allow_html=True)
+    with ed4:
+        rf = get_recovery_factor(real_df)
+        st.markdown(metric_card("Recovery Factor", f"{rf:.2f}", "doel: >2.0", "green" if rf >= 2.0 else "orange" if rf >= 1.0 else "red"), unsafe_allow_html=True)
+
+    if diff > 10:
+        st.warning(
+            f"⚠️ **Edge decay gedetecteerd** — verschil {diff:.1f}%\n\n"
+            f"**Mogelijke oorzaken:** Marktverandering | Fees niet in sim | Score drempel te laag\n\n"
+            f"**Actie:** Verhoog MIN_SCORE_TO_TRADE | Stuur HEALTH via WhatsApp"
+        )
+    elif diff > 5:
+        st.warning(f"⚠️ Lichte edge decay ({diff:.1f}%) — blijf monitoren.")
+    else:
+        st.success(f"✅ Geen significante edge decay — strategie presteert consistent live.")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # BTC correlatie grafieken
+    cc1, cc2 = st.columns(2, gap="small")
+    with cc1:
+        st.plotly_chart(chart_btc_correlation_bar(history_df), use_container_width=True, config={"displayModeBar":False}, key="corr_all_2")
+        st.markdown("""
+        <div class="trade-note">
+            <b>BTC Correlatie uitleg:</b> Als BULL regime veel hogere win rate heeft dan BEAR,
+            is de bot sterk afhankelijk van BTC richting. Dit is normaal — maar betekent dat je
+            in BEAR markt minder of geen trades moet doen (vandaar BTC_SKIP_BEAR=True).
+        </div>
+        """, unsafe_allow_html=True)
+
+    with cc2:
+        corr_df = get_btc_correlation(history_df)
+        if not corr_df.empty:
+            color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
+            st.markdown('<div class="section-title" style="font-size:15px;">Win Rate per Regime</div>', unsafe_allow_html=True)
+            for _, row in corr_df.iterrows():
+                regime = safe_str(row.get("regime")).upper()
+                wr     = safe_float(row.get("win_rate"))
+                n      = safe_int(row.get("n"))
+                avg_r  = safe_float(row.get("avg_r"))
+                bar_w  = min(wr, 100)
+                bar_c  = color_map.get(regime, "#60a5fa")
+                emoji  = {"BULL":"🟢","BEAR":"🔴","RANGE":"🟡"}.get(regime,"⚪")
+                st.markdown(f"""
+                <div class="corr-row">
+                    <div class="corr-label">{emoji} {regime}</div>
+                    <div class="corr-bar-wrap">
+                        <div class="corr-bar-fill" style="width:{bar_w}%;background:{bar_c};"></div>
+                    </div>
+                    <div class="corr-pct" style="color:{bar_c};">{wr:.1f}%</div>
+                    <div class="corr-count">{n} trades / {avg_r:+.2f}R</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # Rolling win rate vergelijking
+    rc1, rc2 = st.columns(2, gap="small")
+    with rc1:
+        st.plotly_chart(chart_rolling_winrate(history_df, 20), use_container_width=True, config={"displayModeBar":False}, key="corr_roll_all")
+    with rc2:
+        st.plotly_chart(chart_rolling_winrate(real_df, 10), use_container_width=True, config={"displayModeBar":False}, key="corr_roll_real")
+
+    # Claude correlatie analyse
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    claude_btn(
+        "Claude: edge decay analyse",
+        f"""
+Je bent een crypto edge decay specialist.
+Analyseer in 4 zinnen Nederlands.
+
+DATA:
+- Sim win rate:   {sim_wr:.1f}%
+- Live win rate:  {live_wr:.1f}%
+- Verschil:       {diff:.1f}%
+- Recovery Factor: {get_recovery_factor(real_df):.2f}
+
+1. Is er edge decay?
+2. Meest waarschijnlijke oorzaken?
+3. Aanbevolen actie?
+4. Urgentie?
+""", 250, "corr_claude"
+    )
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 real_df, sim_df, shadow_df, history_df, source_mode = get_all_trade_data()
 snapshot, snap_mode   = read_snapshot()
 assets_df             = prepare_assets_df(snapshot)
@@ -3058,6 +4589,21 @@ else:
                 "Parallel aan live trades — identieke exit logica, geen limieten. "
                 "Leerdata voor het experience_scoreboard.",
             )
+
+        elif page == "positions":
+            render_open_positions_page()
+
+        elif page == "analyse":
+            render_analyse_page(history_df, real_df)
+
+        elif page == "coins":
+            render_coins_page(history_df, real_df)
+
+        elif page == "kalender":
+            render_kalender_page(history_df)
+
+        elif page == "correlatie":
+            render_correlatie_page(history_df, real_df)
 
         elif page == "portfolio":
             render_portfolio_page(snapshot, assets_df, snap_mode)
