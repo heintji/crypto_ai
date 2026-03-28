@@ -3884,47 +3884,54 @@ def render_help_page(
 # ============================================================
 def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
     """
-    De meest fundamentele metric — altijd zichtbaar boven de content.
-    Toont overall win/loss % voor ALLES, REAL, SIM en SHADOW trades.
+    Permanente Win/Loss balk — altijd zichtbaar bovenaan dashboard.
+    Gebruikt native Streamlit columns voor betrouwbare rendering.
+    Toont win/loss procenten voor ALLES, REAL, SIM en SHADOW.
     """
     stats = get_overall_winloss(history_df)
 
-    def src_block(label: str, key: str, emoji: str) -> str:
-        s = stats.get(key, {})
+    col_titel, col_all, col_real, col_sim, col_shadow = st.columns(
+        [0.5, 1, 1, 1, 1], gap="small"
+    )
+
+    with col_titel:
+        st.markdown(
+            '<div style="padding-top:10px;color:#94a3b8;font-size:10px;'
+            'font-weight:900;text-transform:uppercase;letter-spacing:0.06em;">'
+            'WIN %<br>LOSS %</div>',
+            unsafe_allow_html=True,
+        )
+
+    for col, key, emoji, label in [
+        (col_all,    "ALLES",  "📊", "Alle Trades"),
+        (col_real,   "REAL",   "💶", "Live (REAL)"),
+        (col_sim,    "SIM",    "🔮", "Simulatie"),
+        (col_shadow, "SHADOW", "🎭", "Shadow"),
+    ]:
+        s        = stats.get(key, {})
         win_pct  = safe_float(s.get("win_pct"))
         loss_pct = safe_float(s.get("loss_pct"))
         wins     = safe_int(s.get("wins"))
         losses   = safe_int(s.get("losses"))
         total    = safe_int(s.get("total"))
-        return f"""
-        <div class="winloss-source">
-            <div>
-                <div class="winloss-label">{emoji} {label}</div>
-                <div style="display:flex;gap:6px;align-items:center;margin-top:3px;">
-                    <span class="winloss-pct-w">{win_pct:.1f}%</span>
-                    <span style="color:#555;">|</span>
-                    <span class="winloss-pct-l">{loss_pct:.1f}%</span>
-                </div>
-                <div class="winloss-count">{wins}W / {losses}L — {total} trades</div>
-            </div>
-        </div>
-        """
 
-    st.markdown(f"""
-    <div class="winloss-bar">
-        <div style="color:#94a3b8;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:0.06em;flex-shrink:0;">
-            Win % / Loss %
-        </div>
-        <div class="winloss-divider"></div>
-        {src_block("Alle Trades", "ALLES", "📊")}
-        <div class="winloss-divider"></div>
-        {src_block("Live (REAL)", "REAL", "💶")}
-        <div class="winloss-divider"></div>
-        {src_block("Simulatie", "SIM", "🔮")}
-        <div class="winloss-divider"></div>
-        {src_block("Shadow", "SHADOW", "🎭")}
-    </div>
-    """, unsafe_allow_html=True)
+        with col:
+            st.markdown(
+                f'<div style="background:rgba(255,255,255,0.04);'
+                f'border:1px solid rgba(255,255,255,0.08);'
+                f'border-radius:12px;padding:8px 10px;">' 
+                f'<div style="color:#94a3b8;font-size:10px;font-weight:700;'
+                f'text-transform:uppercase;">{emoji} {label}</div>'
+                f'<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">'
+                f'<span style="color:#34d399;font-size:15px;font-weight:900;">{win_pct:.1f}%</span>'
+                f'<span style="color:#555;font-size:12px;">|</span>'
+                f'<span style="color:#fb7185;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
+                f'</div>'
+                f'<div style="color:#94a3b8;font-size:10px;margin-top:3px;">'
+                f'{wins}W / {losses}L — {total} trades</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
 
 
 # ============================================================
