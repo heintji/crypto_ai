@@ -101,6 +101,15 @@ BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.35")  # w
 
 EDGE_DECAY_THRESHOLD  = float(os.getenv("EDGE_DECAY_THRESHOLD") or "8.0")   # was 10.0 — eerder alarm
 
+# ATR instellingen — identiek aan multi_coin_score en ai_coach
+ATR_PERIOD     = int(os.getenv("ATR_PERIOD") or "14")
+ATR_MULTIPLIER = float(os.getenv("ATR_MULTIPLIER") or "1.6")   # stop = entry - atr * multiplier
+ATR_TARGET_R   = float(os.getenv("ATR_TARGET_R") or "2.5")     # target = entry + atr * multiplier * target_r
+
+# RSI instellingen — identiek aan multi_coin_score
+RSI_MIN = int(os.getenv("RSI_MIN") or "40")
+RSI_MAX = int(os.getenv("RSI_MAX") or "60")
+
 # Bitvavo fee + slippage — identiek aan alle bestanden
 BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
 SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")
@@ -907,6 +916,10 @@ def process_live_trade(
     target  = safe_float(trade.get("target"))
     market  = safe_str(trade.get("market"))
 
+    # Sla originele stop op voor trailing stop berekening
+    if not trade.get("original_stop") and stop > 0:
+        trade["original_stop"] = stop
+
     # Market bepalen als niet opgeslagen
     if not market:
         try:
@@ -941,9 +954,20 @@ def process_live_trade(
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "FORCE_TEST"})
         return True, result.get("ok", False)
 
-    # ── 1. Max houdtijd ─────────────────────────────
-    if hold_min >= MAX_HOLD_HOURS * 60:
-        log(f"⏰ {symbol}: max houdtijd ({hold_min:.0f}min) → SELL 100%")
+    # ── 1. Max houdtijd (regime-afhankelijk) ─────────
+    # BULL: langer vasthouden — trend helpt mee (36u)
+    # RANGE: normaal (24u)
+    # BEAR/UNKNOWN: sneller sluiten (12u)
+    btc_regime_now = safe_str(get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")).upper()
+    if btc_regime_now == "BULL":
+        max_hold_effectief = MAX_HOLD_HOURS * 1.5   # 36u bij BULL
+    elif btc_regime_now == "BEAR":
+        max_hold_effectief = MAX_HOLD_HOURS * 0.5   # 12u bij BEAR
+    else:
+        max_hold_effectief = MAX_HOLD_HOURS          # 24u bij RANGE/UNKNOWN
+
+    if hold_min >= max_hold_effectief * 60:
+        log(f"⏰ {symbol}: max houdtijd ({hold_min:.0f}min, regime={btc_regime_now}) → SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "MAX_HOLD_TIME"})
         _finalize_trade(symbol, trade, current, result, conn, "MAX_HOLD_TIME")
         return True, result.get("ok", False)
@@ -981,13 +1005,35 @@ def process_live_trade(
 
         return changed, False
 
-    # ── 5. Eerste keer >1R bereikt ───────────────────
+    # ── 5. Trailing stop activeren na 1R en 2R ──────
     if r >= 1.0 and not trade.get("had_over_1r"):
         trade["had_over_1r"]     = True
         trade["max_r"]           = max(r, safe_float(trade.get("max_r")))
         trade["max_price_seen"]  = max(current, safe_float(trade.get("max_price_seen"), current))
         changed = True
-        log(f"📈 {symbol}: eerste keer >1R (R={r:.2f}) — bewaken voor partial sell")
+        # TRAILING STOP STAP 1: stop naar break-even (entry)
+        # Zodat als prijs terugvalt we geen verlies maken
+        entry_price = safe_float(trade.get("entry"))
+        if entry_price > 0:
+            trade["stop_loss"] = entry_price
+            trade["stop"]      = entry_price
+            log(f"📈 {symbol}: 1R bereikt (R={r:.2f}) → stop verplaatst naar break-even {entry_price:.6f}")
+        else:
+            log(f"📈 {symbol}: 1R bereikt (R={r:.2f}) — bewaken voor partial sell")
+
+    if r >= 2.0 and not trade.get("had_over_2r"):
+        trade["had_over_2r"] = True
+        changed = True
+        # TRAILING STOP STAP 2: stop naar +1R winst
+        # Zodat we minimaal 1R winst pakken als prijs terugvalt
+        entry_price = safe_float(trade.get("entry"))
+        orig_stop   = safe_float(trade.get("original_stop") or trade.get("stop_loss") or trade.get("stop"))
+        if entry_price > 0 and orig_stop > 0:
+            risk   = abs(entry_price - orig_stop)
+            new_stop = entry_price + risk  # +1R winst als nieuwe stop
+            trade["stop_loss"] = new_stop
+            trade["stop"]      = new_stop
+            log(f"🚀 {symbol}: 2R bereikt (R={r:.2f}) → stop verplaatst naar +1R winst {new_stop:.6f}")
 
     # ── 5b. Terug onder 1R na had_over_1r → SELL 40% ─
     if trade.get("had_over_1r") and not trade.get("partial_sold_40") and r < 1.0:
@@ -1240,6 +1286,15 @@ def evaluate_shadow_for_symbol(
         _log_shadow_outcome(symbol, shadow_trade, current, "WIN", "TARGET_HIT", conn)
         return True, True
 
+    # MFE/MAE tracking bijhouden — FIX: was nooit gedaan
+    if entry > 0:
+        if current > safe_float(shadow_trade.get("max_price_seen"), current):
+            shadow_trade["max_price_seen"] = current
+            changed = True
+        if current < safe_float(shadow_trade.get("min_price_seen"), current):
+            shadow_trade["min_price_seen"] = current
+            changed = True
+
     # Had_over_1r tracking
     if r >= 1.0 and not shadow_trade.get("had_over_1r"):
         shadow_trade["had_over_1r"] = True
@@ -1262,14 +1317,39 @@ def _log_shadow_outcome(
     exit_reden: str,
     conn,
 ) -> None:
-    """Logt shadow trade uitkomst naar experience_trades."""
+    """
+    Logt shadow trade uitkomst naar experience_trades.
+    FIX: Nu met pnl_r, mfe_r, mae_r, time_minutes — was altijd 0.
+    """
     entry      = safe_float(trade.get("entry"))
-    qty        = safe_float(trade.get("qty") or trade.get("position_size"), 1.0)
-    pnl_eur    = (exit_price - entry) * qty if entry > 0 and qty > 0 else 0.0
+    stop       = safe_float(trade.get("stop_loss") or trade.get("stop"))
+    amount_eur = safe_float(trade.get("amount_eur"), 0.50)
+    qty        = safe_float(trade.get("qty") or trade.get("position_size"))
     setup_type = safe_str(trade.get("setup_type"))
     regime     = safe_str(trade.get("regime"))
     score      = safe_int(trade.get("score"))
     prebuy_id  = safe_str(trade.get("prebuy_id"))
+
+    # PnL berekening inclusief fees (identiek aan shadow_trades.py)
+    if qty <= 0 and entry > 0:
+        qty = amount_eur / entry
+    fee_entry = amount_eur * (BITVAVO_FEE_PCT + SLIPPAGE_PCT)
+    fee_exit  = exit_price * qty * (BITVAVO_FEE_PCT + SLIPPAGE_PCT) if qty > 0 else 0.0
+    gross_pnl = (exit_price - entry) * qty if entry > 0 and qty > 0 else 0.0
+    pnl_eur   = gross_pnl - fee_entry - fee_exit
+
+    # R-multiple bij exit — FIX: was nooit berekend
+    risk   = abs(entry - stop) if stop > 0 and entry > 0 else 0.0
+    exit_r = round((exit_price - entry) / risk, 3) if risk > 0 else 0.0
+
+    # MFE/MAE — FIX: was nooit bijgehouden
+    max_price = safe_float(trade.get("max_price_seen"), exit_price)
+    min_price = safe_float(trade.get("min_price_seen"), exit_price)
+    mfe_r = round((max_price - entry) / risk, 3) if risk > 0 else 0.0
+    mae_r = round((entry - min_price) / risk, 3) if risk > 0 else 0.0
+
+    # Houdtijd — FIX: was nooit berekend
+    hold_min = round(_holding_minutes(trade), 1)
 
     try:
         trade_key = f"SHADOW|{symbol}|{prebuy_id or int(time.time())}"
@@ -1279,21 +1359,42 @@ def _log_shadow_outcome(
                 trade_key, source, is_shadow, coin,
                 timestamp, entry_time,
                 setup_type, market_regime, entry,
-                outcome, pnl_eur, bot_confidence,
+                outcome, pnl_eur, pnl_r, result_r,
+                mfe_r, mae_r, time_minutes,
+                bot_confidence,
                 exit_time, created_at, updated_at
             )
-            VALUES (%s,'SHADOW',TRUE,%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,NOW(),NOW(),NOW())
+            VALUES (
+                %s,'SHADOW',TRUE,%s,NOW(),NOW(),
+                %s,%s,%s,
+                %s,%s,%s,%s,
+                %s,%s,%s,
+                %s,
+                NOW(),NOW(),NOW()
+            )
             ON CONFLICT (trade_key) DO UPDATE SET
-                outcome    = EXCLUDED.outcome,
-                pnl_eur    = EXCLUDED.pnl_eur,
-                exit_time  = NOW(),
-                updated_at = NOW()
+                outcome      = EXCLUDED.outcome,
+                pnl_eur      = EXCLUDED.pnl_eur,
+                pnl_r        = EXCLUDED.pnl_r,
+                result_r     = EXCLUDED.result_r,
+                mfe_r        = EXCLUDED.mfe_r,
+                mae_r        = EXCLUDED.mae_r,
+                time_minutes = EXCLUDED.time_minutes,
+                exit_time    = NOW(),
+                updated_at   = NOW()
             """, (
-                trade_key, symbol, setup_type, regime,
-                entry, outcome, pnl_eur, score,
+                trade_key, symbol,
+                setup_type, regime, entry,
+                outcome, round(pnl_eur, 4), exit_r, exit_r,
+                mfe_r, mae_r, hold_min,
+                score,
             ))
         conn.commit()
-        log(f"🎭 Shadow {symbol}: {outcome} {exit_reden} €{pnl_eur:.4f}")
+        log(
+            f"🎭 Shadow {symbol}: {outcome} {exit_reden} "
+            f"€{pnl_eur:.4f} R={exit_r:.2f} "
+            f"MFE={mfe_r:.2f}R MAE={mae_r:.2f}R {hold_min:.0f}min"
+        )
     except Exception as e:
         log(f"⚠️ Shadow DB log fout ({symbol}): {e}")
 
@@ -1324,6 +1425,19 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         # Monitor bewaakt ALTIJD open trades — ook als bot gestopt is
         bot_active = is_bot_active(conn)
         bot_paused = is_bot_paused(conn)
+
+        # BTC regime ophalen en opslaan voor process_live_trade gebruik
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT regime FROM public.btc_regime_4h
+                ORDER BY open_time DESC LIMIT 1
+                """)
+                row = cur.fetchone()
+                if row:
+                    set_bot_state(conn, "btc_regime_huidig", safe_str(row[0], "UNKNOWN"))
+        except Exception:
+            pass
 
         if not bot_active:
             log("Bot gestopt — alleen open trades bewaken")
