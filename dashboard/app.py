@@ -4977,34 +4977,82 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-real_df, sim_df, shadow_df, history_df, source_mode = get_all_trade_data()
-snapshot, snap_mode   = read_snapshot()
-assets_df             = prepare_assets_df(snapshot)
-pending_df            = load_pending_signals()
-scoreboard_df         = load_scoreboard()
-btc_regime_data       = get_btc_regime()
-
-# Key metrics voor top balk
-bot_label, bot_emoji, bot_type = get_bot_status()
-pnl_today  = get_daily_pnl_today(real_df)
-pf30d      = get_profit_factor_30d(real_df)
-cons_losses = get_consecutive_losses(real_df)
-real_summary = perf_summary(real_df)
-
-# Open trades tellen
-try:
-    _live_state, _ = safe_json(LIVE_STATE_PATH)
-    open_count = len((_live_state or {}).get("positions", {})) if _live_state else 0
-except Exception:
-    open_count = 0
-
 
 # ============================================================
-# HOOFD LAYOUT
+# HOOFD LAYOUT — lazy loading per pagina
 # ============================================================
+# Oorzaak 502: alle 57.000 trades werden bij elke page refresh
+# tegelijk geladen → geheugen overflow → Render kill → 502.
+#
+# Fix: alleen de data laden die de huidige pagina nodig heeft.
+# Elke pagina laadt zijn eigen data via gecachte functies.
+# De top balk gebruikt alleen lichtgewicht queries.
+# ============================================================
+
 st.markdown('<div class="shell">', unsafe_allow_html=True)
 
-# Top balk
+# ── TOP BALK — alleen lichtgewicht data ───────────────────────
+# Geen zware trade queries hier — alleen status en BTC regime.
+bot_label, bot_emoji, bot_type = get_bot_status()
+btc_regime_data = get_btc_regime()
+source_mode     = "DB" if db_ready() else "DEMO"
+
+# Dagelijks PnL via lichte query — beperkt tot vandaag
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_pnl_today_light() -> float:
+    return run_scalar("""
+    SELECT COALESCE(SUM(
+        CASE WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
+             WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
+             ELSE 0 END
+    ),0)
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND DATE(COALESCE(exit_time,updated_at) AT TIME ZONE 'UTC') = CURRENT_DATE
+    """, default=0.0) if db_ready() else 0.0
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_pf30_light() -> float:
+    rows = run_query("""
+    SELECT COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0) AS w,
+           COALESCE(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001) AS l
+    FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+      AND COALESCE(exit_time,updated_at) >= NOW() - INTERVAL '30 days'
+    """) if db_ready() else []
+    if rows:
+        w = safe_float(rows[0].get("w")); l = max(safe_float(rows[0].get("l")), 0.001)
+        return round(w / l, 2)
+    return 0.0
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_cons_light() -> int:
+    rows = run_query("""
+    SELECT outcome FROM public.experience_trades
+    WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+      AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+    ORDER BY COALESCE(exit_time,updated_at) DESC LIMIT 10
+    """) if db_ready() else []
+    count = 0
+    for r in rows:
+        if safe_str(r.get("outcome")).upper() == "LOSS": count += 1
+        else: break
+    return count
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _get_open_count_light() -> int:
+    try:
+        state, _ = safe_json(LIVE_STATE_PATH)
+        return len((state or {}).get("positions", {}))
+    except Exception:
+        return 0
+
+pnl_today   = _get_pnl_today_light()
+pf30d       = _get_pf30_light()
+cons_losses = _get_cons_light()
+open_count  = _get_open_count_light()
+
 render_top_bar(
     bot_label, bot_emoji, bot_type,
     btc_regime_data,
@@ -5017,75 +5065,96 @@ if st.session_state.status_notice:
     st.info(st.session_state.status_notice)
     st.session_state.status_notice = ""
 
-# Hoofd kolommen: sidebar + content
-if st.session_state.page == "dashboard":
-    # Dashboard gebruikt volle breedte
+# ── PAGINA ROUTING — lazy loading ─────────────────────────────
+page = st.session_state.page
+
+if page == "dashboard":
     dash_left, dash_content = st.columns([0.72, 3.28], gap="small")
     with dash_left:
         render_sidebar()
     with dash_content:
+        with st.spinner("Data laden..."):
+            real_df, sim_df, shadow_df, history_df, source_mode = get_all_trade_data()
         render_dashboard(history_df, real_df, sim_df, shadow_df, source_mode)
 
 else:
-    # Alle andere pagina's
     side_col, content_col = st.columns([0.72, 3.28], gap="small")
-
     with side_col:
         render_sidebar()
 
     with content_col:
-        page = st.session_state.page
 
         if page == "coach":
-            render_coach_chat_page(history_df, real_df)
+            # Coach chat — laadt alleen lichte real_df (laatste 100)
+            @st.cache_data(ttl=30, show_spinner=False)
+            def _coach_data():
+                sql = build_trades_sql("REAL", 100)
+                return normalize_trade_df(run_query(sql)) if sql else empty_trade_df()
+            @st.cache_data(ttl=120, show_spinner=False)
+            def _coach_history():
+                sql = build_trades_sql("ALL", 500)
+                return normalize_trade_df(run_query(sql)) if sql else empty_trade_df()
+            render_coach_chat_page(_coach_history(), _coach_data())
 
         elif page == "live":
-            render_trade_page(
-                "live", real_df,
-                "💶 Live Performance",
-                "Alleen echte REAL trades met echt geld op Bitvavo. "
-                "Bewaakt door trade_monitor.py. Geschreven door live_trader.py.",
-            )
+            with st.spinner("Live trades laden..."):
+                real_df = load_real_trades()
+            render_trade_page("live", real_df, "💶 Live Performance",
+                "Alleen echte REAL trades met echt geld op Bitvavo.")
 
         elif page == "sim":
-            render_trade_page(
-                "sim", sim_df,
-                "🔮 Simulator",
-                "Alleen SIM trades. Historische en hypothetische signalen. "
-                "Gebouwd door history_simulator.py op historische candle data.",
-            )
+            with st.spinner("Simulator laden..."):
+                sim_df = load_sim_trades()
+            render_trade_page("sim", sim_df, "🔮 Simulator",
+                "Alleen SIM trades — historische signalen van history_simulator.py.")
 
         elif page == "shadow":
-            render_trade_page(
-                "shadow", shadow_df,
-                "🎭 Shadow Review",
-                "Alleen SHADOW trades. Meekijkende trades zonder echt geld. "
-                "Parallel aan live trades — identieke exit logica, geen limieten. "
-                "Leerdata voor het experience_scoreboard.",
-            )
+            with st.spinner("Shadow trades laden..."):
+                shadow_df = load_shadow_trades()
+            render_trade_page("shadow", shadow_df, "🎭 Shadow Review",
+                "Meekijkende trades zonder echt geld — leerdata voor het scoreboard.")
 
         elif page == "positions":
             render_open_positions_page()
 
         elif page == "analyse":
+            with st.spinner("Analyse data laden..."):
+                real_df   = load_real_trades()
+                history_df = load_all_trades()
             render_analyse_page(history_df, real_df)
 
         elif page == "coins":
+            with st.spinner("Coin data laden..."):
+                real_df    = load_real_trades()
+                history_df = load_all_trades()
             render_coins_page(history_df, real_df)
 
         elif page == "kalender":
+            with st.spinner("Kalender laden..."):
+                history_df = load_all_trades()
             render_kalender_page(history_df)
 
         elif page == "correlatie":
+            with st.spinner("Correlatie data laden..."):
+                real_df    = load_real_trades()
+                history_df = load_all_trades()
             render_correlatie_page(history_df, real_df)
 
         elif page == "portfolio":
+            with st.spinner("Portfolio laden..."):
+                snapshot  = read_snapshot()[0]
+                assets_df = prepare_assets_df(snapshot)
+                snap_mode = read_snapshot()[1]
             render_portfolio_page(snapshot, assets_df, snap_mode)
 
         elif page == "signals":
+            with st.spinner("Signals laden..."):
+                pending_df = load_pending_signals()
             render_signals_page(pending_df)
 
         elif page == "scoreboard":
+            with st.spinner("Scoreboard laden..."):
+                scoreboard_df = load_scoreboard()
             render_scoreboard_page(scoreboard_df)
 
         elif page == "regime":
@@ -5095,7 +5164,13 @@ else:
             render_settings_page()
 
         elif page == "help":
-            render_help_page(history_df, real_df, sim_df, shadow_df, source_mode, snap_mode)
+            with st.spinner("Data laden..."):
+                real_df    = load_real_trades()
+                sim_df     = load_sim_trades()
+                shadow_df  = load_shadow_trades()
+                history_df = load_all_trades()
+            render_help_page(history_df, real_df, sim_df, shadow_df, source_mode,
+                             read_snapshot()[1])
 
         else:
             st.error(f"Onbekende pagina: {page}")
@@ -5104,13 +5179,8 @@ else:
 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 st.caption(
     f"Crypto AI Terminal v3.0 | "
-    f"Mode: {source_mode} | "
     f"DB: {'✅' if db_ready() else '❌ DEMO'} | "
-    f"History: {len(history_df)} | "
-    f"Live: {len(real_df)} | "
-    f"SIM: {len(sim_df)} | "
-    f"Shadow: {len(shadow_df)} | "
+    f"Pagina: {page} | "
     f"{now_utc().strftime('%Y-%m-%d %H:%M UTC')}"
 )
-
 st.markdown("</div>", unsafe_allow_html=True)
