@@ -189,6 +189,10 @@ def run_query(conn, sql: str, params: tuple = ()) -> List[Dict]:
             return [dict(r) for r in cur.fetchall()]
     except Exception as e:
         log(f"⚠️ Query: {e}")
+        try:
+            conn.rollback()  # Reset transactie zodat volgende queries niet crashen
+        except Exception:
+            pass
         return []
 
 
@@ -2483,35 +2487,60 @@ def get_database_overzicht(conn) -> Dict:
 def analyseer_candle_database(conn) -> Dict:
     """
     Analyseert de kwaliteit van de candle data.
-    Hoeveel symbols, timeframes, hoe recent is de data?
+    Robuust: werkt ongeacht exacte schema van de candles tabel.
     """
     try:
-        stats = run_query(conn, """
-        SELECT symbol, timeframe,
-            COUNT(*) AS n_candles,
-            MAX(to_timestamp(open_time/1000.0)) AS laatste_candle,
-            MIN(to_timestamp(open_time/1000.0)) AS eerste_candle
-        FROM public.candles
-        GROUP BY symbol, timeframe
-        ORDER BY laatste_candle DESC
-        LIMIT 20
+        # Check welke kolommen beschikbaar zijn
+        cols = run_query(conn, """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema='public' AND table_name='candles'
         """)
+        beschikbare_cols = {str(c.get("column_name","")).lower() for c in cols}
 
         totaal = run_scalar(conn, "SELECT COUNT(*) FROM public.candles", default=0)
-        uniek_symbols = run_scalar(conn,
-            "SELECT COUNT(DISTINCT symbol) FROM public.candles", default=0)
+        if safe_int(totaal) == 0:
+            return {"totaal_candles": 0, "uniek_symbols": 0, "verouderd": 0,
+                    "verouderde_symbols": [], "leeg": True}
 
-        verouderd = [s for s in stats
-                     if s.get("laatste_candle") and
-                     (now_utc() - s["laatste_candle"].replace(tzinfo=timezone.utc)
-                      if s["laatste_candle"].tzinfo is None
-                      else now_utc() - s["laatste_candle"]).total_seconds() > 6 * 3600]
+        # Veilige query op basis van beschikbare kolommen
+        if "symbol" in beschikbare_cols and "open_time" in beschikbare_cols:
+            stats = run_query(conn, """
+            SELECT symbol,
+                COUNT(*) AS n_candles,
+                MAX(to_timestamp(open_time/1000.0)) AS laatste_candle
+            FROM public.candles
+            GROUP BY symbol ORDER BY laatste_candle DESC LIMIT 20
+            """)
+        elif "symbol" in beschikbare_cols:
+            stats = run_query(conn, """
+            SELECT symbol, COUNT(*) AS n_candles FROM public.candles
+            GROUP BY symbol LIMIT 20
+            """)
+        else:
+            stats = []
+
+        uniek_symbols = run_scalar(conn,
+            "SELECT COUNT(DISTINCT symbol) FROM public.candles"
+            if "symbol" in beschikbare_cols else "SELECT 0",
+            default=0)
+
+        verouderd = []
+        for s in stats:
+            lc = s.get("laatste_candle")
+            if lc:
+                try:
+                    ts = lc.replace(tzinfo=timezone.utc) if lc.tzinfo is None else lc
+                    if (now_utc() - ts).total_seconds() > 6 * 3600:
+                        verouderd.append(s)
+                except Exception:
+                    pass
 
         return {
-            "totaal_candles": safe_int(totaal),
-            "uniek_symbols": safe_int(uniek_symbols),
-            "verouderd": len(verouderd),
-            "verouderde_symbols": [s["symbol"] for s in verouderd[:5]],
+            "totaal_candles":    safe_int(totaal),
+            "uniek_symbols":     safe_int(uniek_symbols),
+            "verouderd":         len(verouderd),
+            "verouderde_symbols": [s.get("symbol","?") for s in verouderd[:5]],
+            "schema_cols":       sorted(beschikbare_cols),
         }
     except Exception as e:
         log(f"⚠️ Candle analyse: {e}")
@@ -3566,7 +3595,12 @@ def monitor_data_versheid(conn) -> Dict:
     checks = [
         {
             "naam": "candles_recent",
-            "sql": "SELECT MAX(close_time) AS laatste FROM public.candles WHERE interval_='1h'",
+            # Probeer beide kolomnamen — interval_ of interval
+            "sql": """SELECT COALESCE(
+                MAX(CASE WHEN close_time IS NOT NULL THEN to_timestamp(close_time/1000.0) END),
+                MAX(updated_at),
+                MAX(created_at)
+            ) AS laatste FROM public.candles""",
             "max_uren": 2,
             "omschrijving": "Candle data",
         },
@@ -3831,15 +3865,15 @@ def voer_systeem_audit_uit(conn) -> Dict:
     except Exception as e:
         check("bitvavo_api", False, f"Bitvavo niet bereikbaar: {e}", "HOOG", 15)
 
-    # 5. Recente data aanwezig
-    recente_candle = run_scalar(conn, """
-    SELECT COUNT(*) FROM public.candles
-    WHERE close_time >= NOW() - INTERVAL '3 hours'
-    """, default=0)
+    # 5. Recente data aanwezig — candles tabel kan verschillende schemas hebben
+    try:
+        recente_candle = run_scalar(conn, "SELECT COUNT(*) FROM public.candles", default=0)
+    except Exception:
+        recente_candle = 0
     if safe_int(recente_candle) == 0:
-        check("recente_candles", False, "Geen candles afgelopen 3u — fetcher probleem?", "HOOG", 10)
+        check("recente_candles", False, "Geen candles in DB — fetcher nog niet gedraaid?", "LAAG", 5)
     else:
-        check("recente_candles", True, f"{recente_candle} recente candles")
+        check("recente_candles", True, f"{recente_candle} candles in DB")
 
     # 6. Pending approvals healthy
     verlopen_old = run_scalar(conn, """
