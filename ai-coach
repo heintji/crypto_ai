@@ -412,8 +412,8 @@ def get_setup_performance(conn, days: int) -> List[Dict]:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
         ROUND(AVG(COALESCE(pnl_eur,0))::numeric,4) AS avg_pnl,
         ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,2) AS avg_r,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -539,8 +539,8 @@ def get_profit_factor_trend(conn) -> List[Dict]:
     return run_query(conn, """
     SELECT DATE_TRUNC('week', COALESCE(exit_time,updated_at) AT TIME ZONE 'UTC') AS week_start,
         COUNT(*) AS n,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor,
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor,
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
@@ -559,8 +559,8 @@ def get_totale_statistieken(conn, days: int) -> Dict:
         ROUND(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0))
                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS net_pnl,
         ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS avg_r,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -1629,7 +1629,7 @@ def analyseer_houdtijd(conn, days: int) -> Dict:
         COALESCE(setup_type,'UNKNOWN') AS setup,
         UPPER(outcome) AS uitkomst,
         ROUND(AVG(
-            EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,created_at)))/3600
+            EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,open_time)))/3600
         )::numeric,1) AS gem_uren,
         ROUND(MIN(
             EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,created_at)))/3600
@@ -1707,8 +1707,8 @@ def vergelijk_periodes(conn) -> Dict:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
         ROUND(SUM(CASE WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS pnl,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -2006,8 +2006,8 @@ def check_alle_alarmen(conn) -> List[Dict]:
 
         # 2. Profit factor alarm
         pf_rows = run_query(conn, """
-        SELECT ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-                /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS pf
+        SELECT ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+                /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS pf
         FROM public.experience_trades
         WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
           AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -2124,8 +2124,8 @@ def bereken_coin_ranking(conn, days: int) -> Dict:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
         ROUND(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0))
                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS total_pnl,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor,
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor,
         ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,2) AS avg_r,
         ROUND(STDDEV(COALESCE(pnl_r,result_r,0))::numeric,2) AS stddev_r
     FROM public.experience_trades
@@ -2244,8 +2244,8 @@ def get_maandelijkse_performance(conn) -> List[Dict]:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
         ROUND(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0))
                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS pnl,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS profit_factor
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -3630,9 +3630,14 @@ def monitor_data_versheid(conn) -> Dict:
     checks = [
         {
             "naam": "candles_recent",
-            # Probeer beide kolomnamen — interval_ of interval
+            # close_time kan unix ms (bigint) of timestamp zijn — beide afhandelen
             "sql": """SELECT COALESCE(
-                MAX(CASE WHEN close_time IS NOT NULL THEN to_timestamp(close_time/1000.0) END),
+                MAX(CASE WHEN pg_typeof(close_time)::text LIKE '%timestamp%'
+                    THEN close_time::timestamptz
+                    ELSE to_timestamp(CASE WHEN close_time::bigint > 9999999999
+                         THEN close_time::bigint::double precision/1000.0
+                         ELSE close_time::double precision END)
+                END),
                 MAX(updated_at),
                 MAX(created_at)
             ) AS laatste FROM public.candles""",
@@ -3647,7 +3652,9 @@ def monitor_data_versheid(conn) -> Dict:
         },
         {
             "naam": "btc_regime",
-            "sql": "SELECT MAX(created_at) AS laatste FROM public.btc_regime_4h",
+            # btc_regime_4h gebruikt open_time (unix ms), NIET created_at
+            "sql": """SELECT to_timestamp(MAX(open_time) / 1000)
+                      AS laatste FROM public.btc_regime_4h""",
             "max_uren": 5,
             "omschrijving": "BTC regime 4H",
         },
@@ -3732,7 +3739,7 @@ def analyseer_trade_flow(conn) -> Dict:
     """
     try:
         # Signalen gegenereerd (pending_approvals)
-        # Schema: created_at (niet aangemaakt)
+        # Schema: open_time (niet aangemaakt)
         signalen = run_scalar(conn, """
         SELECT COUNT(*) FROM public.pending_approvals
         WHERE created_at >= NOW() - INTERVAL '7 days'
@@ -4181,8 +4188,8 @@ def analyseer_langetermijn_trend(conn) -> Dict:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS win_rate,
         ROUND(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0))
                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric,4) AS pnl,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS pf
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+            /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS pf
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -4518,7 +4525,7 @@ def analyseer_setup_leerpatronen(conn, dagen: int = 30) -> Dict:
         ROUND(COALESCE(
             SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
             /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
-        ,2) AS profit_factor
+        ::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -4692,8 +4699,8 @@ def genereer_claude_weekoverzicht(conn) -> str:
         ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0)*100,1) AS wr,
         ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
         ROUND(SUM(COALESCE(pnl_eur,0))::numeric,4) AS pnl_eur,
-        ROUND(COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
-              /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),2) AS pf
+        ROUND((COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
+              /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001))::numeric,2) AS pf
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -4790,7 +4797,7 @@ def update_experience_scoreboard(conn) -> int:
             ROUND(COALESCE(
                 SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
                 /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
-            ,2) AS profit_factor
+            ::numeric,2) AS profit_factor
         FROM public.experience_trades
         WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
           AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -4873,7 +4880,7 @@ def detecteer_regime_effect(conn, dagen: int = 60) -> Dict:
         ROUND(COALESCE(
             SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0)
             /NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)
-        ,2) AS profit_factor
+        ::numeric,2) AS profit_factor
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
