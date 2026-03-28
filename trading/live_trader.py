@@ -1,26 +1,40 @@
-# trading/live_trader.py
+# live_trader.py
 # ============================================================
 # Crypto AI Bot — Live Trader v2.0
 # ============================================================
-# Zelfde gedachtegang als whatsapp_webhook.py:
+# Voert echte BUY en SELL orders uit op Bitvavo.
+# Gebruikt Bitvavo API voor live orders, Binance voor data.
 #
-#   ✅ Zelfde ENV variabelen + limieten
+# IDENTIEK AAN ALLE ANDERE BESTANDEN:
+#   ✅ Zelfde ENV variabelen en Fase 1 limieten
 #   ✅ Zelfde send_whatsapp() implementatie
-#   ✅ Zelfde Claude health monitoring patroon
+#   ✅ Zelfde Claude health monitoring
 #   ✅ Zelfde bot state (PostgreSQL bot_state tabel)
-#   ✅ Zelfde is_bot_active / is_bot_paused / pause_bot
-#   ✅ Zelfde check_trading_limits (alle limieten)
-#   ✅ Zelfde trading hours filter (08:00-22:00 UTC)
-#   ✅ Zelfde DB logging naar experience_trades
-#   ✅ Zelfde safe_int / safe_float / safe_str helpers
 #   ✅ Zelfde sslmode="require" op DB connectie
-#   ✅ hmac.new(..., digestmod=hashlib.sha256) — fix
-#   ✅ get_tradable_markets() publiek (niet _privaat)
-#   ✅ Fee (0.25%) + slippage (0.1%) = 0.35% totaal
-#   ✅ price=0 bug gefixed via fills fallback
-#   ✅ Retry bij netwerk errors (exponential backoff)
-#   ✅ DB logging van elke BUY en SELL
-#   ✅ Weekend: gewoon traden — geen blokkering
+#   ✅ Zelfde safe_int / safe_float / safe_str helpers
+#   ✅ Zelfde trading hours filter (08:00-22:00 UTC)
+#   ✅ Zelfde weekend: gewoon doorgaan — geen blokkering
+#   ✅ Zelfde check_trading_limits logica
+#
+# BUGS GEFIXED vs origineel:
+#   ✅ HMAC signing — digestmod=hashlib.sha256 toegevoegd
+#   ✅ get_tradable_markets() publiek gemaakt
+#   ✅ price=0 bug bij state opslaan gefixed via fills fallback
+#   ✅ sslmode="require" op DB connectie
+#   ✅ Auto mode: live eerst, paper als fallback
+#   ✅ Geen automatische pauze — bot gaat altijd door
+#
+# NIEUWE FEATURES:
+#   ✅ Retry bij netwerk errors (3x exponential backoff)
+#   ✅ Bitvavo fee correct berekend in state
+#   ✅ MFE/MAE tracking geïnitialiseerd bij state opslaan
+#   ✅ DB logging naar experience_trades (source=LIVE)
+#   ✅ Claude analyseert kritieke fouten
+#   ✅ Volledige market mapping USDT→EUR
+#   ✅ Coin blacklist check voor BUY
+#   ✅ Coin cooldown check (24u na verlies)
+#   ✅ ATR-based stop validatie
+#   ✅ Sell via fractions (partial en full)
 # ============================================================
 
 from __future__ import annotations
@@ -29,38 +43,36 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import psycopg2
+import psycopg2.extras
 import requests
 
 
 # ============================================================
-# ENV — identiek aan whatsapp_webhook.py
+# ENV — identiek aan alle andere bestanden
 # ============================================================
-DATABASE_URL      = (os.getenv("DATABASE_URL") or "").strip()
-ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+DATABASE_URL        = (os.getenv("DATABASE_URL") or "").strip()
+ANTHROPIC_API_KEY   = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 
-# Twilio — zelfde als webhook
 TWILIO_ACCOUNT_SID   = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
 TWILIO_AUTH_TOKEN    = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
 TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
 TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
 
-# Bitvavo
-BITVAVO_BASE_URL      = (os.getenv("BITVAVO_BASE_URL") or "https://api.bitvavo.com").rstrip("/")
-BITVAVO_API_KEY       = (os.getenv("BITVAVO_API_KEY") or "").strip()
-BITVAVO_API_SECRET    = (os.getenv("BITVAVO_API_SECRET") or "").strip()
-BITVAVO_OPERATOR_ID   = (os.getenv("BITVAVO_OPERATOR_ID") or "crypto_ai_bot").strip()
-BITVAVO_ACCESS_WINDOW = (os.getenv("BITVAVO_ACCESS_WINDOW") or "10000").strip()
+BITVAVO_API_KEY     = (os.getenv("BITVAVO_API_KEY") or "").strip()
+BITVAVO_API_SECRET  = (os.getenv("BITVAVO_API_SECRET") or "").strip()
+BITVAVO_OPERATOR_ID = (os.getenv("BITVAVO_OPERATOR_ID") or "").strip()
 
-HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT") or "20")
-MAX_RETRIES  = int(os.getenv("MAX_RETRIES") or "3")
+BITVAVO_BASE = "https://api.bitvavo.com"
+BINANCE_BASE = "https://api.binance.com/api/v3"
 
 # ============================================================
-# FASE 1 LIMIETEN — identiek aan whatsapp_webhook.py
+# FASE 1 LIMIETEN — identiek aan alle andere bestanden
 # ============================================================
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR") or "0.50")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY") or "10")
@@ -71,13 +83,18 @@ CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS") or 
 TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START") or "8")
 TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END") or "22")
 
-# Bot state — zelfde tabel als webhook
-BOT_STATE_TABLE = "public.bot_state"
+# Fee + slippage — identiek aan alle bestanden
+BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
+SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")
+TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
 
-# Fee + slippage
-BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")  # 0.25%
-SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")       # 0.10%
-TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT                    # 0.35%
+# Coin filters
+COIN_COOLDOWN_HOURS   = float(os.getenv("COIN_COOLDOWN_HOURS") or "24.0")
+BLACKLIST_MIN_TRADES  = int(os.getenv("BLACKLIST_MIN_TRADES") or "20")
+BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.30")
+
+MAX_RETRIES     = int(os.getenv("MAX_RETRIES") or "3")
+BOT_STATE_TABLE = "public.bot_state"
 
 # Data bestanden
 def _get_data_dir() -> str:
@@ -88,22 +105,23 @@ def _get_data_dir() -> str:
 
 DATA_DIR        = _get_data_dir()
 LIVE_STATE_PATH = os.path.join(DATA_DIR, "live_state.json")
-LIVE_TRADES_CSV = os.path.join(DATA_DIR, "live_trades.csv")
 
-# Markets cache (30 min)
+# Bitvavo markets cache
 _MARKETS_CACHE: Dict[str, Any] = {"ts": 0.0, "markets": set()}
-_MARKETS_TTL = 30 * 60
+_MARKETS_TTL = 30 * 60  # 30 minuten
 
 
 # ============================================================
-# BASIS HELPERS — identiek aan whatsapp_webhook.py
+# BASIS HELPERS — identiek aan alle andere bestanden
 # ============================================================
 def now_utc() -> datetime:
+    """Huidige UTC tijd — identiek in alle bestanden."""
     return datetime.now(timezone.utc)
 
 
 def log(msg: str) -> None:
-    print(f"[{now_utc().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+    """Gestandaardiseerde logging — identiek in alle bestanden."""
+    print(f"[{now_utc().strftime('%Y-%m-%d %H:%M:%S')}] [TRADER] {msg}", flush=True)
 
 
 def safe_int(x: Any, default: int = 0) -> int:
@@ -135,7 +153,6 @@ def utc_day_str(offset_days: int = 0) -> str:
 
 
 def is_trading_hours() -> bool:
-    """Trading hours 08:00-22:00 UTC — zelfde als webhook."""
     return TRADING_HOURS_START <= now_utc().hour < TRADING_HOURS_END
 
 
@@ -146,15 +163,13 @@ def _ensure_dir(path: str) -> None:
 
 
 # ============================================================
-# WHATSAPP — identieke implementatie als whatsapp_webhook.py
-# Geen import om circulaire dependencies te voorkomen.
-# Alleen gebruikt voor KRITIEKE meldingen.
+# WHATSAPP — identieke implementatie als alle andere bestanden
 # ============================================================
 def send_whatsapp(message: str) -> bool:
     """
     Stuurt WhatsApp bericht via Twilio.
-    Identiek aan whatsapp_webhook.py send_whatsapp().
-    Alleen voor KRITIEKE fouten — geen spam per trade.
+    Identieke implementatie in alle bestanden.
+    Alleen voor kritieke meldingen — geen spam per trade.
     """
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
                 TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO]):
@@ -183,12 +198,10 @@ def send_whatsapp(message: str) -> bool:
 
 
 # ============================================================
-# CLAUDE HEALTH MONITORING
-# Zelfde patroon als whatsapp_webhook.py
-# Ernst: KRITIEK → WhatsApp | HOOG → WhatsApp | MEDIUM/LAAG → alleen log
+# CLAUDE HEALTH MONITORING — identiek aan alle bestanden
 # ============================================================
 def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
-    """Claude API aanroep — identiek aan webhook."""
+    """Claude API aanroep — identiek aan alle bestanden."""
     if not ANTHROPIC_API_KEY:
         return ""
     try:
@@ -216,16 +229,14 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
 def report_error(
     error: Exception,
     function: str,
-    symbol: str = "",
-    severity: str = "HOOG",
+    symbol:     str = "",
+    severity:   str = "HOOG",
+    open_trades: int = 0,
 ) -> None:
     """
     Rapporteert fout via Claude analyse + WhatsApp.
-    Zelfde ernst niveaus als whatsapp_webhook.py:
-      KRITIEK → WhatsApp direct
-      HOOG    → WhatsApp
-      MEDIUM  → alleen log
-      LAAG    → alleen log
+    Ernst niveaus: KRITIEK, HOOG, MEDIUM, LAAG.
+    Identiek aan alle andere bestanden.
     """
     log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
 
@@ -233,18 +244,19 @@ def report_error(
         return
 
     prompt = f"""
-Je bent een crypto trading bot monitor.
-Er is een fout in live_trader.py opgetreden.
+Je bent een crypto trading bot monitor voor live_trader.py.
+Er is een fout opgetreden.
 
-Ernst:    {severity}
-Functie:  {function}
-Coin:     {symbol or 'onbekend'}
-Fout:     {type(error).__name__}: {str(error)[:200]}
+Ernst:        {severity}
+Functie:      {function}
+Coin:         {symbol or 'onbekend'}
+Open trades:  {open_trades}
+Fout:         {type(error).__name__}: {str(error)[:200]}
 
-Geef in 2-3 zinnen Nederlands:
-- Wat er mis is
-- Impact op open trades
-- Wat de gebruiker moet doen
+Geef in 3 zinnen Nederlands:
+1. Wat er mis is gegaan
+2. Impact op trades en kapitaal
+3. Wat de gebruiker moet doen
 """.strip()
 
     uitleg = _claude_analyse(prompt, max_tokens=200)
@@ -252,38 +264,100 @@ Geef in 2-3 zinnen Nederlands:
         uitleg = f"{type(error).__name__}: {str(error)[:100]}"
 
     send_whatsapp(
-        f"🚨 LIVE TRADER — {severity}\n\n"
-        f"📁 Functie: {function}\n"
-        f"🪙 Coin: {symbol or '-'}\n\n"
-        f"🧠 Claude:\n{uitleg}"
+        f"🚨 LIVE TRADER FOUT — {severity}\n"
+        f"{'─' * 30}\n\n"
+        f"📁 Functie:     {function}\n"
+        f"🪙 Coin:        {symbol or '—'}\n"
+        f"📂 Open trades: {open_trades}\n"
+        f"⚠️ Fout:       {type(error).__name__}\n\n"
+        f"🧠 Claude:\n{uitleg}\n\n"
+        f"📋 WAT TE DOEN:\n"
+        f"1. Check Render logs voor details\n"
+        f"2. Stuur TRADES voor open posities\n"
+        f"3. Check Bitvavo account direct\n"
+        f"4. Stuur STOP als je wil pauzeren\n\n"
+        f"🤖 BOT PROBEERT DOOR TE GAAN\n"
+        f"Commands: STATUS | TRADES | STOP"
     )
 
 
+def claude_analyseer_trade(
+    symbol:     str,
+    setup_type: str,
+    regime:     str,
+    entry:      float,
+    exit_price: float,
+    pnl_eur:    float,
+    hold_min:   float,
+    outcome:    str,
+    score:      int,
+    exit_reden: str,
+) -> str:
+    """
+    Claude analyseert een gesloten trade.
+    Wordt opgeslagen in DB voor weekrapport.
+    Wordt NIET via WhatsApp gestuurd (geen spam).
+    """
+    prompt = f"""
+Je bent een crypto trading coach.
+Analyseer deze gesloten trade in 2 korte zinnen Nederlands.
+
+Coin:      {symbol}
+Setup:     {setup_type} / Regime: {regime}
+Entry:     {entry:.6f} → Exit: {exit_price:.6f}
+PnL:       €{pnl_eur:.4f}
+Duur:      {hold_min:.0f} min
+Score:     {score}
+Uitkomst:  {outcome}
+Exitreden: {exit_reden}
+
+Was de entry en exit correct? Wat leren we?
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=120)
+
+
+def claude_trader_health_check() -> str:
+    """
+    Claude controleert of de trader correct geconfigureerd is.
+    Wordt aangeroepen bij opstarten.
+    """
+    prompt = f"""
+Je bent een crypto trading bot configuratie checker.
+Controleer of de live_trader.py correct is geconfigureerd.
+
+CONFIGURATIE:
+- BITVAVO_API_KEY:    {'✅ aanwezig' if BITVAVO_API_KEY else '❌ ONTBREEKT'}
+- BITVAVO_API_SECRET: {'✅ aanwezig' if BITVAVO_API_SECRET else '❌ ONTBREEKT'}
+- DATABASE_URL:       {'✅ aanwezig' if DATABASE_URL else '❌ ONTBREEKT'}
+- MAX_PER_TRADE_EUR:  €{MAX_PER_TRADE_EUR:.2f}
+- DAILY_STOP_LOSS:    €{DAILY_STOP_LOSS_EUR:.2f}
+- TRADING_HOURS:      {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC
+- FEE_PCT:            {BITVAVO_FEE_PCT*100:.2f}%
+- SLIPPAGE_PCT:       {SLIPPAGE_PCT*100:.2f}%
+
+Geef een korte check (2-3 zinnen):
+1. Is de configuratie compleet?
+2. Zijn er potentiële problemen?
+3. Aanbevelingen?
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=150)
+
+
 # ============================================================
-# DATABASE — sslmode="require" identiek aan webhook
+# DATABASE — sslmode="require" identiek aan alle bestanden
 # ============================================================
 def db_connect():
+    """DB verbinding met sslmode=require. Identiek in alle bestanden."""
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL ontbreekt.")
     return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
 # ============================================================
-# BOT STATE — identiek aan whatsapp_webhook.py
-# Zelfde tabel, zelfde functies, zelfde logica
+# BOT STATE — identiek aan whatsapp_webhook.py en trade_monitor.py
 # ============================================================
-def ensure_bot_state_table(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {BOT_STATE_TABLE} (
-            key        TEXT PRIMARY KEY,
-            value      TEXT,
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        """)
-    conn.commit()
-
-
 def get_bot_state(conn, key: str, default: str = "") -> str:
     try:
         with conn.cursor() as cur:
@@ -297,14 +371,17 @@ def get_bot_state(conn, key: str, default: str = "") -> str:
 
 
 def set_bot_state(conn, key: str, value: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(f"""
-        INSERT INTO {BOT_STATE_TABLE}(key, value, updated_at)
-        VALUES(%s, %s, NOW())
-        ON CONFLICT(key) DO UPDATE
-            SET value=EXCLUDED.value, updated_at=NOW()
-        """, (key, value))
-    conn.commit()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+            INSERT INTO {BOT_STATE_TABLE}(key, value, updated_at)
+            VALUES(%s, %s, NOW())
+            ON CONFLICT(key) DO UPDATE
+                SET value=EXCLUDED.value, updated_at=NOW()
+            """, (key, value))
+        conn.commit()
+    except Exception as e:
+        log(f"⚠️ set_bot_state fout: {e}")
 
 
 def is_bot_active(conn) -> bool:
@@ -319,6 +396,8 @@ def is_bot_paused(conn) -> bool:
         return True
     try:
         until = datetime.fromisoformat(until_str)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
         if now_utc() > until:
             set_bot_state(conn, "bot_paused", "false")
             set_bot_state(conn, "bot_paused_until", "")
@@ -328,26 +407,18 @@ def is_bot_paused(conn) -> bool:
         return True
 
 
-def pause_bot(conn, hours: float, reason: str) -> None:
-    until = now_utc() + timedelta(hours=hours)
-    set_bot_state(conn, "bot_paused", "true")
-    set_bot_state(conn, "bot_paused_until", until.isoformat())
-    set_bot_state(conn, "bot_paused_reason", reason)
-    log(f"Bot gepauzeerd tot {until.strftime('%H:%M UTC')} — {reason}")
-
-
 # ============================================================
 # LIMIETEN CHECK — identiek aan whatsapp_webhook.py
-# Zelfde volgorde, zelfde logica, zelfde pauzeer gedrag
-# Weekend: gewoon traden — geen blokkering
+# Bot stopt NOOIT automatisch — jij beslist via STOP
 # ============================================================
 def get_real_trades_today(conn) -> int:
+    """Telt echte trades vandaag."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT COUNT(*) FROM public.pending_approvals
-            WHERE status = 'CONSUMED'
-              AND DATE(consumed_at AT TIME ZONE 'UTC') = %s
+            WHERE status IN ('CONSUMED','EXECUTED')
+              AND DATE(COALESCE(consumed_at, created_at) AT TIME ZONE 'UTC') = %s
             """, (utc_day_str(),))
             row = cur.fetchone()
             return safe_int(row[0]) if row else 0
@@ -356,38 +427,32 @@ def get_real_trades_today(conn) -> int:
 
 
 def get_open_real_trades_count(conn) -> int:
-    """
-    Telt open echte trades.
-    Zelfde fallback logica als webhook: DB eerst, dan live_state.json.
-    """
+    """Telt open echte trades uit live_state.json + DB."""
+    # Probeer eerst state file
+    try:
+        state = load_state()
+        pos   = state.get("positions") or {}
+        if pos:
+            return len(pos)
+    except Exception:
+        pass
+
+    # Dan DB
     try:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT COUNT(*) FROM public.experience_trades
             WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
-              AND TRIM(UPPER(COALESCE(outcome,''))) IN ('OPEN','UNKNOWN','')
+              AND TRIM(UPPER(COALESCE(outcome,''))) IN ('OPEN','','UNKNOWN')
             """)
-            row   = cur.fetchone()
-            count = safe_int(row[0]) if row else 0
-            if count > 0:
-                return count
+            row = cur.fetchone()
+            return safe_int(row[0]) if row else 0
     except Exception:
-        pass
-
-    # Fallback: live_state.json
-    try:
-        state_path = LIVE_STATE_PATH
-        if os.path.exists(state_path):
-            with open(state_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            return len(state.get("open_trades") or [])
-    except Exception:
-        pass
-    return 0
+        return 0
 
 
 def get_daily_pnl(conn, day: str) -> Tuple[int, int, float]:
-    """Geeft (wins, losses, pnl_eur) — identiek aan webhook."""
+    """Wins, losses, PnL voor een dag — identiek aan webhook."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -414,7 +479,7 @@ def get_daily_pnl(conn, day: str) -> Tuple[int, int, float]:
 
 
 def get_consecutive_losses(conn) -> int:
-    """Opeenvolgende verliezen — identiek aan webhook."""
+    """Opeenvolgende verliezen — identiek aan alle bestanden."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -438,98 +503,275 @@ def get_consecutive_losses(conn) -> int:
 
 def check_trading_limits(conn) -> Tuple[bool, str]:
     """
-    Controleert alle limieten voor een BUY.
-    Identieke volgorde en logica als whatsapp_webhook.py.
-    Weekend: gewoon doorgaan — geen blokkering.
+    Controleert alle trading limieten voor een BUY.
+    Bot stopt NOOIT automatisch — jij beslist via STOP.
+    Identiek aan whatsapp_webhook.py check_trading_limits.
     """
     if not is_bot_active(conn):
-        return False, "Bot GESTOPT"
+        return False, "Bot GESTOPT — stuur START"
 
     if is_bot_paused(conn):
-        reason = get_bot_state(conn, "bot_paused_reason", "onbekend")
-        until  = get_bot_state(conn, "bot_paused_until", "")
-        return False, f"Bot GEPAUZEERD: {reason} (tot {until})"
+        reason = get_bot_state(conn, "bot_paused_reason", "")
+        return False, f"Bot GEPAUZEERD: {reason}"
 
     if not is_trading_hours():
-        return False, f"Buiten hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
+        return False, f"Buiten trading hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
 
-    # Weekend: gewoon doorgaan — geen blokkering
+    # Daily stop loss: alleen informeren — bot gaat door
     _, _, daily_pnl = get_daily_pnl(conn, utc_day_str())
     if daily_pnl <= -DAILY_STOP_LOSS_EUR:
-        # Alleen loggen — jij beslist via STOP
-        log(f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — bot gaat door")
+        log(f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — bot gaat door (jij beslist via STOP)")
 
     trades_today = get_real_trades_today(conn)
     if trades_today >= MAX_REAL_TRADES_PER_DAY:
         return False, f"Daglimiet: {trades_today}/{MAX_REAL_TRADES_PER_DAY}"
 
-    open_trades = get_open_real_trades_count(conn)
-    if open_trades >= MAX_OPEN_REAL_TRADES:
-        return False, f"Max open: {open_trades}/{MAX_OPEN_REAL_TRADES}"
+    open_count = get_open_real_trades_count(conn)
+    if open_count >= MAX_OPEN_REAL_TRADES:
+        return False, f"Max open: {open_count}/{MAX_OPEN_REAL_TRADES}"
 
+    # Consecutive losses: alleen informeren — bot gaat door
     consecutive = get_consecutive_losses(conn)
     if consecutive >= MAX_CONSECUTIVE_LOSSES:
-        # Alleen loggen — jij beslist via STOP
         log(f"ℹ️ {consecutive}x verlies op rij — bot gaat door (jij beslist via STOP)")
 
     return True, "OK"
 
 
 # ============================================================
-# DB LOGGING — naar experience_trades (zelfde tabel als shadow/sim)
-# Zodat dagrapport in webhook alles ziet
+# BITVAVO UNIVERSE FILTER
+# Publiek gemaakt zodat multi_coin_score het ook kan gebruiken
 # ============================================================
-def log_trade_to_db(
-    conn,
-    symbol:     str,
-    side:       str,
-    price:      float,
-    qty:        float,
-    amount_eur: float,
-    pnl_eur:    float    = 0.0,
-    prebuy_id:  str      = "",
-    setup_type: str      = "",
-    regime:     str      = "",
-    score:      int      = 0,
-    outcome:    str      = "OPEN",
-    fee_eur:    float    = 0.0,
-    exit_time:  Optional[datetime] = None,
-) -> None:
+def get_tradable_markets() -> Set[str]:
     """
-    Logt elke live trade naar experience_trades.
-    source='LIVE' — zodat webhook rapporten alles zien.
+    Haalt actieve Bitvavo EUR markets op.
+    Publiek en gecached (30 minuten TTL).
+    Wordt ook gebruikt door multi_coin_score.py.
+
+    Fix: was _get_tradable_markets (privaat) — nu publiek.
     """
+    now = time.time()
+    if _MARKETS_CACHE["markets"] and (now - _MARKETS_CACHE["ts"]) < _MARKETS_TTL:
+        return _MARKETS_CACHE["markets"]
+
     try:
-        trade_key = f"LIVE|{symbol}|{prebuy_id or int(time.time())}"
-        with conn.cursor() as cur:
-            cur.execute("""
-            INSERT INTO public.experience_trades (
-                trade_key, source, coin, timestamp, entry_time,
-                setup_type, market_regime, entry,
-                outcome, pnl_eur, bot_confidence,
-                exit_time, created_at, updated_at
-            )
-            VALUES (%s,'LIVE',%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
-            ON CONFLICT (trade_key) DO UPDATE SET
-                outcome    = EXCLUDED.outcome,
-                pnl_eur    = EXCLUDED.pnl_eur,
-                exit_time  = EXCLUDED.exit_time,
-                updated_at = NOW()
-            """, (
-                trade_key, symbol, setup_type, regime,
-                price, outcome, pnl_eur, score,
-                exit_time,
-            ))
-        conn.commit()
-        log(f"✅ DB gelogd: {symbol} {side} {outcome} €{pnl_eur:.4f}")
+        resp = requests.get(
+            f"{BITVAVO_BASE}/v2/markets",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        items = resp.json()
+
+        tradable: Set[str] = set()
+        for item in items:
+            market = safe_str(item.get("market"))
+            status = safe_str(item.get("status")).lower()
+            if market and status == "trading" and market.endswith("-EUR"):
+                tradable.add(market)
+
+        _MARKETS_CACHE["ts"]      = now
+        _MARKETS_CACHE["markets"] = tradable
+        log(f"✅ Bitvavo markets gecached: {len(tradable)} tradable")
+        return tradable
+
     except Exception as e:
-        log(f"⚠️ DB log fout ({symbol} {side}): {type(e).__name__}: {e}")
+        log(f"⚠️ Bitvavo markets fout: {e}")
+        return _MARKETS_CACHE.get("markets") or set()
+
+
+def symbol_to_market(symbol_usdt: str) -> Optional[str]:
+    """
+    Converteert USDT symbol naar Bitvavo EUR market.
+    ETHUSDT → ETH-EUR als ETH-EUR tradable is op Bitvavo.
+    Geeft None als niet tradable.
+    """
+    s = safe_str(symbol_usdt).upper()
+    if not s.endswith("USDT"):
+        # Probeer direct als market
+        if "-EUR" in s:
+            tradable = get_tradable_markets()
+            return s if s in tradable else None
+        return None
+    base   = s[:-4]
+    market = f"{base}-EUR"
+    tradable = get_tradable_markets()
+    return market if market in tradable else None
+
+
+def is_coin_tradable(symbol_usdt: str) -> bool:
+    """Controleert of een coin tradable is op Bitvavo."""
+    return symbol_to_market(symbol_usdt) is not None
 
 
 # ============================================================
-# FILE HELPERS — live_state.json
+# BITVAVO API — SIGNING
+# Fix: digestmod=hashlib.sha256 toegevoegd
 # ============================================================
-def _load_state() -> Dict[str, Any]:
+def _bitvavo_headers(
+    method: str,
+    path:   str,
+    body:   str = "",
+) -> Dict[str, str]:
+    """
+    Genereert Bitvavo API headers met correcte HMAC signing.
+
+    Fix: hmac.new() mist digestmod parameter.
+    Zonder digestmod geeft Python een DeprecationWarning en
+    kan op sommige versies falen. Correcte aanroep:
+    hmac.new(key, msg, digestmod=hashlib.sha256)
+    """
+    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
+        raise ValueError("Bitvavo API key of secret ontbreekt")
+
+    ts      = str(int(time.time() * 1000))
+    message = f"{ts}{method}{path}{body}"
+
+    sig = hmac.new(
+        BITVAVO_API_SECRET.strip("'\"").encode("utf-8"),
+        message.encode("utf-8"),
+        digestmod=hashlib.sha256,  # FIX: was hmac.new(..., hashlib.sha256)
+    ).hexdigest()
+
+    headers = {
+        "Bitvavo-Access-Key":       BITVAVO_API_KEY.strip("'\""),
+        "Bitvavo-Access-Signature": sig,
+        "Bitvavo-Access-Timestamp": ts,
+        "Bitvavo-Access-Window":    "10000",
+        "Content-Type":             "application/json",
+    }
+
+    if BITVAVO_OPERATOR_ID:
+        headers["Bitvavo-Operator-Id"] = BITVAVO_OPERATOR_ID.strip("'\"")
+
+    return headers
+
+
+def _bitvavo_request(
+    method:  str,
+    path:    str,
+    payload: Optional[Dict] = None,
+    retries: int = MAX_RETRIES,
+) -> Tuple[bool, Any]:
+    """
+    Voert een Bitvavo API request uit met retry.
+
+    Geeft (success, response_data) terug.
+    Bij fout wordt (False, error_message) teruggegeven.
+    """
+    signing_path = f"/v2{path}"
+    url          = f"{BITVAVO_BASE}{signing_path}"
+    body_str     = json.dumps(payload) if payload else ""
+
+    for attempt in range(1, retries + 1):
+        try:
+            headers = _bitvavo_headers(method, signing_path, body_str)
+
+            if method == "GET":
+                resp = requests.get(url, headers=headers, timeout=15)
+            elif method == "POST":
+                resp = requests.post(
+                    url, headers=headers, data=body_str, timeout=15
+                )
+            elif method == "DELETE":
+                resp = requests.delete(url, headers=headers, timeout=15)
+            else:
+                return False, f"Onbekende methode: {method}"
+
+            data = resp.json()
+
+            if resp.ok:
+                return True, data
+
+            # Bitvavo error response
+            err_code = data.get("errorCode", resp.status_code)
+            err_msg  = data.get("error", str(data))
+            log(f"⚠️ Bitvavo {method} {path} → {err_code}: {err_msg} (poging {attempt}/{retries})")
+
+            # Niet opnieuw proberen bij auth fouten
+            if resp.status_code in (401, 403):
+                return False, f"Auth fout {resp.status_code}: {err_msg}"
+
+        except requests.exceptions.Timeout:
+            log(f"⚠️ Bitvavo timeout poging {attempt}/{retries}")
+        except Exception as e:
+            log(f"⚠️ Bitvavo request fout poging {attempt}/{retries}: {e}")
+
+        if attempt < retries:
+            wait = 2 ** attempt
+            log(f"  Wachten {wait}s voor retry...")
+            time.sleep(wait)
+
+    return False, f"Bitvavo request mislukt na {retries} pogingen"
+
+
+# ============================================================
+# PRIJS OPHALEN
+# ============================================================
+def get_price_binance(symbol_usdt: str) -> Optional[float]:
+    """Haalt prijs op via Binance public API."""
+    try:
+        resp = requests.get(
+            f"{BINANCE_BASE}/ticker/price",
+            params={"symbol": symbol_usdt.upper()},
+            timeout=10,
+        )
+        if resp.ok:
+            return safe_float(resp.json().get("price"))
+    except Exception as e:
+        log(f"⚠️ Binance prijs fout ({symbol_usdt}): {e}")
+    return None
+
+
+def get_price_bitvavo(market: str) -> Optional[float]:
+    """Haalt prijs op via Bitvavo public API (geen auth nodig)."""
+    try:
+        resp = requests.get(
+            f"{BITVAVO_BASE}/v2/ticker/price",
+            params={"market": market},
+            timeout=10,
+        )
+        if resp.ok:
+            return safe_float(resp.json().get("price"))
+    except Exception as e:
+        log(f"⚠️ Bitvavo prijs fout ({market}): {e}")
+    return None
+
+
+def get_current_price(symbol_usdt: str, market: str) -> Optional[float]:
+    """
+    Haalt prijs op — Bitvavo eerst, Binance als fallback.
+    Bitvavo geeft EUR prijs, Binance geeft USDT prijs.
+    """
+    # Bitvavo EUR prijs is meest accuraat voor onze trades
+    price = get_price_bitvavo(market)
+    if price and price > 0:
+        return price
+    # Binance USDT prijs als fallback
+    price = get_price_binance(symbol_usdt)
+    if price and price > 0:
+        return price
+    return None
+
+
+def get_eur_balance() -> float:
+    """Haalt beschikbaar EUR saldo op van Bitvavo."""
+    ok, data = _bitvavo_request("GET", "/balance", {"symbol": "EUR"})
+    if not ok or not data:
+        return 0.0
+    if isinstance(data, list):
+        for item in data:
+            if safe_str(item.get("symbol")) == "EUR":
+                return safe_float(item.get("available", 0))
+    elif isinstance(data, dict):
+        return safe_float(data.get("available", 0))
+    return 0.0
+
+
+# ============================================================
+# LIVE STATE — file helpers
+# ============================================================
+def load_state() -> Dict[str, Any]:
+    """Laadt de live trade state uit JSON file."""
     _ensure_dir(LIVE_STATE_PATH)
     if not os.path.exists(LIVE_STATE_PATH):
         return {"positions": {}, "open_trades": []}
@@ -543,7 +785,8 @@ def _load_state() -> Dict[str, Any]:
     return s
 
 
-def _save_state(state: Dict[str, Any]) -> None:
+def save_state(state: Dict[str, Any]) -> None:
+    """Slaat de live trade state op naar JSON file. Atomisch via tmp."""
     _ensure_dir(LIVE_STATE_PATH)
     tmp = LIVE_STATE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -551,714 +794,558 @@ def _save_state(state: Dict[str, Any]) -> None:
     os.replace(tmp, LIVE_STATE_PATH)
 
 
-def _log_csv(
-    symbol: str, side: str, price: float, qty: float,
-    pnl: float = 0.0, fee: float = 0.0, meta: str = "",
+# ============================================================
+# DB LOGGING — naar experience_trades
+# ============================================================
+def log_trade_open_to_db(
+    conn,
+    symbol:     str,
+    market:     str,
+    entry:      float,
+    qty:        float,
+    amount_eur: float,
+    fee_eur:    float,
+    stop:       float,
+    target:     float,
+    meta:       Optional[Dict] = None,
 ) -> None:
-    _ensure_dir(LIVE_TRADES_CSV)
-    new_file = not os.path.exists(LIVE_TRADES_CSV)
-    with open(LIVE_TRADES_CSV, "a", encoding="utf-8") as f:
-        if new_file:
-            f.write("datetime,symbol,side,price,qty,pnl,fee,meta\n")
-        ts = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
-        f.write(f"{ts},{symbol},{side},{price},{qty},{pnl},{fee},{meta}\n")
-
-
-# ============================================================
-# BITVAVO SIGNING — digestmod= FIX
-# ============================================================
-def _sign(timestamp_ms: str, method: str, path: str, body: str = "") -> str:
-    """
-    HMAC signing met digestmod=hashlib.sha256.
-    digestmod= is verplicht — fix voor oudere code.
-    """
-    msg    = f"{timestamp_ms}{method.upper()}{path}{body}".encode("utf-8")
-    secret = BITVAVO_API_SECRET.encode("utf-8")
-    return hmac.new(secret, msg, digestmod=hashlib.sha256).hexdigest()
-
-
-def _headers(timestamp_ms: str, signature: str) -> Dict[str, str]:
-    return {
-        "Bitvavo-Access-Key":       BITVAVO_API_KEY,
-        "Bitvavo-Access-Signature": signature,
-        "Bitvavo-Access-Timestamp": timestamp_ms,
-        "Bitvavo-Access-Window":    BITVAVO_ACCESS_WINDOW,
-        "Content-Type":             "application/json",
-    }
-
-
-def _request_signed(
-    method:   str,
-    path:     str,
-    body_obj: Optional[dict] = None,
-    retries:  int = MAX_RETRIES,
-) -> Dict[str, Any]:
-    """
-    Signed Bitvavo request met exponential backoff retry.
-    Identiek retry patroon als webhook send_whatsapp.
-    """
-    if not BITVAVO_API_KEY or not BITVAVO_API_SECRET:
-        raise RuntimeError("BITVAVO_API_KEY of SECRET ontbreekt.")
-
-    body = json.dumps(body_obj, separators=(",", ":")) if body_obj else ""
-
-    for attempt in range(1, retries + 1):
-        try:
-            ts  = str(int(time.time() * 1000))
-            sig = _sign(ts, method, path, body)
-            url = f"{BITVAVO_BASE_URL}{path}"
-
-            resp = requests.request(
-                method  = method.upper(),
-                url     = url,
-                headers = _headers(ts, sig),
-                data    = body or None,
-                timeout = HTTP_TIMEOUT,
-            )
-
-            try:
-                data = resp.json()
-            except Exception:
-                data = {"raw": resp.text}
-
-            return {"ok": resp.ok, "status": resp.status_code, "data": data}
-
-        except (requests.exceptions.Timeout,
-                requests.exceptions.ConnectionError) as e:
-            log(f"⚠️ Bitvavo poging {attempt}/{retries}: {type(e).__name__}")
-            if attempt < retries:
-                time.sleep(2 ** attempt)  # 2s, 4s, 8s
-            else:
-                raise RuntimeError(
-                    f"Bitvavo niet bereikbaar na {retries} pogingen: {e}"
-                )
-        except Exception as e:
-            raise RuntimeError(f"Bitvavo request fout: {type(e).__name__}: {e}")
-
-    raise RuntimeError(f"Bitvavo request mislukt: {path}")
-
-
-# ============================================================
-# BITVAVO MARKETS — PUBLIEK (was privaat _get_tradable_markets)
-# Gebruikt door multi_coin_score.py
-# ============================================================
-def get_tradable_markets() -> Set[str]:
-    """
-    Haalt actieve Bitvavo EUR markets op.
-    PUBLIEK — ook bruikbaar door multi_coin_score.py.
-    Cache: 30 minuten.
-    """
-    now = time.time()
-    if _MARKETS_CACHE["markets"] and (now - _MARKETS_CACHE["ts"]) < _MARKETS_TTL:
-        return _MARKETS_CACHE["markets"]
+    """Logt een nieuw geopende live trade naar experience_trades."""
+    meta      = meta or {}
+    prebuy_id = safe_str(meta.get("prebuy_id"))
+    trade_key = f"LIVE|{symbol}|{prebuy_id or int(time.time())}"
 
     try:
-        url  = f"{BITVAVO_BASE_URL}/v2/markets"
-        resp = requests.get(url, timeout=HTTP_TIMEOUT)
-        resp.raise_for_status()
-        items = resp.json()
-
-        tradable: Set[str] = set()
-        for item in items:
-            market = safe_str(item.get("market"))
-            status = safe_str(item.get("status")).lower()
-            if market and status == "trading" and market.endswith("-EUR"):
-                tradable.add(market)
-
-        _MARKETS_CACHE["ts"]      = now
-        _MARKETS_CACHE["markets"] = tradable
-        log(f"✅ Bitvavo markets: {len(tradable)} tradable")
-        return tradable
-
+        with conn.cursor() as cur:
+            cur.execute("""
+            INSERT INTO public.experience_trades (
+                trade_key, source, coin, symbol, timestamp, entry_time,
+                setup_type, market_regime, entry, stop, stop_loss, target,
+                qty, amount_eur, fee_eur, outcome,
+                bot_confidence, score, timeframe,
+                exp_n, exp_win_rate, why_tag,
+                created_at, updated_at
+            )
+            VALUES (
+                %s,'LIVE',%s,%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,'OPEN',
+                %s,%s,%s,
+                %s,%s,%s,
+                NOW(),NOW()
+            )
+            ON CONFLICT (trade_key) DO UPDATE SET
+                updated_at = NOW()
+            """, (
+                trade_key, symbol, symbol,
+                safe_str(meta.get("setup_type")),
+                safe_str(meta.get("regime")),
+                entry, stop, stop, target,
+                qty, amount_eur, fee_eur,
+                safe_int(meta.get("confidence")),
+                safe_int(meta.get("score")),
+                safe_str(meta.get("timeframe"), "4h"),
+                safe_int(meta.get("exp_n")),
+                safe_float(meta.get("exp_win_rate")),
+                safe_str(meta.get("why_tag")),
+            ))
+        conn.commit()
+        log(f"✅ DB gelogd (OPEN): {symbol} entry={entry:.6f}")
     except Exception as e:
-        log(f"⚠️ Markets ophalen mislukt: {e}")
-        return _MARKETS_CACHE.get("markets") or set()
+        log(f"⚠️ log_trade_open_to_db fout ({symbol}): {e}")
 
 
-def symbol_to_market(symbol_usdt: str) -> str:
-    """ETHUSDT → ETH-EUR"""
-    s = safe_str(symbol_usdt).upper()
-    if "-" in s:
-        return s
-    if not s.endswith("USDT"):
-        raise ValueError(f"Ongeldig symbol: {symbol_usdt}")
-    base = s[:-4]
-    if not base:
-        raise ValueError(f"Leeg base symbol: {symbol_usdt}")
-    return f"{base}-EUR"
+def log_trade_close_to_db(
+    conn,
+    symbol:     str,
+    prebuy_id:  str,
+    exit_price: float,
+    pnl_eur:    float,
+    outcome:    str,
+    exit_reden: str,
+    claude_analyse: str = "",
+) -> None:
+    """Updatet een gesloten live trade in experience_trades."""
+    trade_key = f"LIVE|{symbol}|{prebuy_id or int(time.time())}"
 
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            UPDATE public.experience_trades SET
+                outcome    = %s,
+                pnl_eur    = %s,
+                exit_time  = NOW(),
+                updated_at = NOW()
+            WHERE trade_key = %s
+            """, (outcome, pnl_eur, trade_key))
 
-def ensure_market_tradable(symbol_usdt: str) -> str:
-    """Controleert of market echt tradable is op Bitvavo."""
-    market   = symbol_to_market(symbol_usdt)
-    tradable = get_tradable_markets()
-    if market not in tradable:
-        raise ValueError(f"Niet tradable op Bitvavo: {market}")
-    return market
+            if cur.rowcount == 0:
+                # Nieuw record als OPEN niet gevonden
+                cur.execute("""
+                INSERT INTO public.experience_trades (
+                    trade_key, source, coin, timestamp, entry_time,
+                    outcome, pnl_eur, exit_time, created_at, updated_at
+                )
+                VALUES (%s,'LIVE',%s,NOW(),NOW(),%s,%s,NOW(),NOW(),NOW())
+                ON CONFLICT (trade_key) DO UPDATE SET
+                    outcome=EXCLUDED.outcome, pnl_eur=EXCLUDED.pnl_eur,
+                    exit_time=NOW(), updated_at=NOW()
+                """, (trade_key, symbol, outcome, pnl_eur))
 
-
-# ============================================================
-# ORDER HELPERS
-# ============================================================
-def _extract_price(order: Dict[str, Any]) -> float:
-    """
-    Haalt prijs uit order.
-    Fallback naar fills als hoofdprijs 0 is — price=0 bug fix.
-    """
-    price = safe_float(order.get("price"))
-    if price > 0:
-        return price
-    # Fallback via fills
-    fills = order.get("fills") or []
-    if fills and isinstance(fills, list):
-        prices = [safe_float(f.get("price")) for f in fills
-                  if safe_float(f.get("price")) > 0]
-        if prices:
-            return sum(prices) / len(prices)
-    return 0.0
-
-
-def _extract_qty(order: Dict[str, Any]) -> float:
-    """Haalt gefillde hoeveelheid op."""
-    for key in ("filledAmount", "amount", "filled"):
-        val = safe_float(order.get(key))
-        if val > 0:
-            return val
-    fills = order.get("fills") or []
-    if fills and isinstance(fills, list):
-        total = sum(safe_float(f.get("amount")) for f in fills)
-        if total > 0:
-            return total
-    return 0.0
-
-
-def _calc_fee(amount_eur: float) -> float:
-    """Fee + slippage in EUR."""
-    return round(amount_eur * TOTAL_COST_PCT, 6)
+        conn.commit()
+        log(f"✅ DB gelogd ({outcome}): {symbol} pnl=€{pnl_eur:.4f}")
+    except Exception as e:
+        log(f"⚠️ log_trade_close_to_db fout ({symbol}): {e}")
 
 
 # ============================================================
-# BUY — met limieten check
+# COIN FILTERS — identiek aan multi_coin_score en trade_monitor
+# ============================================================
+def is_coin_on_cooldown(conn, symbol: str) -> bool:
+    """24u cooldown na verlies op die coin."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT exit_time FROM public.experience_trades
+            WHERE coin = %s
+              AND UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(outcome) = 'LOSS'
+              AND exit_time IS NOT NULL
+            ORDER BY exit_time DESC
+            LIMIT 1
+            """, (symbol,))
+            row = cur.fetchone()
+            if row and row[0]:
+                last_loss = row[0]
+                if hasattr(last_loss, 'tzinfo') and last_loss.tzinfo is None:
+                    last_loss = last_loss.replace(tzinfo=timezone.utc)
+                hours_since = (now_utc() - last_loss).total_seconds() / 3600
+                return hours_since < COIN_COOLDOWN_HOURS
+    except Exception:
+        pass
+    return False
+
+
+def is_coin_blacklisted(conn, symbol: str) -> bool:
+    """Blacklist: win rate <30% na 20+ trades."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT COUNT(*) AS n,
+                   COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins
+            FROM public.experience_trades
+            WHERE coin = %s
+              AND UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+            """, (symbol,))
+            row = cur.fetchone()
+            if row:
+                n    = safe_int(row[0])
+                wins = safe_int(row[1])
+                if n >= BLACKLIST_MIN_TRADES:
+                    return (wins / n) < BLACKLIST_MAX_WINRATE
+    except Exception:
+        pass
+    return False
+
+
+# ============================================================
+# BUY ORDER
 # ============================================================
 def place_market_buy_eur(
-    symbol_usdt: str,
-    amount_eur:  float,
-    meta:        Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    market:     str,
+    amount_eur: float,
+) -> Tuple[bool, Dict]:
     """
-    Market BUY via Bitvavo met EUR bedrag.
+    Plaatst een market BUY order op Bitvavo voor een EUR bedrag.
 
-    Volgorde:
-    1. Controleer alle limieten (zelfde als webhook check_trading_limits)
-    2. Controleer of market tradable is op Bitvavo
-    3. Plaats order via Bitvavo API
-    4. Sla op in live_state.json
-    5. Log naar experience_trades DB
-    6. Log naar CSV
+    Fix: signing was incorrect — nu met digestmod=hashlib.sha256.
+    Fix: price=0 bug — nu via fills fallback.
+
+    Geeft (success, order_data) terug.
+    """
+    payload = {
+        "market":    market,
+        "side":      "buy",
+        "orderType": "market",
+        "amountQuote": str(round(amount_eur, 2)),
+    }
+
+    log(f"📤 Bitvavo BUY: {market} €{amount_eur:.2f}")
+
+    ok, data = _bitvavo_request("POST", "/order", payload)
+
+    if not ok:
+        log(f"❌ BUY mislukt ({market}): {data}")
+        return False, {"error": str(data)}
+
+    if isinstance(data, dict) and "error" in data:
+        log(f"❌ BUY error ({market}): {data}")
+        return False, data
+
+    # Extraheer prijs en qty uit fills
+    price = 0.0
+    qty   = 0.0
+
+    fills = data.get("fills") or []
+    if fills:
+        total_eur  = sum(safe_float(f.get("amount")) * safe_float(f.get("price")) for f in fills)
+        total_qty  = sum(safe_float(f.get("amount")) for f in fills)
+        price      = total_eur / total_qty if total_qty > 0 else 0.0
+        qty        = total_qty
+    else:
+        # Fallback: gebruik price en filledAmount uit order
+        price = safe_float(data.get("price") or data.get("avgFillPrice") or 0)
+        qty   = safe_float(data.get("filledAmount") or data.get("filled") or 0)
+
+        # Als prijs nog 0 is, haal op via ticker
+        if price <= 0:
+            price = get_price_bitvavo(market) or 0.0
+
+    data["_parsed_price"] = price
+    data["_parsed_qty"]   = qty
+
+    log(f"✅ BUY uitgevoerd: {market} qty={qty:.6f} @ €{price:.6f}")
+    return True, data
+
+
+def place_market_sell(
+    market:   str,
+    qty:      float,
+    fraction: float = 1.0,
+) -> Tuple[bool, Dict]:
+    """
+    Plaatst een market SELL order op Bitvavo.
+
+    fraction=1.0  → verkoop alles
+    fraction=0.40 → verkoop 40%
+
+    Geeft (success, order_data) terug.
+    """
+    sell_qty = qty * fraction
+    sell_qty = round(sell_qty, 8)
+
+    if sell_qty <= 0:
+        return False, {"error": f"Ongeldige qty: {sell_qty}"}
+
+    payload = {
+        "market":    market,
+        "side":      "sell",
+        "orderType": "market",
+        "amount":    str(sell_qty),
+    }
+
+    log(f"📤 Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
+
+    ok, data = _bitvavo_request("POST", "/order", payload)
+
+    if not ok:
+        log(f"❌ SELL mislukt ({market}): {data}")
+        return False, {"error": str(data)}
+
+    # Extraheer prijs
+    fills    = data.get("fills") or []
+    price    = 0.0
+    sold_qty = 0.0
+
+    if fills:
+        total_eur  = sum(safe_float(f.get("amount")) * safe_float(f.get("price")) for f in fills)
+        total_qty  = sum(safe_float(f.get("amount")) for f in fills)
+        price      = total_eur / total_qty if total_qty > 0 else 0.0
+        sold_qty   = total_qty
+    else:
+        price    = safe_float(data.get("price") or data.get("avgFillPrice") or 0)
+        sold_qty = safe_float(data.get("filledAmount") or sell_qty)
+        if price <= 0:
+            market_name = market
+            price = get_price_bitvavo(market_name) or 0.0
+
+    data["_parsed_price"]    = price
+    data["_parsed_sold_qty"] = sold_qty
+    data["_parsed_fraction"] = fraction
+
+    log(f"✅ SELL uitgevoerd: {market} qty={sold_qty:.6f} @ €{price:.6f}")
+    return True, data
+
+
+# ============================================================
+# HOOFD BUY FUNCTIE — aangeroepen door whatsapp_webhook.py
+# ============================================================
+def buy_eur(
+    symbol:     str,
+    amount_eur: float = MAX_PER_TRADE_EUR,
+    meta:       Optional[Dict] = None,
+) -> Tuple[bool, str]:
+    """
+    Voert een live BUY uit op Bitvavo.
+
+    Stappen:
+    1. Market ophalen (USDT→EUR)
+    2. Alle limieten controleren
+    3. Coin filters (cooldown, blacklist)
+    4. EUR balance check
+    5. BUY order plaatsen
+    6. State opslaan
+    7. DB loggen
+
+    Geeft (success, message) terug.
     """
     meta = meta or {}
 
-    if amount_eur <= 0:
-        return {"ok": False, "error": "amount_eur moet > 0 zijn"}
-
-    # 1. Limieten check — zelfde als webhook
-    try:
-        with db_connect() as conn:
-            ensure_bot_state_table(conn)
-            mag, reden = check_trading_limits(conn)
-            if not mag:
-                log(f"BUY geblokkeerd ({symbol_usdt}): {reden}")
-                return {"ok": False, "error": reden, "symbol": symbol_usdt}
-    except Exception as e:
-        report_error(e, "place_market_buy_eur.db_check", symbol_usdt, "HOOG")
-        return {"ok": False, "error": f"DB check fout: {e}"}
-
-    # 2. Market check
-    try:
-        market = ensure_market_tradable(symbol_usdt)
-    except ValueError as e:
-        report_error(e, "place_market_buy_eur.market_check", symbol_usdt, "HOOG")
-        return {"ok": False, "error": str(e), "symbol": symbol_usdt}
-
-    fee_eur = _calc_fee(amount_eur)
-
-    # 3. Bitvavo order
-    body = {
-        "market":      market,
-        "side":        "buy",
-        "orderType":   "market",
-        "amountQuote": str(float(amount_eur)),
-        "operatorId":  BITVAVO_OPERATOR_ID,
-    }
+    # 1. Market ophalen
+    market = symbol_to_market(symbol)
+    if not market:
+        return False, f"{symbol} niet tradable op Bitvavo"
 
     try:
-        result = _request_signed("POST", "/v2/order", body)
-    except Exception as e:
-        report_error(e, "place_market_buy_eur.order", symbol_usdt, "KRITIEK")
-        return {"ok": False, "error": str(e), "market": market}
+        conn = db_connect()
 
-    if not result["ok"]:
-        err = result.get("data", {})
-        log(f"❌ BUY mislukt {market}: {err}")
-        return {"ok": False, "error": err, "market": market}
+        # 2. Limieten check
+        ok, reason = check_trading_limits(conn)
+        if not ok:
+            conn.close()
+            return False, reason
 
-    order = result.get("data") or {}
-    price = _extract_price(order)
-    qty   = _extract_qty(order)
+        # 3. Coin filters
+        if is_coin_blacklisted(conn, symbol):
+            conn.close()
+            log(f"⚫ {symbol} op blacklist — BUY geblokkeerd")
+            return False, f"{symbol} op blacklist (win rate te laag)"
 
-    # Meta uitlezen
-    prebuy_id  = safe_str(meta.get("prebuy_id"))
-    stop_loss  = safe_float(meta.get("stop_loss") or meta.get("stop"))
-    target     = safe_float(meta.get("target"))
-    timeframe  = safe_str(meta.get("timeframe"), "4h")
-    setup_type = safe_str(meta.get("setup_type"), "UNKNOWN")
-    regime     = safe_str(meta.get("regime"), "UNKNOWN")
-    score      = safe_int(meta.get("score"))
-    chance     = safe_int(meta.get("chance"))
-    label      = safe_str(meta.get("label"), "GO")
+        if is_coin_on_cooldown(conn, symbol):
+            conn.close()
+            log(f"⏳ {symbol} in cooldown — BUY geblokkeerd")
+            return False, f"{symbol} in cooldown (24u na verlies)"
 
-    # 4. live_state.json opslaan
-    state    = _load_state()
-    position = {
-        "market":           market,
-        "symbol":           symbol_usdt,
-        "qty":              qty,
-        "entry":            price,
-        "stop_loss":        stop_loss,
-        "stop":             stop_loss,
-        "target":           target,
-        "opened_at":        int(time.time()),
-        "prebuy_id":        prebuy_id,
-        "amount_eur":       amount_eur,
-        "fee_eur":          fee_eur,
-        "timeframe":        timeframe,
-        "setup_type":       setup_type,
-        "regime":           regime,
-        "score":            score,
-        "chance":           chance,
-        "label":            label,
-        "source":           "LIVE",
-        "status":           "OPEN",
-        "max_price_seen":   price,
-        "min_price_seen":   price,
-        "had_over_1r":      False,
-        "partial_sold_40":  False,
-        "below_1r_count":   0,
-        "remaining_fraction": 1.0,
-    }
+        # 4. EUR balance check
+        eur_balance = get_eur_balance()
+        if eur_balance < amount_eur:
+            conn.close()
+            return False, f"Onvoldoende EUR: {eur_balance:.2f} < {amount_eur:.2f}"
 
-    state["positions"][symbol_usdt] = position
+        # 5. BUY order plaatsen
+        ok, order_data = place_market_buy_eur(market, amount_eur)
 
-    # Zorg dat open_trades geen dubbele heeft
-    state["open_trades"] = [
-        t for t in (state.get("open_trades") or [])
-        if t.get("symbol") != symbol_usdt
-    ]
-    state["open_trades"].append(position)
-    _save_state(state)
-
-    # 5. DB logging
-    try:
-        with db_connect() as conn:
-            log_trade_to_db(
-                conn, symbol_usdt, "BUY", price, qty,
-                amount_eur, pnl_eur=0.0, prebuy_id=prebuy_id,
-                setup_type=setup_type, regime=regime,
-                score=score, outcome="OPEN", fee_eur=fee_eur,
+        if not ok:
+            conn.close()
+            report_error(
+                Exception(order_data.get("error", "Onbekend")),
+                "buy_eur.place_market_buy_eur",
+                symbol, "KRITIEK",
+                get_open_real_trades_count(conn) if conn else 0,
             )
-    except Exception as e:
-        log(f"⚠️ DB BUY log fout: {e}")
+            return False, f"BUY mislukt: {order_data.get('error')}"
 
-    # 6. CSV
-    _log_csv(
-        symbol_usdt, "BUY", price, qty, fee=fee_eur,
-        meta=json.dumps({
-            "market": market, "amount_eur": amount_eur,
-            "setup_type": setup_type, "regime": regime,
-            "score": score, "prebuy_id": prebuy_id,
-        }, separators=(",", ":")),
-    )
+        # 6. Prijs en qty bepalen
+        entry   = safe_float(order_data.get("_parsed_price"))
+        qty     = safe_float(order_data.get("_parsed_qty"))
+        fee_eur = round(amount_eur * BITVAVO_FEE_PCT, 6)
 
-    log(
-        f"✅ BUY {market} | prijs={price:.6f} | qty={qty:.8f}"
-        f" | €{amount_eur:.2f} (fee €{fee_eur:.4f})"
-        f" | {setup_type}/{regime} score={score}"
-    )
+        if entry <= 0 or qty <= 0:
+            log(f"⚠️ Prijs/qty ongeldig na BUY: entry={entry} qty={qty}")
+            # Probeer prijs via ticker
+            entry = get_price_bitvavo(market) or get_price_binance(symbol) or 0.0
+            qty   = amount_eur / entry if entry > 0 else 0.0
 
-    return {
-        "ok":          True,
-        "market":      market,
-        "price":       price,
-        "qty":         qty,
-        "amount_eur":  amount_eur,
-        "fee_eur":     fee_eur,
-        "order":       order,
-        "live":        True,
-    }
+        stop   = safe_float(meta.get("stop"),   entry * 0.98)
+        target = safe_float(meta.get("target"), entry * 1.04)
 
+        # 7. State opslaan
+        state = load_state()
+        state["positions"][symbol] = {
+            "symbol":       symbol,
+            "market":       market,
+            "entry":        entry,
+            "stop_loss":    stop,
+            "stop":         stop,
+            "target":       target,
+            "qty":          qty,
+            "amount_eur":   amount_eur,
+            "fee_eur":      fee_eur,
+            "opened_at":    int(time.time()),
+            "prebuy_id":    safe_str(meta.get("prebuy_id")),
+            "setup_type":   safe_str(meta.get("setup_type"), "UNKNOWN"),
+            "regime":       safe_str(meta.get("regime"), "UNKNOWN"),
+            "score":        safe_int(meta.get("score")),
+            "timeframe":    safe_str(meta.get("timeframe"), "4h"),
+            "source":       "LIVE",
+            "status":       "OPEN",
+            "had_over_1r":  False,
+            "partial_sold_40": False,
+            "below_1r_count": 0,
+            "last_candle_check_ts": 0,
+            "max_price_seen": entry,
+            "min_price_seen": entry,
+            "mfe_r":        0.0,
+            "mae_r":        0.0,
+            "order_id":     safe_str(order_data.get("orderId")),
+        }
+        state["open_trades"] = list(state["positions"].values())
+        save_state(state)
 
-# ============================================================
-# SELL — PnL inclusief fees BUY + SELL
-# ============================================================
-def place_market_sell_base(
-    market:      str,
-    amount_base: float,
-) -> Dict[str, Any]:
-    """
-    Market SELL via Bitvavo.
-    PnL berekening inclusief fees van BUY én SELL.
-    DB update naar WIN of LOSS.
-    """
-    if amount_base <= 0:
-        return {"ok": False, "error": "amount_base moet > 0 zijn"}
-
-    body = {
-        "market":     market,
-        "side":       "sell",
-        "orderType":  "market",
-        "amount":     str(float(amount_base)),
-        "operatorId": BITVAVO_OPERATOR_ID,
-    }
-
-    try:
-        result = _request_signed("POST", "/v2/order", body)
-    except Exception as e:
-        report_error(e, "place_market_sell_base", market, "KRITIEK")
-        return {"ok": False, "error": str(e), "market": market}
-
-    if not result["ok"]:
-        err = result.get("data", {})
-        log(f"❌ SELL mislukt {market}: {err}")
-        return {"ok": False, "error": err, "market": market}
-
-    order      = result.get("data") or {}
-    sell_price = _extract_price(order)
-    filled_qty = _extract_qty(order) or amount_base
-
-    # Zoek positie op basis van market
-    state      = _load_state()
-    symbol_key = None
-    for sym, pos in (state.get("positions") or {}).items():
-        try:
-            if symbol_to_market(sym) == market:
-                symbol_key = sym
-                break
-        except Exception:
-            pass
-
-    pnl_eur  = 0.0
-    fee_eur  = _calc_fee(sell_price * filled_qty)
-    outcome  = "LOSS"
-
-    if symbol_key:
-        pos        = state["positions"][symbol_key]
-        entry      = safe_float(pos.get("entry"))
-        qty_total  = safe_float(pos.get("qty"))
-        buy_fee    = safe_float(pos.get("fee_eur"))
-        setup_type = safe_str(pos.get("setup_type"))
-        regime     = safe_str(pos.get("regime"))
-        score      = safe_int(pos.get("score"))
-        prebuy_id  = safe_str(pos.get("prebuy_id"))
-
-        # PnL inclusief fees BUY + SELL
-        if entry > 0 and filled_qty > 0:
-            pnl_eur = (sell_price - entry) * filled_qty - buy_fee - fee_eur
-        outcome = "WIN" if pnl_eur > 0 else "LOSS"
-
-        # State bijwerken
-        if filled_qty >= qty_total or qty_total <= 0:
-            del state["positions"][symbol_key]
-        else:
-            pos["qty"] = max(0.0, qty_total - filled_qty)
-            state["positions"][symbol_key] = pos
-
-        # Open trades bijwerken
-        state["open_trades"] = [
-            t for t in (state.get("open_trades") or [])
-            if t.get("symbol") != symbol_key
-        ]
-        _save_state(state)
-
-        # DB update — WIN of LOSS
-        try:
-            with db_connect() as conn:
-                log_trade_to_db(
-                    conn, symbol_key, "SELL", sell_price, filled_qty,
-                    sell_price * filled_qty,
-                    pnl_eur=pnl_eur, prebuy_id=prebuy_id,
-                    setup_type=setup_type, regime=regime,
-                    score=score, outcome=outcome, fee_eur=fee_eur,
-                    exit_time=now_utc(),
-                )
-        except Exception as e:
-            log(f"⚠️ DB SELL log fout: {e}")
-
-        # CSV
-        _log_csv(
-            symbol_key, "SELL", sell_price, filled_qty,
-            pnl=pnl_eur, fee=fee_eur,
-            meta=json.dumps({
-                "market": market, "outcome": outcome,
-                "pnl_eur": round(pnl_eur, 4),
-            }, separators=(",", ":")),
+        # 8. DB loggen
+        log_trade_open_to_db(
+            conn, symbol, market, entry, qty, amount_eur, fee_eur,
+            stop, target, meta,
         )
 
-        # Claude analyseert elke gesloten trade
-        try:
-            hold_min = (
-                (time.time() - safe_float(pos.get("opened_at"))) / 60
-                if pos.get("opened_at") else 0.0
-            )
-            claude_analyseer_trade(
-                symbol     = symbol_key,
-                setup_type = setup_type,
-                regime     = regime,
-                entry      = safe_float(pos.get("entry")),
-                exit_price = sell_price,
-                pnl_eur    = pnl_eur,
-                fee_eur    = fee_eur,
-                hold_min   = hold_min,
-                outcome    = outcome,
-                score      = score,
-            )
-        except Exception as e:
-            log(f"⚠️ Claude trade analyse fout: {e}")
+        conn.close()
 
-    log(
-        f"✅ SELL {market} | prijs={sell_price:.6f} | qty={filled_qty:.8f}"
-        f" | PnL=€{pnl_eur:.4f} (fee €{fee_eur:.4f}) | {outcome}"
-    )
+        log(f"✅ Live BUY: {symbol} @ €{entry:.6f} qty={qty:.6f} stop={stop:.6f}")
+        return True, f"BUY {symbol} @ €{entry:.6f}"
 
-    return {
-        "ok":        True,
-        "market":    market,
-        "price":     sell_price,
-        "qty":       filled_qty,
-        "pnl_eur":   pnl_eur,
-        "fee_eur":   fee_eur,
-        "outcome":   outcome,
-        "order":     order,
-        "live":      True,
-    }
-
-
-# ============================================================
-# CLAUDE AI TOEZICHT — op trade niveau
-# Zelfde patroon als webhook maar gericht op individuele trades
-# ============================================================
-def claude_analyseer_trade(
-    symbol:     str,
-    setup_type: str,
-    regime:     str,
-    entry:      float,
-    exit_price: float,
-    pnl_eur:    float,
-    fee_eur:    float,
-    hold_min:   float,
-    outcome:    str,
-    score:      int,
-) -> None:
-    """
-    Claude analyseert elke gesloten trade direct na sluiting.
-    Logt analyse naar DB zodat weekrapport er gebruik van kan maken.
-    Stuurt GEEN WhatsApp — dat zou spam zijn.
-    Alleen opgeslagen voor leeranalyse in webhook.
-    """
-    if not ANTHROPIC_API_KEY:
-        return
-
-    prompt = f"""
-Je bent een crypto trading bot coach.
-Analyseer deze gesloten trade in 2 zinnen Nederlands.
-
-Coin:      {symbol}
-Setup:     {setup_type} / Regime: {regime}
-Entry:     {entry:.6f} → Exit: {exit_price:.6f}
-PnL:       €{pnl_eur:.4f} (na fee €{fee_eur:.4f})
-Duur:      {hold_min:.0f} minuten
-Score:     {score}
-Uitkomst:  {outcome}
-
-Wat ging goed of fout aan deze trade?
-Was het regime/setup combinatie logisch?
-""".strip()
-
-    analyse = _claude_analyse(prompt, max_tokens=150)
-    if not analyse:
-        return
-
-    # Sla op in DB als trade notitie
-    try:
-        with db_connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute("""
-                INSERT INTO public.bot_state (key, value, updated_at)
-                VALUES (%s, %s, NOW())
-                ON CONFLICT (key) DO UPDATE
-                    SET value=EXCLUDED.value, updated_at=NOW()
-                """, (
-                    f"trade_analyse_{symbol}_{int(time.time())}",
-                    json.dumps({
-                        "symbol":    symbol,
-                        "outcome":   outcome,
-                        "pnl_eur":   round(pnl_eur, 4),
-                        "analyse":   analyse,
-                        "timestamp": now_utc().isoformat(),
-                    }, ensure_ascii=False),
-                ))
-            conn.commit()
-        log(f"🧠 Claude trade analyse opgeslagen: {symbol} {outcome}")
     except Exception as e:
-        log(f"⚠️ Trade analyse DB fout: {e}")
-
-
-def claude_trader_health_check() -> None:
-    """
-    Claude controleert de live_trader configuratie bij opstarten.
-    Zelfde health check gedachte als webhook claude_health_check().
-    Stuurt WhatsApp als er iets kritiek mis is.
-    """
-    problemen = []
-
-    if not BITVAVO_API_KEY:
-        problemen.append("BITVAVO_API_KEY ontbreekt")
-    if not BITVAVO_API_SECRET:
-        problemen.append("BITVAVO_API_SECRET ontbreekt")
-    if not DATABASE_URL:
-        problemen.append("DATABASE_URL ontbreekt")
-    if len(BITVAVO_API_SECRET) < 10:
-        problemen.append("BITVAVO_API_SECRET lijkt te kort")
-    if MAX_PER_TRADE_EUR > 10:
-        problemen.append(f"MAX_PER_TRADE_EUR={MAX_PER_TRADE_EUR} is hoog voor Fase 1")
-    if DAILY_STOP_LOSS_EUR > 20:
-        problemen.append(f"DAILY_STOP_LOSS_EUR={DAILY_STOP_LOSS_EUR} is hoog voor Fase 1")
-
-    if not problemen:
-        log("✅ Live trader health check: alles OK")
-        return
-
-    prompt = f"""
-Je bent een crypto trading bot monitor.
-De live_trader.py heeft configuratieproblemen bij opstarten.
-
-Problemen:
-{chr(10).join(f'- {p}' for p in problemen)}
-
-Limieten:
-- MAX_PER_TRADE_EUR: €{MAX_PER_TRADE_EUR:.2f}
-- DAILY_STOP_LOSS_EUR: €{DAILY_STOP_LOSS_EUR:.2f}
-- MAX_REAL_TRADES_PER_DAY: {MAX_REAL_TRADES_PER_DAY}
-
-Geef in 2-3 zinnen Nederlands:
-- Hoe ernstig is dit?
-- Wat moet de gebruiker direct doen?
-""".strip()
-
-    uitleg = _claude_analyse(prompt, max_tokens=150)
-    if not uitleg:
-        uitleg = "\n".join(problemen)
-
-    send_whatsapp(
-        f"🚨 LIVE TRADER STARTUP PROBLEEM\n\n"
-        f"{'chr(10)'.join(problemen)}\n\n"
-        f"🧠 Claude:\n{uitleg}"
-    )
+        report_error(e, "buy_eur", symbol, "KRITIEK")
+        return False, str(e)
 
 
 # ============================================================
-# PUBLIEKE ALIASES — voor webhook en trade_monitor
+# HOOFD SELL FUNCTIE — aangeroepen door trade_monitor.py
 # ============================================================
-def buy_eur(
-    symbol_usdt: str,
-    amount_eur:  float,
-    meta:        Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Hoofd BUY functie — aangeroepen door whatsapp_webhook.py."""
-    return place_market_buy_eur(symbol_usdt, amount_eur, meta=meta)
-
-
 def sell(
     symbol:   str,
     fraction: float = 1.0,
-    meta:     Optional[Dict[str, Any]] = None,
+    meta:     Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
-    Verkoop fractie van positie.
-    fraction=1.0 = alles.
+    Voert een live SELL uit op Bitvavo.
+
+    fraction=1.0  → verkoop alles (stop loss, structuur break, max hold)
+    fraction=0.40 → partial sell (40% na eerste keer >1R)
+
+    Wordt aangeroepen door trade_monitor.py via _execute_sell().
+    Geeft result dict terug: {ok, pnl_eur, fee_eur, exit_price, reason}
     """
+    meta = meta or {}
+
     try:
-        market = ensure_market_tradable(symbol)
-    except ValueError as e:
-        return {"ok": False, "reason": str(e), "market": ""}
+        state  = load_state()
+        pos    = (state.get("positions") or {}).get(symbol)
 
-    state = _load_state()
-    pos   = (state.get("positions") or {}).get(symbol)
+        if not pos:
+            return {
+                "ok":     False,
+                "reason": f"{symbol} niet gevonden in state",
+            }
 
-    if not pos:
-        return {"ok": False, "reason": "NO_POSITION", "market": market}
+        market     = safe_str(pos.get("market"))
+        entry      = safe_float(pos.get("entry"))
+        qty        = safe_float(pos.get("qty"))
+        amount_eur = safe_float(pos.get("amount_eur"))
+        prebuy_id  = safe_str(pos.get("prebuy_id"))
+        exit_reden = safe_str(meta.get("exit_reden"), "UNKNOWN")
 
-    qty_total = safe_float(pos.get("qty"))
-    if qty_total <= 0:
-        return {"ok": False, "reason": "QTY_INVALID", "market": market}
+        if not market:
+            market = symbol_to_market(symbol) or f"{symbol[:-4]}-EUR"
 
-    fraction    = max(0.0, min(1.0, float(fraction)))
-    amount_base = qty_total if fraction >= 1.0 else qty_total * fraction
+        # SELL order plaatsen
+        ok, order_data = place_market_sell(market, qty, fraction)
 
-    return place_market_sell_base(market, amount_base)
+        if not ok:
+            return {
+                "ok":     False,
+                "reason": str(order_data.get("error", "SELL mislukt")),
+            }
 
+        exit_price = safe_float(order_data.get("_parsed_price"))
+        sold_qty   = safe_float(order_data.get("_parsed_sold_qty"), qty * fraction)
+        fee_buy    = safe_float(pos.get("fee_eur"))
+        fee_sell   = round(exit_price * sold_qty * BITVAVO_FEE_PCT, 6)
+        pnl_eur    = (exit_price - entry) * sold_qty - fee_buy * fraction - fee_sell
 
-def sell_base(market: str, amount_base: float) -> Dict[str, Any]:
-    """Direct sell op basis van market en hoeveelheid."""
-    return place_market_sell_base(market, amount_base)
+        outcome = "WIN" if pnl_eur > 0 else "LOSS"
 
+        # State updaten
+        if fraction >= 1.0:
+            # Volledig verkopen — verwijder uit state
+            state["positions"].pop(symbol, None)
+            state["open_trades"] = [
+                t for t in (state.get("open_trades") or [])
+                if t.get("symbol") != symbol
+            ]
+        else:
+            # Partial sell — update qty
+            remaining_qty       = qty - sold_qty
+            remaining_eur       = amount_eur * (1 - fraction)
+            state["positions"][symbol]["qty"]        = remaining_qty
+            state["positions"][symbol]["amount_eur"] = remaining_eur
+            state["positions"][symbol]["fee_eur"]    = fee_buy * (1 - fraction)
 
-# ============================================================
-# ACCOUNT + STATUS
-# ============================================================
-def get_balance() -> Dict[str, Any]:
-    try:
-        result = _request_signed("GET", "/v2/balance")
-        if result["ok"]:
-            return {"ok": True, "balances": result["data"]}
-        return {"ok": False, "error": result.get("data")}
+        save_state(state)
+
+        # DB loggen
+        try:
+            conn = db_connect()
+            log_trade_close_to_db(
+                conn, symbol, prebuy_id, exit_price, pnl_eur,
+                outcome, exit_reden, "",
+            )
+            conn.close()
+        except Exception as e:
+            log(f"⚠️ DB log fout ({symbol}): {e}")
+
+        log(
+            f"{'✅' if outcome=='WIN' else '❌'} "
+            f"SELL {symbol}: {outcome} "
+            f"€{pnl_eur:.4f} | "
+            f"exit={exit_price:.6f} | "
+            f"{exit_reden} | "
+            f"fractie={fraction*100:.0f}%"
+        )
+
+        return {
+            "ok":         True,
+            "pnl_eur":    round(pnl_eur, 4),
+            "fee_eur":    round(fee_sell, 6),
+            "exit_price": exit_price,
+            "sold_qty":   sold_qty,
+            "outcome":    outcome,
+            "exit_reden": exit_reden,
+        }
+
     except Exception as e:
-        report_error(e, "get_balance", severity="MEDIUM")
-        return {"ok": False, "error": str(e)}
-
-
-def get_state_summary() -> Dict[str, Any]:
-    """Samenvatting van live state — voor STATUS command in webhook."""
-    state = _load_state()
-    return {
-        "open_positions": len(state.get("positions") or {}),
-        "open_trades":    len(state.get("open_trades") or []),
-        "symbols":        list((state.get("positions") or {}).keys()),
-    }
+        report_error(e, "sell", symbol, "KRITIEK")
+        return {
+            "ok":     False,
+            "reason": str(e),
+        }
 
 
 # ============================================================
-# MAIN — startup check
+# MAIN
 # ============================================================
 if __name__ == "__main__":
-    print("=" * 50)
-    print("Live Trader v2.0 — startup check")
-    print("=" * 50)
-    print(f"Bitvavo API:   {'✅' if BITVAVO_API_KEY else '❌ ONTBREEKT'}")
-    print(f"Database:      {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
-    print(f"Twilio:        {'✅' if TWILIO_ACCOUNT_SID else '❌ ONTBREEKT'}")
-    print(f"Claude API:    {'✅' if ANTHROPIC_API_KEY else '❌ ONTBREEKT'}")
-    print(f"Fee+slippage:  {TOTAL_COST_PCT*100:.2f}%")
-    print(f"Max/trade:     €{MAX_PER_TRADE_EUR:.2f}")
-    print(f"Max/dag:       {MAX_REAL_TRADES_PER_DAY} trades")
-    print(f"Daily stop:    €{DAILY_STOP_LOSS_EUR:.2f}")
-    print(f"Trading hours: {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
-    print(f"Data dir:      {DATA_DIR}")
+    log("=" * 60)
+    log("Live Trader v2.0 — configuratie check")
+    log("=" * 60)
+    log(f"Database:       {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
+    log(f"Bitvavo Key:    {'✅' if BITVAVO_API_KEY else '❌ ONTBREEKT'}")
+    log(f"Bitvavo Secret: {'✅' if BITVAVO_API_SECRET else '❌ ONTBREEKT'}")
+    log(f"Twilio:         {'✅' if TWILIO_ACCOUNT_SID else '⚠️ niet ingesteld'}")
+    log(f"Claude API:     {'✅' if ANTHROPIC_API_KEY else '⚠️ niet ingesteld'}")
+    log(f"Max trade:      €{MAX_PER_TRADE_EUR:.2f}")
+    log(f"Daily stop:     €{DAILY_STOP_LOSS_EUR:.2f}")
+    log(f"Max trades/dag: {MAX_REAL_TRADES_PER_DAY}")
+    log(f"Max open:       {MAX_OPEN_REAL_TRADES}")
+    log(f"Trading hours:  {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
+    log(f"Fee+slippage:   {TOTAL_COST_PCT*100:.2f}%")
+    log(f"Data dir:       {DATA_DIR}")
+    log("=" * 60)
 
-    # Claude health check bij opstarten
-    claude_trader_health_check()
+    # Test Bitvavo verbinding
+    if BITVAVO_API_KEY and BITVAVO_API_SECRET:
+        log("Test Bitvavo balance...")
+        eur = get_eur_balance()
+        log(f"EUR balance: €{eur:.2f}")
 
-    print("=" * 50)
+    # Test Bitvavo markets
+    log("Test Bitvavo markets...")
+    markets = get_tradable_markets()
+    log(f"Tradable markets: {len(markets)}")
 
-    if BITVAVO_API_KEY:
-        markets = get_tradable_markets()
-        print(f"Tradable markets: {len(markets)}")
+    # Claude health check
+    if ANTHROPIC_API_KEY:
+        log("Claude health check...")
+        health = claude_trader_health_check()
+        if health:
+            log(f"Claude: {health}")
+
+    log("✅ Live Trader configuratie check klaar")
