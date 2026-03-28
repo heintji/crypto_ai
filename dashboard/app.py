@@ -159,6 +159,8 @@ SESSION_DEFAULTS = {
     "last_error_text":           "",
     "auto_refresh":              False,
     "portfolio_search":          "",
+    "coach_messages":            [],   # chat geschiedenis AI Coach
+    "coach_context":             {},   # live data context voor coach
 }
 for _k, _v in SESSION_DEFAULTS.items():
     if _k not in st.session_state:
@@ -848,6 +850,127 @@ pre, code, .stCodeBlock {
 .coin-row-white { border-left: 3px solid #34d399; }
 .coin-name      { color: #ffffff; font-size: 12px; font-weight: 800; }
 .coin-stats     { color: #94a3b8; font-size: 11px; }
+
+/* ── AI COACH CHAT ─────────────────────────────────────────── */
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 520px;
+    overflow-y: auto;
+    padding: 14px;
+    background: rgba(5,9,20,0.80);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 16px;
+    margin-bottom: 12px;
+    scroll-behavior: smooth;
+}
+
+.chat-msg-user {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.chat-msg-coach {
+    display: flex;
+    justify-content: flex-start;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.chat-bubble-user {
+    background: linear-gradient(135deg, rgba(96,165,250,0.25), rgba(52,211,153,0.20));
+    border: 1px solid rgba(96,165,250,0.30);
+    border-radius: 18px 18px 4px 18px;
+    padding: 10px 14px;
+    color: #ffffff;
+    font-size: 13px;
+    line-height: 1.55;
+    max-width: 75%;
+    word-wrap: break-word;
+}
+
+.chat-bubble-coach {
+    background: linear-gradient(135deg, rgba(14,22,40,0.98), rgba(10,16,30,0.98));
+    border: 1px solid rgba(255,140,0,0.20);
+    border-radius: 4px 18px 18px 18px;
+    padding: 12px 14px;
+    color: #e2e8f0;
+    font-size: 13px;
+    line-height: 1.65;
+    max-width: 82%;
+    word-wrap: break-word;
+    white-space: pre-wrap;
+}
+
+.chat-avatar-coach {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: linear-gradient(135deg, #ff8c00, #ff6000);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+    box-shadow: 0 0 12px rgba(255,140,0,0.30);
+}
+
+.chat-time {
+    color: #555;
+    font-size: 10px;
+    margin-top: 4px;
+    text-align: right;
+}
+
+.chat-context-card {
+    background: rgba(255,140,0,0.05);
+    border: 1px solid rgba(255,140,0,0.12);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-size: 11px;
+    color: #94a3b8;
+}
+
+.chat-context-title {
+    color: #ff8c00;
+    font-size: 11px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
+
+.chat-suggestion {
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(96,165,250,0.10);
+    border: 1px solid rgba(96,165,250,0.20);
+    color: #60a5fa;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    margin: 3px;
+}
+
+.chat-action-card {
+    background: rgba(52,211,153,0.08);
+    border: 1px solid rgba(52,211,153,0.20);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #34d399;
+}
+
+.chat-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: #555;
+    font-size: 13px;
+}
 
 /* ── TINY BUTTON ───────────────────────────────────────────── */
 .tiny-button div.stButton > button {
@@ -2774,6 +2897,7 @@ def claude_btn(label: str, prompt: str, max_tokens: int = 300, key: str = "") ->
 # ============================================================
 PAGE_NAMES = {
     "dashboard":   "◉ Dashboard",
+    "coach":       "◉ 🤖 AI Coach Chat",
     "positions":   "◉ Open Posities (P&L)",
     "live":        "◉ Live Performance",
     "sim":         "◉ Simulator",
@@ -2827,6 +2951,7 @@ def render_sidebar() -> None:
 
     st.markdown('<div class="nav-header">📊 Overzicht</div>', unsafe_allow_html=True)
     nav_btn("◉ Dashboard",          "dashboard")
+    nav_btn("◉ 🤖 AI Coach Chat",   "coach")
     nav_btn("◉ Open Posities (P&L)", "positions")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">📈 Trade Analyse</div>', unsafe_allow_html=True)
@@ -4506,6 +4631,345 @@ DATA:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
+# ============================================================
+# AI COACH CHAT — live conversatie met de bot coach
+# ============================================================
+def get_live_context(history_df: pd.DataFrame, real_df: pd.DataFrame) -> Dict[str, Any]:
+    """Bouwt live data context op voor de AI Coach chat."""
+    try:
+        s_all  = perf_summary(history_df)
+        s_real = perf_summary(real_df)
+        btc    = get_btc_regime()
+        bl_status, _, _ = get_bot_status()
+        pnl_dag = get_daily_pnl_today(real_df)
+        cons    = get_consecutive_losses(real_df)
+        pf30    = get_profit_factor_30d(real_df)
+
+        laatste_trades = []
+        if not real_df.empty:
+            work = real_df[real_df["outcome"].isin(["WIN","LOSS"])].head(5)
+            for _, r in work.iterrows():
+                laatste_trades.append(
+                    f"{r.get('outcome','?')} {r.get('symbol','?')} "
+                    f"{format_r(r.get('pnl_r',0))} "
+                    f"({r.get('setup_type','?')} / {r.get('regime','?')})"
+                )
+
+        return {
+            "bot_status":       bl_status,
+            "btc_regime":       safe_str(btc.get("regime"), "UNKNOWN"),
+            "btc_strength":     safe_float(btc.get("strength")),
+            "btc_prijs":        safe_float(btc.get("close")),
+            "pnl_vandaag":      round(pnl_dag, 4),
+            "cons_losses":      cons,
+            "profit_factor_30": pf30,
+            "all_trades":       safe_int(s_all.get("count")),
+            "all_winrate":      round(safe_float(s_all.get("winrate")), 1),
+            "all_total_r":      round(safe_float(s_all.get("total_r")), 2),
+            "real_trades":      safe_int(s_real.get("count")),
+            "real_winrate":     round(safe_float(s_real.get("winrate")), 1),
+            "real_pnl_eur":     round(safe_float(s_real.get("total_eur")), 4),
+            "real_expectancy":  round(safe_float(s_real.get("expectancy")), 3),
+            "real_max_dd":      round(safe_float(s_real.get("max_dd")), 2),
+            "laatste_trades":   laatste_trades,
+            "min_score":        MIN_SCORE_TO_TRADE,
+            "max_per_trade":    MAX_PER_TRADE_EUR,
+            "trading_uren":     f"{TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC",
+            "atr_multiplier":   ATR_MULTIPLIER,
+        }
+    except Exception as e:
+        log_debug(f"get_live_context fout: {e}")
+        return {}
+
+
+def coach_antwoord(vraag: str, context: Dict[str, Any], history: List[Dict]) -> str:
+    """Stuurt vraag + live context naar Claude en geeft antwoord terug."""
+    if not ANTHROPIC_API_KEY:
+        return "❌ ANTHROPIC_API_KEY niet ingesteld in Render Environment Variables."
+
+    laatste_trades_txt = "\n".join(
+        f"  • {t}" for t in context.get("laatste_trades", [])
+    ) or "  Geen recente trades"
+
+    system_prompt = f"""Je bent de AI Coach van een automatische cryptocurrency trading bot.
+Je hebt LIVE toegang tot alle bot data en kan vragen beantwoorden en concrete adviezen geven.
+
+ACTUELE BOT DATA (nu geladen):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Bot status:        {context.get('bot_status', '?')}
+BTC regime:        {context.get('btc_regime', '?')} ({context.get('btc_strength', 0):.0f}% sterkte)
+BTC prijs:         €{context.get('btc_prijs', 0):,.0f}
+
+PERFORMANCE:
+Win rate (live):   {context.get('real_winrate', 0):.1f}% ({context.get('real_trades', 0)} trades)
+Win rate (alles):  {context.get('all_winrate', 0):.1f}% ({context.get('all_trades', 0)} trades)
+PnL vandaag:       €{context.get('pnl_vandaag', 0):.4f}
+PnL totaal live:   €{context.get('real_pnl_eur', 0):.4f}
+Profit Factor 30d: {context.get('profit_factor_30', 0):.2f}
+Expectancy:        {context.get('real_expectancy', 0):.3f} R per trade
+Max drawdown:      {context.get('real_max_dd', 0):.2f} R
+Verlies streak:    {context.get('cons_losses', 0)}x op rij
+
+LAATSTE 5 TRADES:
+{laatste_trades_txt}
+
+HUIDIGE INSTELLINGEN:
+Min score:         {context.get('min_score', 85)}
+Max per trade:     €{context.get('max_per_trade', 0.50):.2f}
+Trading uren:      {context.get('trading_uren', '08:00-22:00 UTC')}
+ATR multiplier:    {context.get('atr_multiplier', 2.0)}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INSTRUCTIES:
+- Spreek altijd in het Nederlands
+- Wees direct en concreet
+- Geef altijd een concrete ACTIE aanbeveling
+- Als er een probleem is zeg PRECIES wat aanpassen inclusief de nieuwe waarde
+- Gebruik de live data hierboven bij elk antwoord
+- Schrijf parameter namen exact: MIN_SCORE_TO_TRADE, ATR_MULTIPLIER, etc.""".strip()
+
+    messages = [
+        {"role": m["role"], "content": m["content"]}
+        for m in history[-10:]
+        if m.get("role") in ("user", "assistant")
+    ]
+    messages.append({"role": "user", "content": vraag})
+
+    try:
+        resp = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key":         ANTHROPIC_API_KEY,
+                "anthropic-version": "2023-06-01",
+                "content-type":      "application/json",
+            },
+            json={
+                "model":      "claude-sonnet-4-20250514",
+                "max_tokens": 600,
+                "system":     system_prompt,
+                "messages":   messages,
+            },
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            content = resp.json().get("content", [])
+            if content:
+                return content[0]["text"].strip()
+        return f"❌ API fout {resp.status_code} — probeer opnieuw."
+    except requests.exceptions.Timeout:
+        return "⏱️ Timeout — probeer een kortere vraag."
+    except Exception as e:
+        return f"❌ Fout: {type(e).__name__}"
+
+
+def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    """AI Coach Chat pagina — live conversatie met volledige bot context."""
+    import html as html_lib
+    import re
+
+    st.markdown('<div class="panel">', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">🤖 AI Coach Chat</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-subtitle">'
+        'Direct chatten met je AI Coach. Hij heeft live toegang tot alle bot data '
+        'en geeft concrete adviezen en aanpassingen.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not ANTHROPIC_API_KEY:
+        st.error(
+            "❌ ANTHROPIC_API_KEY niet ingesteld.\n\n"
+            "Ga naar: Render Dashboard → crypto-ai-dashboard → "
+            "Environment → voeg ANTHROPIC_API_KEY toe."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+        return
+
+    # Live context laden
+    context = get_live_context(history_df, real_df)
+    st.session_state.coach_context = context
+
+    # Context samenvatting bovenaan
+    pnl_kleur  = "#34d399" if context.get("pnl_vandaag", 0) >= 0 else "#fb7185"
+    pnl_sign   = "+" if context.get("pnl_vandaag", 0) >= 0 else ""
+    pf_kleur   = "#34d399" if context.get("profit_factor_30", 0) >= 1.5 else "#fb7185"
+    str_kleur  = "#fb7185" if context.get("cons_losses", 0) >= 3 else "#ffffff"
+
+    st.markdown(f"""
+    <div class="chat-context-card">
+        <div class="chat-context-title">⚡ Live Bot Data — automatisch geladen</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;">
+            <span>Bot: <b style="color:#fff">{context.get('bot_status','?')}</b></span>
+            <span>BTC: <b style="color:#fff">{context.get('btc_regime','?')}</b></span>
+            <span>Win rate: <b style="color:#34d399">{context.get('real_winrate',0):.1f}%</b> live</span>
+            <span>PnL vandaag: <b style="color:{pnl_kleur}">{pnl_sign}€{abs(context.get('pnl_vandaag',0)):.4f}</b></span>
+            <span>PF 30d: <b style="color:{pf_kleur}">{context.get('profit_factor_30',0):.2f}</b></span>
+            <span>Streak: <b style="color:{str_kleur}">{context.get('cons_losses',0)}x verlies</b></span>
+            <span>Trades: <b style="color:#fff">{context.get('real_trades',0)}</b> live</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Suggesties bij leeg gesprek
+    if not st.session_state.coach_messages:
+        st.markdown(
+            '<div style="color:#555;font-size:11px;margin-bottom:6px;">'
+            '💡 Klik een vraag of typ hieronder:'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        suggesties = [
+            "Hoe gaat het met de bot?",
+            "Wat is mijn slechtste setup?",
+            "Waarom verlies ik geld?",
+            "Welke parameters aanpassen?",
+            "Analyseer mijn laatste trades",
+            "Is mijn profit factor goed?",
+            "Wat moet ik verbeteren?",
+            "Hoe win rate verhogen?",
+        ]
+        sc1, sc2, sc3, sc4 = st.columns(4, gap="small")
+        for i, sug in enumerate(suggesties):
+            col = [sc1, sc2, sc3, sc4][i % 4]
+            with col:
+                st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
+                if st.button(sug, key=f"sug_{i}", use_container_width=True):
+                    st.session_state.coach_messages.append({
+                        "role": "user", "content": sug,
+                        "tijd": now_utc().strftime("%H:%M"),
+                    })
+                    with st.spinner("🤖 Coach analyseert..."):
+                        ant = coach_antwoord(sug, context, [])
+                    st.session_state.coach_messages.append({
+                        "role": "assistant", "content": ant,
+                        "tijd": now_utc().strftime("%H:%M"),
+                    })
+                    st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    # Chat berichten weergeven
+    if st.session_state.coach_messages:
+        chat_html = '<div class="chat-container">'
+        for msg in st.session_state.coach_messages:
+            role    = msg.get("role", "user")
+            content = html_lib.escape(msg.get("content", "")).replace("\n", "<br>")
+            tijd    = msg.get("tijd", "")
+            if role == "user":
+                chat_html += f"""
+                <div class="chat-msg-user">
+                    <div>
+                        <div class="chat-bubble-user">{content}</div>
+                        <div class="chat-time">{tijd}</div>
+                    </div>
+                </div>"""
+            else:
+                chat_html += f"""
+                <div class="chat-msg-coach">
+                    <div class="chat-avatar-coach">🤖</div>
+                    <div>
+                        <div class="chat-bubble-coach">{content}</div>
+                        <div class="chat-time">{tijd}</div>
+                    </div>
+                </div>"""
+        chat_html += "</div>"
+        st.markdown(chat_html, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div class="chat-container">
+            <div class="chat-empty">
+                🤖 AI Coach staat klaar<br>
+                <span style="font-size:11px;color:#444;">Typ je vraag hieronder of klik een suggestie.</span>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    # Chat input
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    inp_col, btn_col, wis_col = st.columns([4, 0.8, 0.8], gap="small")
+    with inp_col:
+        vraag = st.text_input(
+            "Vraag", placeholder="Stel een vraag aan de AI Coach...",
+            label_visibility="collapsed", key="coach_input",
+        )
+    with btn_col:
+        stuur = st.button("📤 Stuur", use_container_width=True, key="coach_stuur")
+    with wis_col:
+        if st.button("🗑️ Wis", use_container_width=True, key="coach_wis"):
+            st.session_state.coach_messages = []
+            st.rerun()
+
+    # Verwerk vraag
+    if stuur and vraag and vraag.strip():
+        st.session_state.coach_messages.append({
+            "role": "user", "content": vraag.strip(),
+            "tijd": now_utc().strftime("%H:%M"),
+        })
+        with st.spinner("🤖 Coach analyseert jouw data..."):
+            hist = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.coach_messages[:-1]
+                if m.get("role") in ("user", "assistant")
+            ]
+            ant = coach_antwoord(vraag.strip(), context, hist)
+        st.session_state.coach_messages.append({
+            "role": "assistant", "content": ant,
+            "tijd": now_utc().strftime("%H:%M"),
+        })
+        st.rerun()
+
+    # Aanpassingen toepassen knop detectie
+    if st.session_state.coach_messages:
+        laatste = st.session_state.coach_messages[-1]
+        if laatste.get("role") == "assistant":
+            content_low = laatste.get("content", "").lower()
+            aanpassingen = []
+
+            score_m = re.search(r'min_score_to_trade.*?(\d{2,3})', content_low)
+            if score_m:
+                ns = safe_int(score_m.group(1))
+                if 70 <= ns <= 100 and ns != MIN_SCORE_TO_TRADE:
+                    aanpassingen.append({"label": f"✅ MIN_SCORE_TO_TRADE: {MIN_SCORE_TO_TRADE} → {ns}", "key": "min_score_to_trade", "value": str(ns)})
+
+            atr_m = re.search(r'atr_multiplier.*?(\d+\.?\d*)', content_low)
+            if atr_m:
+                na = safe_float(atr_m.group(1))
+                if 1.0 <= na <= 5.0 and abs(na - ATR_MULTIPLIER) > 0.05:
+                    aanpassingen.append({"label": f"✅ ATR_MULTIPLIER: {ATR_MULTIPLIER} → {na}", "key": "atr_multiplier", "value": str(na)})
+
+            if aanpassingen:
+                st.markdown('<div class="chat-action-card">🔧 Coach adviseert — klik om direct toe te passen:</div>', unsafe_allow_html=True)
+                for aanp in aanpassingen:
+                    if st.button(aanp["label"], key=f"apply_{aanp['key']}", use_container_width=True):
+                        conn = get_db_conn()
+                        if conn:
+                            try:
+                                with conn.cursor() as cur:
+                                    cur.execute(
+                                        f"INSERT INTO public.bot_state(key,value,updated_at) VALUES(%s,%s,NOW()) "
+                                        f"ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()",
+                                        (aanp["key"], aanp["value"])
+                                    )
+                                conn.commit()
+                                conn.close()
+                                st.success(f"✅ Opgeslagen! Bot gebruikt dit bij volgende scan.")
+                                st.session_state.coach_messages.append({
+                                    "role": "assistant",
+                                    "content": f"✅ Aanpassing doorgevoerd: {aanp['key']} = {aanp['value']}\nBot gebruikt dit bij de volgende scan.",
+                                    "tijd": now_utc().strftime("%H:%M"),
+                                })
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ Opslaan mislukt: {e}")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="color:#444;font-size:11px;">💡 De coach heeft alle live data — je hoeft niets uit te leggen. '
+        'Aanpassingen via knoppen werken direct. Permanente aanpassingen: Render → Environment Variables.</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
 real_df, sim_df, shadow_df, history_df, source_mode = get_all_trade_data()
 snapshot, snap_mode   = read_snapshot()
 assets_df             = prepare_assets_df(snapshot)
@@ -4565,7 +5029,10 @@ else:
     with content_col:
         page = st.session_state.page
 
-        if page == "live":
+        if page == "coach":
+            render_coach_chat_page(history_df, real_df)
+
+        elif page == "live":
             render_trade_page(
                 "live", real_df,
                 "💶 Live Performance",
