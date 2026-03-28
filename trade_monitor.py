@@ -81,16 +81,25 @@ MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES") or "5")
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR") or "5.00")
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES") or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS") or "2")
-TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START") or "8")
-TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END") or "22")
+TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START") or "9")   # was 8
+TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END") or "17")    # was 22
 
 # Monitor-specifieke instellingen
 MONITOR_INTERVAL_SEC  = int(os.getenv("MONITOR_INTERVAL_SEC") or "30")
-MAX_HOLD_HOURS        = float(os.getenv("MAX_HOLD_HOURS") or "48.0")
-COIN_COOLDOWN_HOURS   = float(os.getenv("COIN_COOLDOWN_HOURS") or "24.0")
-BLACKLIST_MIN_TRADES  = int(os.getenv("BLACKLIST_MIN_TRADES") or "20")
-BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.30")
-EDGE_DECAY_THRESHOLD  = float(os.getenv("EDGE_DECAY_THRESHOLD") or "10.0")
+
+# MAX_HOLD_HOURS: van 48 naar 24 uur
+# → Trades die langer open staan presteren gemiddeld slechter
+# → Kortere houdtijd = minder blootstelling aan nachtruis
+MAX_HOLD_HOURS        = float(os.getenv("MAX_HOLD_HOURS") or "24.0")        # was 48.0
+
+# COIN_COOLDOWN_HOURS: van 24 naar 48 uur — identiek aan multi_coin_score
+COIN_COOLDOWN_HOURS   = float(os.getenv("COIN_COOLDOWN_HOURS") or "48.0")   # was 24.0
+
+# BLACKLIST: strenger — identiek aan multi_coin_score
+BLACKLIST_MIN_TRADES  = int(os.getenv("BLACKLIST_MIN_TRADES") or "15")       # was 20
+BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.35")  # was 0.30
+
+EDGE_DECAY_THRESHOLD  = float(os.getenv("EDGE_DECAY_THRESHOLD") or "8.0")   # was 10.0 — eerder alarm
 
 # Bitvavo fee + slippage — identiek aan alle bestanden
 BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
