@@ -1,65 +1,102 @@
 # whatsapp_webhook.py
 # ============================================================
-# Crypto AI Bot — WhatsApp Webhook v2.1
+# Crypto AI Bot — WhatsApp Webhook v2.0
 # ============================================================
-# Wat dit doet:
-#   - Ontvangt WhatsApp commands via Twilio
-#   - START/STOP/STATUS/TRADES/RAPPORT/HELP
-#   - Bot handelt 100% automatisch
-#   - Stuurt 1x per dag dagrapport (Render Cron 08:00 UTC)
-#   - Bot state opgeslagen in PostgreSQL
+# Dit is het centrale communicatiepunt van de bot.
+# Alle WhatsApp berichten van en naar de gebruiker lopen
+# via dit bestand. Tevens handelt dit de automatische BUY
+# triggers af vanuit multi_coin_score.py.
 #
-# WhatsApp berichten die VERSTUURD worden:
-#   1. START bevestiging
-#   2. STOP bevestiging
-#   3. STATUS overzicht
-#   4. TRADES overzicht
-#   5. RAPPORT (handmatig of automatisch 08:00 UTC)
-#   6. HELP overzicht
+# ARCHITECTUUR:
+#   multi_coin_score → /auto_buy → live_trader.buy_eur()
+#   WhatsApp START/STOP/STATUS → bot_state in PostgreSQL
+#   Render Cron → /send_daily_rapport / /send_weekly_rapport
+#
+# IDENTIEK AAN ALLE ANDERE BESTANDEN:
+#   ✅ Zelfde ENV variabelen en limieten
+#   ✅ Zelfde send_whatsapp() implementatie
+#   ✅ Zelfde Claude health monitoring (KRITIEK/HOOG/MEDIUM/LAAG)
+#   ✅ Zelfde bot state (PostgreSQL bot_state tabel)
+#   ✅ Zelfde is_bot_active / is_bot_paused / pause_bot
+#   ✅ Zelfde sslmode="require" op DB connectie
+#   ✅ Zelfde safe_int / safe_float / safe_str helpers
+#   ✅ Zelfde trading hours filter (08:00-22:00 UTC)
+#   ✅ Zelfde weekend: gewoon doorgaan
+#
+# BUGS GEFIXED:
+#   ✅ Auto mode fix — live eerst, paper als fallback
+#   ✅ send_whatsapp() gedefinieerd zodat trade_monitor kan notificeren
+#   ✅ HMAC digestmod= fix
+#   ✅ Twilio signature verificatie aanwezig
+#   ✅ Volledige meta meegegeven aan live_trader
+#   ✅ Geen automatische pauze — jij beslist via STOP
+#
+# AUTOMATISCHE RAPPORTEN (via Render Cron):
+#   0 8 * * *     /send_daily_rapport
+#   0 8 * * 1     /send_weekly_rapport
+#   0 9 * * 1     /send_health_check
+#   0 8 1,15 * *  /send_leeranalyse
+#   0 8 1 * *     /send_monthly_rapport
+#
+# WHATSAPP COMMANDS:
+#   START        → bot begint traden
+#   STOP         → bot stopt (enige manier om te stoppen)
+#   STATUS       → volledig overzicht
+#   TRADES       → open trades tonen
+#   RAPPORT      → dagrapport handmatig
+#   WEEKRAPPORT  → weekoverzicht
+#   MAANDRAPPORT → maandoverzicht
+#   ADVIES       → Claude leeranalyse
+#   HEALTH       → health check
+#   HELP         → alle commands
 # ============================================================
 
 from __future__ import annotations
 
-import inspect
+import hashlib
+import hmac
 import json
 import os
-import traceback
+import sys
+import time
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
 import requests
-from flask import Flask, request
+from flask import Flask, request, jsonify
 
+# Twilio optioneel — voor signature verificatie
 try:
-    from twilio.twiml.messaging_response import MessagingResponse
     from twilio.request_validator import RequestValidator
     TWILIO_AVAILABLE = True
-except Exception:
-    MessagingResponse = None
-    RequestValidator = None
+except ImportError:
     TWILIO_AVAILABLE = False
 
 app = Flask(__name__)
 
-
 # ============================================================
-# ENV
+# ENV — identiek aan alle andere bestanden
 # ============================================================
-DATABASE_URL      = (os.getenv("DATABASE_URL") or "").strip()
-TRADER_MODE       = (os.getenv("TRADER_MODE") or "auto").strip().lower()
-ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+DATABASE_URL        = (os.getenv("DATABASE_URL") or "").strip()
+ANTHROPIC_API_KEY   = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
 
 TWILIO_ACCOUNT_SID   = (os.getenv("TWILIO_ACCOUNT_SID") or "").strip()
 TWILIO_AUTH_TOKEN    = (os.getenv("TWILIO_AUTH_TOKEN") or "").strip()
 TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
 TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
 
-BOT_INTERNAL_SECRET = (os.getenv("BOT_INTERNAL_SECRET") or "crypto_ai_bot").strip()
+BITVAVO_API_KEY      = (os.getenv("BITVAVO_API_KEY") or "").strip()
+BITVAVO_API_SECRET   = (os.getenv("BITVAVO_API_SECRET") or "").strip()
+BITVAVO_OPERATOR_ID  = (os.getenv("BITVAVO_OPERATOR_ID") or "").strip()
+
+BOT_INTERNAL_SECRET  = (os.getenv("BOT_INTERNAL_SECRET") or "crypto_ai_bot").strip()
+TRADER_MODE          = (os.getenv("TRADER_MODE") or "auto").strip().lower()
+WEBHOOK_BASE_URL     = (os.getenv("WEBHOOK_BASE_URL") or "").strip()
 
 # ============================================================
-# FASE 1 LIMIETEN
+# FASE 1 LIMIETEN — identiek aan alle andere bestanden
 # ============================================================
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR") or "0.50")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY") or "10")
@@ -70,35 +107,28 @@ CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS") or 
 TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START") or "8")
 TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END") or "22")
 
+# Bitvavo fee + slippage — identiek aan live_trader en trade_monitor
+BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
+SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")
+TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
+
 BOT_STATE_TABLE = "public.bot_state"
 
-
 # ============================================================
-# BASIS HELPERS
+# BASIS HELPERS — identiek aan alle andere bestanden
 # ============================================================
 def now_utc() -> datetime:
+    """Huidige UTC tijd — identiek in alle bestanden."""
     return datetime.now(timezone.utc)
 
 
 def log(msg: str) -> None:
+    """Gestandaardiseerde logging met timestamp — identiek in alle bestanden."""
     print(f"[{now_utc().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
-def twiml_response(text: str):
-    if MessagingResponse is None:
-        return (text, 200, {"Content-Type": "text/plain; charset=utf-8"})
-    resp = MessagingResponse()
-    resp.message(text)
-    return (str(resp), 200, {"Content-Type": "application/xml"})
-
-
-def db_connect():
-    if not DATABASE_URL:
-        raise RuntimeError("DATABASE_URL ontbreekt.")
-    return psycopg2.connect(DATABASE_URL, sslmode="require")
-
-
 def safe_int(x: Any, default: int = 0) -> int:
+    """Veilige integer conversie — crasht nooit."""
     try:
         return int(x)
     except Exception:
@@ -106,6 +136,7 @@ def safe_int(x: Any, default: int = 0) -> int:
 
 
 def safe_float(x: Any, default: float = 0.0) -> float:
+    """Veilige float conversie — crasht nooit."""
     try:
         return float(x)
     except Exception:
@@ -113,6 +144,7 @@ def safe_float(x: Any, default: float = 0.0) -> float:
 
 
 def safe_str(x: Any, default: str = "") -> str:
+    """Veilige string conversie — crasht nooit."""
     if x is None:
         return default
     try:
@@ -123,32 +155,52 @@ def safe_str(x: Any, default: str = "") -> str:
 
 
 def utc_day_str(offset_days: int = 0) -> str:
+    """Geeft datum string in UTC formaat YYYY-MM-DD."""
     return (now_utc() + timedelta(days=offset_days)).strftime("%Y-%m-%d")
 
 
 def is_trading_hours() -> bool:
+    """Controleert of we binnen trading hours zijn (08:00-22:00 UTC)."""
     return TRADING_HOURS_START <= now_utc().hour < TRADING_HOURS_END
 
 
-def is_weekend() -> bool:
-    return now_utc().weekday() >= 5
+def format_eur(amount: float) -> str:
+    """Formatteert bedrag als euro string."""
+    return f"€{amount:+.2f}" if amount != 0 else "€0.00"
+
+
+def format_pct(rate: float) -> str:
+    """Formatteert als percentage string."""
+    return f"{rate * 100:.1f}%"
 
 
 # ============================================================
-# WHATSAPP VERSTUREN
+# WHATSAPP — kern functie, identiek in alle bestanden
+# Bot stuurt NOOIT automatisch behalve bij kritieke events
 # ============================================================
 def send_whatsapp(message: str) -> bool:
     """
-    Stuurt WhatsApp bericht via Twilio.
-    Wordt ook gebruikt door trade_monitor.py
+    Stuurt WhatsApp bericht via Twilio API.
+
+    Dit is de enige manier waarop de bot communiceert met jou.
+    Identieke implementatie in alle bestanden zodat elk onderdeel
+    WhatsApp berichten kan sturen zonder imports.
+
+    Alleen voor:
+    - Kritieke foutmeldingen (bot kan niet doorgaan)
+    - Signalen (verliezen op rij, dagbudget, etc.)
+    - Dagelijks / wekelijks rapport
+
+    NOOIT voor: elke individuele trade (te veel spam)
     """
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
                 TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO]):
-        log(f"WhatsApp (geen Twilio): {message[:80]}")
+        log(f"WhatsApp (geen Twilio config): {message[:80]}")
         return False
     try:
         resp = requests.post(
-            f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json",
+            f"https://api.twilio.com/2010-04-01/Accounts"
+            f"/{TWILIO_ACCOUNT_SID}/Messages.json",
             auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
             data={
                 "From": TWILIO_WHATSAPP_FROM,
@@ -160,7 +212,10 @@ def send_whatsapp(message: str) -> bool:
         if resp.status_code in (200, 201):
             log(f"✅ WhatsApp verzonden ({len(message)} tekens)")
             return True
-        log(f"❌ WhatsApp {resp.status_code}: {resp.text[:200]}")
+        log(f"❌ WhatsApp fout {resp.status_code}: {resp.text[:200]}")
+        return False
+    except requests.exceptions.Timeout:
+        log("❌ WhatsApp timeout na 15 seconden")
         return False
     except Exception as e:
         log(f"❌ WhatsApp exception: {type(e).__name__}: {e}")
@@ -168,14 +223,17 @@ def send_whatsapp(message: str) -> bool:
 
 
 # ============================================================
-# CLAUDE AI ANALYSE
+# CLAUDE API — identiek aan alle andere bestanden
+# Zelfde model, zelfde patroon, zelfde foutafhandeling
 # ============================================================
-def claude_analyse(prompt: str, max_tokens: int = 400) -> str:
+def _claude_analyse(prompt: str, max_tokens: int = 400) -> str:
     """
-    Stuurt data naar Claude API voor analyse.
-    Claude heeft toegang tot alle bot data via de prompt.
-    Geeft analyse terug in gewone Nederlandse taal.
-    Als ANTHROPIC_API_KEY ontbreekt → lege string.
+    Roept Claude API aan voor analyse.
+    Identieke implementatie in alle bestanden.
+
+    Model: claude-sonnet-4-20250514 (altijd Sonnet 4 in bot)
+    Timeout: 25 seconden
+    Geeft lege string terug bij fout — bot gaat altijd door.
     """
     if not ANTHROPIC_API_KEY:
         return ""
@@ -195,430 +253,143 @@ def claude_analyse(prompt: str, max_tokens: int = 400) -> str:
             timeout=25,
         )
         if resp.status_code == 200:
-            return resp.json()["content"][0]["text"].strip()
-        log(f"Claude API fout {resp.status_code}: {resp.text[:200]}")
+            data = resp.json()
+            if data.get("content") and len(data["content"]) > 0:
+                return data["content"][0]["text"].strip()
+        log(f"⚠️ Claude API status {resp.status_code}")
+        return ""
+    except requests.exceptions.Timeout:
+        log("⚠️ Claude API timeout")
         return ""
     except Exception as e:
-        log(f"Claude analyse fout: {type(e).__name__}: {e}")
+        log(f"⚠️ Claude API fout: {type(e).__name__}: {e}")
         return ""
 
 
-def claude_analyseer_dagrapport(
-    wins: int, losses: int, winrate: float, pnl: float,
-    shadow_wr: float, sim_wr: float,
-) -> str:
+def report_error(
+    error: Exception,
+    function: str,
+    symbol: str = "",
+    severity: str = "HOOG",
+    open_trades: int = 0,
+) -> None:
     """
-    Claude analyseert het dagrapport en geeft een kort oordeel.
-    Wordt toegevoegd onderaan het dagrapport.
+    Rapporteert fout via Claude analyse + WhatsApp.
+
+    Ernst niveaus (identiek in alle bestanden):
+    - KRITIEK → WhatsApp direct + bot logt het
+    - HOOG    → WhatsApp + bot logt het
+    - MEDIUM  → alleen log
+    - LAAG    → alleen log
+
+    Bot stopt NOOIT automatisch — jij beslist via STOP.
     """
-    prompt = f"""
-Je bent een crypto trading bot coach. Analyseer deze dagresultaten kort.
+    log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
 
-Echte trades: {wins} wins / {losses} losses / {winrate:.1f}% winrate / €{pnl:.2f} PnL
-Shadow win rate: {shadow_wr:.1f}%
-Simulatie win rate: {sim_wr:.1f}%
-
-Geef een analyse van MAX 3 zinnen in het Nederlands:
-- Is dit een goede dag?
-- Wat valt op?
-- 1 concrete tip voor morgen
-
-Wees direct en eerlijk. Geen wollige taal.
-""".strip()
-
-    analyse = claude_analyse(prompt, max_tokens=200)
-    if analyse:
-        return f"\n🧠 Claude:\n{analyse}"
-    return ""
-
-
-def claude_analyseer_weekrapport(data: dict) -> str:
-    """
-    Claude analyseert het weekrapport.
-    Data = {REAL: {wins, losses, pnl}, SHADOW: {...}, SIM: {...}}
-    """
-    real   = data.get("REAL",   {"wins": 0, "losses": 0, "pnl": 0.0})
-    shadow = data.get("SHADOW", {"wins": 0, "losses": 0, "pnl": 0.0})
-    sim    = data.get("SIM",    {"wins": 0, "losses": 0, "pnl": 0.0})
-
-    def wr(d: dict) -> float:
-        t = d["wins"] + d["losses"]
-        return (d["wins"] / t * 100) if t > 0 else 0.0
+    if severity not in ("KRITIEK", "HOOG"):
+        return
 
     prompt = f"""
-Je bent een crypto trading bot coach. Analyseer deze weekresultaten.
+Je bent een crypto trading bot monitor voor whatsapp_webhook.py.
+Er is een fout opgetreden die de gebruiker moet weten.
 
-ECHTE TRADES: {real['wins']}W / {real['losses']}L / {wr(real):.1f}% winrate / €{real['pnl']:.2f}
-SHADOW:       {shadow['wins']}W / {shadow['losses']}L / {wr(shadow):.1f}% winrate
-SIMULATIE:    {sim['wins']}W / {sim['losses']}L / {wr(sim):.1f}% winrate
+Ernst:        {severity}
+Functie:      {function}
+Coin:         {symbol or 'onbekend'}
+Open trades:  {open_trades}
+Fout type:    {type(error).__name__}
+Fout details: {str(error)[:300]}
 
-Geef een analyse van MAX 4 zinnen in het Nederlands:
-- Hoe was de week overall?
-- Klopt sim/shadow met echte resultaten? (edge decay?)
-- Welke trend zie je?
-- 1 concrete aanbeveling voor volgende week
-
-Wees direct en concreet.
+Geef in 3 korte zinnen Nederlands:
+1. Wat er precies mis is gegaan
+2. Wat de impact is op de bot en open trades
+3. Welke actie de gebruiker moet ondernemen
 """.strip()
 
-    analyse = claude_analyse(prompt, max_tokens=250)
-    if analyse:
-        return f"\n🧠 Claude analyse:\n{analyse}"
-    return ""
+    uitleg = _claude_analyse(prompt, max_tokens=250)
+    if not uitleg:
+        uitleg = f"Fout in {function}: {type(error).__name__}: {str(error)[:150]}"
 
-
-def claude_analyseer_maandrapport(
-    real_wr: float, real_pnl: float,
-    shadow_wr: float, sim_wr: float,
-    trend_diff: float,
-    wr_eerder: float, wr_recent: float,
-) -> str:
-    """Claude analyseert het maandrapport met trend data."""
-    prompt = f"""
-Je bent een crypto trading bot coach. Analyseer deze maandresultaten.
-
-ECHTE TRADES: {real_wr:.1f}% winrate / €{real_pnl:.2f} PnL
-SHADOW:       {shadow_wr:.1f}% winrate
-SIMULATIE:    {sim_wr:.1f}% winrate
-
-TREND (echte trades):
-- Eerste 15 dagen: {wr_eerder:.1f}% winrate
-- Laatste 15 dagen: {wr_recent:.1f}% winrate
-- Verschil: {trend_diff:+.1f}%
-
-Geef een analyse van MAX 5 zinnen in het Nederlands:
-- Was dit een goede maand?
-- Wat zegt de trend?
-- Klopt sim/shadow met live? (edge decay check)
-- Is de strategie nog gezond?
-- 1 concrete aanbeveling voor volgende maand
-
-Wees eerlijk en direct. Dit gaat om echt geld.
-""".strip()
-
-    analyse = claude_analyse(prompt, max_tokens=300)
-    if analyse:
-        return f"\n🧠 Claude maandanalyse:\n{analyse}"
-    return ""
-
-
-def claude_health_check(conn) -> str:
-    """
-    Claude controleert de gezondheid van de hele bot setup.
-    Wordt 1x per week automatisch uitgevoerd (Render Cron maandag).
-    Kijkt naar: config, limieten, DB tabellen, win rate trend, edge decay.
-    """
-    # Verzamel alle health data
-    try:
-        db_ok = True
-        tabellen = []
-        with conn.cursor() as cur:
-            for tabel in ["experience_trades", "experience_scoreboard",
-                          "pending_approvals", "bot_state"]:
-                cur.execute(
-                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables "
-                    "WHERE table_schema='public' AND table_name=%s)", (tabel,)
-                )
-                bestaat = bool(cur.fetchone()[0])
-                tabellen.append(f"{tabel}: {'✅' if bestaat else '❌ ONTBREEKT'}")
-    except Exception as e:
-        db_ok = False
-        tabellen = [f"DB fout: {e}"]
-
-    # Win rate laatste 7 dagen vs 30 dagen
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                COUNT(*) FILTER (
-                    WHERE UPPER(outcome)='WIN'
-                    AND COALESCE(exit_time,updated_at) >= NOW()-INTERVAL '7 days'
-                ) AS w7,
-                COUNT(*) FILTER (
-                    WHERE UPPER(outcome)='LOSS'
-                    AND COALESCE(exit_time,updated_at) >= NOW()-INTERVAL '7 days'
-                ) AS l7,
-                COUNT(*) FILTER (
-                    WHERE UPPER(outcome)='WIN'
-                    AND COALESCE(exit_time,updated_at) >= NOW()-INTERVAL '30 days'
-                ) AS w30,
-                COUNT(*) FILTER (
-                    WHERE UPPER(outcome)='LOSS'
-                    AND COALESCE(exit_time,updated_at) >= NOW()-INTERVAL '30 days'
-                ) AS l30
-            FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
-            """)
-            row = cur.fetchone()
-            w7  = safe_int(row[0]) if row else 0
-            l7  = safe_int(row[1]) if row else 0
-            w30 = safe_int(row[2]) if row else 0
-            l30 = safe_int(row[3]) if row else 0
-            wr7  = (w7  / (w7 + l7)   * 100) if (w7 + l7)   > 0 else 0.0
-            wr30 = (w30 / (w30 + l30) * 100) if (w30 + l30) > 0 else 0.0
-    except Exception:
-        wr7 = wr30 = 0.0
-        w7 = l7 = w30 = l30 = 0
-
-    # Edge decay: sim vs live
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                UPPER(COALESCE(source,'')) AS src,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
-            FROM public.experience_trades
-            WHERE COALESCE(exit_time,updated_at) >= NOW()-INTERVAL '30 days'
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-            GROUP BY 1
-            """)
-            edge_rows = cur.fetchall()
-        edge_data = {}
-        for row in edge_rows:
-            src  = safe_str(row[0])
-            key  = "REAL" if src in ("REAL","LIVE") else src
-            w    = safe_int(row[1])
-            l    = safe_int(row[2])
-            t    = w + l
-            edge_data[key] = (w / t * 100) if t > 0 else 0.0
-    except Exception:
-        edge_data = {}
-
-    sim_wr_30  = edge_data.get("SIM", 0.0)
-    real_wr_30 = edge_data.get("REAL", 0.0)
-    edge_diff  = sim_wr_30 - real_wr_30
-
-    # Config check
-    config_ok = []
-    config_ok.append(f"DATABASE_URL:      {'✅' if DATABASE_URL else '❌'}")
-    config_ok.append(f"TWILIO:            {'✅' if TWILIO_ACCOUNT_SID else '❌'}")
-    config_ok.append(f"ANTHROPIC_API_KEY: {'✅' if ANTHROPIC_API_KEY else '❌'}")
-    config_ok.append(f"BOT_SECRET sterk:  {'✅' if len(BOT_INTERNAL_SECRET) > 12 else '⚠️ te kort'}")
-    config_ok.append(f"MAX_PER_TRADE:     €{MAX_PER_TRADE_EUR:.2f}")
-    config_ok.append(f"DAILY_STOP_LOSS:   €{DAILY_STOP_LOSS_EUR:.2f}")
-
-    prompt = f"""
-Je bent een crypto trading bot health monitor.
-Controleer of alles correct is ingesteld en geef een duidelijk rapport.
-
-DATABASE TABELLEN:
-{chr(10).join(tabellen)}
-
-CONFIGURATIE:
-{chr(10).join(config_ok)}
-
-WIN RATE TREND (echte trades):
-- Laatste 7 dagen:  {wr7:.1f}% ({w7}W/{l7}L)
-- Laatste 30 dagen: {wr30:.1f}% ({w30}W/{l30}L)
-
-EDGE DECAY CHECK (30 dagen):
-- Simulatie win rate: {sim_wr_30:.1f}%
-- Live win rate:      {real_wr_30:.1f}%
-- Verschil:           {edge_diff:+.1f}% (>10% = probleem)
-
-Geef een gezondheidsrapport in het Nederlands:
-1. OVERALL STATUS: GEZOND / AANDACHT / KRITIEK
-2. Wat is goed?
-3. Wat heeft aandacht nodig?
-4. Concrete acties (max 3 stappen)
-
-Wees direct. Dit is een wekelijkse health check.
-""".strip()
-
-    analyse = claude_analyse(prompt, max_tokens=400)
-    if not analyse:
-        return "🏥 Health check: Claude API niet beschikbaar."
-
-    return (
-        f"🏥 WEKELIJKSE HEALTH CHECK\n"
-        f"{'─' * 28}\n\n"
-        f"📋 CONFIG:\n"
-        f"{chr(10).join(config_ok)}\n\n"
-        f"📊 WIN RATE TREND:\n"
-        f"• 7 dagen:  {wr7:.1f}%\n"
-        f"• 30 dagen: {wr30:.1f}%\n\n"
-        f"⚡ EDGE DECAY:\n"
-        f"• Sim: {sim_wr_30:.1f}% vs Live: {real_wr_30:.1f}%\n\n"
-        f"{'─' * 28}\n"
-        f"🧠 Claude oordeel:\n{analyse}"
-    )
-
-
-def claude_trade_leeranalyse(conn) -> str:
-    """
-    Claude analyseert ALLE trades en leert eruit.
-    Vindt patronen, beste setups, slechtste setups.
-    Geeft concrete aanbevelingen hoe de bot beter kan presteren.
-    Wordt wekelijks aangeroepen.
-    """
-    try:
-        # Top 5 beste setups
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                setup_type,
-                market_regime,
-                COUNT(*) AS n,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
-                ROUND(AVG(COALESCE(mfe,0))::numeric, 3) AS avg_mfe,
-                ROUND(AVG(COALESCE(mae,0))::numeric, 3) AS avg_mae
-            FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-              AND setup_type IS NOT NULL
-            GROUP BY setup_type, market_regime
-            HAVING COUNT(*) >= 5
-            ORDER BY
-                (COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::float / COUNT(*)) DESC,
-                COUNT(*) DESC
-            LIMIT 8
-            """)
-            setup_rows = cur.fetchall()
-
-        # Slechtste setups
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                setup_type,
-                market_regime,
-                COUNT(*) AS n,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins
-            FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-              AND setup_type IS NOT NULL
-            GROUP BY setup_type, market_regime
-            HAVING COUNT(*) >= 5
-            ORDER BY
-                (COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::float / COUNT(*)) ASC
-            LIMIT 5
-            """)
-            slechte_rows = cur.fetchall()
-
-        # Totaal statistieken
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                COUNT(*) AS totaal,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses,
-                ROUND(AVG(COALESCE(time_minutes,0))::numeric, 0) AS avg_tijd_min
-            FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SIM','SHADOW')
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-            """)
-            totaal_row = cur.fetchone()
-
-        totaal    = safe_int(totaal_row[0]) if totaal_row else 0
-        tot_wins  = safe_int(totaal_row[1]) if totaal_row else 0
-        tot_loss  = safe_int(totaal_row[2]) if totaal_row else 0
-        avg_tijd  = safe_float(totaal_row[3]) if totaal_row else 0.0
-        total_wr  = (tot_wins / totaal * 100) if totaal > 0 else 0.0
-
-        # Formatteer setup data
-        beste_text = ""
-        for row in setup_rows:
-            setup   = safe_str(row[0], "-")
-            regime  = safe_str(row[1], "-")
-            n       = safe_int(row[2])
-            wins    = safe_int(row[3])
-            wr      = (wins / n * 100) if n > 0 else 0.0
-            mfe     = safe_float(row[4])
-            mae     = safe_float(row[5])
-            beste_text += f"  {setup}/{regime}: {wr:.0f}% ({n} trades) MFE={mfe} MAE={mae}\n"
-
-        slechte_text = ""
-        for row in slechte_rows:
-            setup  = safe_str(row[0], "-")
-            regime = safe_str(row[1], "-")
-            n      = safe_int(row[2])
-            wins   = safe_int(row[3])
-            wr     = (wins / n * 100) if n > 0 else 0.0
-            slechte_text += f"  {setup}/{regime}: {wr:.0f}% ({n} trades)\n"
-
-    except Exception as e:
-        return f"Leeranalyse fout: {type(e).__name__}: {e}"
-
-    prompt = f"""
-Je bent een crypto trading bot optimalisatie coach.
-Analyseer deze trade data en geef concrete verbeteringen.
-
-TOTAAL: {totaal} trades | {total_wr:.1f}% winrate | gem. {avg_tijd:.0f} min per trade
-
-BESTE SETUPS (hoogste winrate):
-{beste_text or "  Geen data"}
-
-SLECHTSTE SETUPS (laagste winrate):
-{slechte_text or "  Geen data"}
-
-Geef een leerrapport in het Nederlands met:
-1. WAT WERKT: Welke setup/regime combinaties zijn de echte edge?
-2. WAT NIET WERKT: Wat moet de bot vermijden of minder doen?
-3. SCORE DREMPEL: Op basis van MFE/MAE, moet de score drempel omhoog of omlaag?
-4. CONCRETE PARAMETERS: 3 specifieke aanpassingen die de winrate verhogen
-5. PRIORITEIT: Wat is de #1 aanpassing met de grootste impact?
-
-Wees zeer concreet. Geef percentages en specifieke setup namen.
-""".strip()
-
-    analyse = claude_analyse(prompt, max_tokens=500)
-    if not analyse:
-        return "Leeranalyse: Claude API niet beschikbaar."
-
-    return (
-        f"🎓 TRADE LEERANALYSE\n"
-        f"{'─' * 28}\n\n"
-        f"📊 Totaal: {totaal} trades | {total_wr:.1f}% WR\n"
-        f"⏱️ Gem. duur: {avg_tijd:.0f} min\n\n"
-        f"{'─' * 28}\n"
-        f"🧠 Claude leert:\n{analyse}"
+    send_whatsapp(
+        f"🚨 WEBHOOK FOUT — {severity}\n"
+        f"{'─' * 30}\n\n"
+        f"📁 Functie:     {function}\n"
+        f"🪙 Coin:        {symbol or '—'}\n"
+        f"📂 Open trades: {open_trades}\n"
+        f"⚠️ Fout:       {type(error).__name__}\n\n"
+        f"🧠 Claude analyse:\n"
+        f"{uitleg}\n\n"
+        f"📋 WAT TE DOEN:\n"
+        f"1. Check Render logs voor details\n"
+        f"2. Stuur STATUS voor bot overzicht\n"
+        f"3. Stuur TRADES voor open posities\n"
+        f"4. Stuur STOP als je wil pauzeren\n\n"
+        f"🤖 BOT PROBEERT DOOR TE GAAN\n"
+        f"Open trades worden bewaakt.\n\n"
+        f"Commands: STATUS | TRADES | STOP"
     )
 
 
 # ============================================================
-# BOT STATE — POSTGRESQL
+# DATABASE — identiek aan alle andere bestanden
 # ============================================================
-def ensure_bot_state_table(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute(f"""
-        CREATE TABLE IF NOT EXISTS {BOT_STATE_TABLE} (
-            key        TEXT PRIMARY KEY,
-            value      TEXT,
-            updated_at TIMESTAMPTZ DEFAULT NOW()
-        );
-        """)
-    conn.commit()
+def db_connect():
+    """
+    Verbinding met PostgreSQL database.
+    sslmode="require" is verplicht voor Render.
+    Identiek in alle bestanden.
+    """
+    if not DATABASE_URL:
+        raise RuntimeError(
+            "DATABASE_URL ontbreekt. "
+            "Stel in via Render Environment Variables."
+        )
+    return psycopg2.connect(DATABASE_URL, sslmode="require")
 
 
+# ============================================================
+# BOT STATE — identiek aan live_trader en trade_monitor
+# ============================================================
 def get_bot_state(conn, key: str, default: str = "") -> str:
+    """Leest een waarde uit de bot_state tabel."""
     try:
         with conn.cursor() as cur:
             cur.execute(
-                f"SELECT value FROM {BOT_STATE_TABLE} WHERE key=%s", (key,)
+                f"SELECT value FROM {BOT_STATE_TABLE} WHERE key=%s",
+                (key,)
             )
             row = cur.fetchone()
             return safe_str(row[0], default) if row else default
-    except Exception:
+    except Exception as e:
+        log(f"⚠️ get_bot_state fout ({key}): {e}")
         return default
 
 
 def set_bot_state(conn, key: str, value: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute(f"""
-        INSERT INTO {BOT_STATE_TABLE}(key, value, updated_at)
-        VALUES(%s, %s, NOW())
-        ON CONFLICT(key) DO UPDATE
-            SET value=EXCLUDED.value, updated_at=NOW()
-        """, (key, value))
-    conn.commit()
+    """Schrijft een waarde naar de bot_state tabel."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+            INSERT INTO {BOT_STATE_TABLE} (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE
+                SET value=EXCLUDED.value, updated_at=NOW()
+            """, (key, value))
+        conn.commit()
+    except Exception as e:
+        log(f"⚠️ set_bot_state fout ({key}): {e}")
 
 
 def is_bot_active(conn) -> bool:
+    """Bot is actief als bot_active=true in de DB."""
     return get_bot_state(conn, "bot_active", "false").lower() == "true"
 
 
 def is_bot_paused(conn) -> bool:
+    """
+    Controleert of bot gepauzeerd is.
+    Controleer ook of de pauze tijd verstreken is.
+    """
     if get_bot_state(conn, "bot_paused", "false").lower() != "true":
         return False
     until_str = get_bot_state(conn, "bot_paused_until", "")
@@ -626,9 +397,13 @@ def is_bot_paused(conn) -> bool:
         return True
     try:
         until = datetime.fromisoformat(until_str)
+        if until.tzinfo is None:
+            until = until.replace(tzinfo=timezone.utc)
         if now_utc() > until:
+            # Pauze is voorbij — reset automatisch
             set_bot_state(conn, "bot_paused", "false")
             set_bot_state(conn, "bot_paused_until", "")
+            log("✅ Bot pauze voorbij — automatisch hervat")
             return False
         return True
     except Exception:
@@ -636,23 +411,55 @@ def is_bot_paused(conn) -> bool:
 
 
 def pause_bot(conn, hours: float, reason: str) -> None:
+    """
+    Pauzeert de bot voor een bepaalde tijd.
+    Kan alleen via WhatsApp STOP command worden aangeroepen.
+    Bot stopt NOOIT automatisch.
+    """
     until = now_utc() + timedelta(hours=hours)
     set_bot_state(conn, "bot_paused", "true")
     set_bot_state(conn, "bot_paused_until", until.isoformat())
     set_bot_state(conn, "bot_paused_reason", reason)
-    log(f"Bot gepauzeerd tot {until.strftime('%H:%M UTC')} — {reason}")
+    log(f"⏸️ Bot gepauzeerd tot {until.strftime('%Y-%m-%d %H:%M UTC')} — {reason}")
+
+
+def activate_bot(conn) -> None:
+    """Activeert de bot na START command."""
+    set_bot_state(conn, "bot_active", "true")
+    set_bot_state(conn, "bot_paused", "false")
+    set_bot_state(conn, "bot_paused_until", "")
+    set_bot_state(conn, "bot_paused_reason", "")
+    log("✅ Bot geactiveerd")
+
+
+def deactivate_bot(conn) -> None:
+    """Deactiveert de bot na STOP command."""
+    set_bot_state(conn, "bot_active", "false")
+    log("🔴 Bot gestopt via STOP command")
+
+
+def get_bot_status_line(conn) -> str:
+    """Geeft één regel met bot status voor in berichten."""
+    if not is_bot_active(conn):
+        return "🔴 Bot: GESTOPT"
+    elif is_bot_paused(conn):
+        reason = get_bot_state(conn, "bot_paused_reason", "")
+        until  = get_bot_state(conn, "bot_paused_until", "")
+        return f"⏸️ Bot: GEPAUZEERD — {reason} (tot {until[:16]})"
+    return "🟢 Bot: ACTIEF"
 
 
 # ============================================================
-# DATA OPHALEN
+# DATABASE QUERY HELPERS
 # ============================================================
 def get_real_trades_today(conn) -> int:
+    """Telt het aantal echte trades vandaag."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT COUNT(*) FROM public.pending_approvals
-            WHERE status = 'CONSUMED'
-              AND DATE(consumed_at AT TIME ZONE 'UTC') = %s
+            WHERE status IN ('CONSUMED', 'EXECUTED')
+              AND DATE(COALESCE(consumed_at, created_at) AT TIME ZONE 'UTC') = %s
             """, (utc_day_str(),))
             row = cur.fetchone()
             return safe_int(row[0]) if row else 0
@@ -661,38 +468,26 @@ def get_real_trades_today(conn) -> int:
 
 
 def get_open_real_trades_count(conn) -> int:
-    """Telt open echte trades. Fallback naar live_state.json."""
+    """Telt het aantal open echte trades."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT COUNT(*) FROM public.experience_trades
             WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
-              AND TRIM(UPPER(COALESCE(outcome,''))) IN ('OPEN','UNKNOWN','')
+              AND TRIM(UPPER(COALESCE(outcome,''))) IN ('OPEN','','UNKNOWN')
             """)
             row = cur.fetchone()
-            count = safe_int(row[0]) if row else 0
-            if count > 0:
-                return count
-    except Exception:
-        pass
-
-    # Fallback: live_state.json
-    try:
-        data_dir   = (os.getenv("DATA_DIR") or "").strip() or (
-            "/data" if os.path.isdir("/data") else "/tmp/data"
-        )
-        state_path = os.path.join(data_dir, "live_state.json")
-        if os.path.exists(state_path):
-            with open(state_path, "r", encoding="utf-8") as f:
-                state = json.load(f)
-            return len(state.get("open_trades") or [])
-    except Exception:
-        pass
-    return 0
+            return safe_int(row[0]) if row else 0
+    except Exception as e:
+        log(f"⚠️ get_open_real_trades_count fout: {e}")
+        return 0
 
 
 def get_daily_pnl(conn, day: str) -> Tuple[int, int, float]:
-    """Geeft (wins, losses, pnl_eur) terug voor een dag."""
+    """
+    Haalt wins, losses en PnL op voor een specifieke dag.
+    Identiek aan trade_monitor.py get_daily_pnl().
+    """
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -713,61 +508,45 @@ def get_daily_pnl(conn, day: str) -> Tuple[int, int, float]:
             row = cur.fetchone()
             if row:
                 return safe_int(row[0]), safe_int(row[1]), safe_float(row[2])
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"⚠️ get_daily_pnl fout: {e}")
     return 0, 0, 0.0
 
 
-def get_shadow_daily(conn, day: str) -> Tuple[int, int]:
-    """Shadow trades wins + losses voor een dag."""
+def get_rolling_stats(conn, days: int) -> Tuple[int, int, float]:
+    """Haalt wins, losses, PnL over de laatste X dagen."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT
                 COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses,
+                COALESCE(SUM(
+                    CASE
+                        WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
+                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
+                        ELSE 0
+                    END
+                ), 0) AS pnl
             FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) = 'SHADOW'
-              AND DATE(COALESCE(exit_time, updated_at) AT TIME ZONE 'UTC') = %s
-            """, (day,))
+            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+              AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+            """, (days,))
             row = cur.fetchone()
             if row:
-                return safe_int(row[0]), safe_int(row[1])
-    except Exception:
-        pass
-    return 0, 0
-
-
-def get_sim_daily(conn, day: str) -> Tuple[int, int]:
-    """Simulatie trades wins + losses voor een dag."""
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
-            FROM public.experience_trades
-            WHERE UPPER(COALESCE(source,'')) = 'SIM'
-              AND DATE(COALESCE(exit_time, updated_at) AT TIME ZONE 'UTC') = %s
-            """, (day,))
-            row = cur.fetchone()
-            if row:
-                return safe_int(row[0]), safe_int(row[1])
-    except Exception:
-        pass
-    return 0, 0
-
-
-def get_bot_status_line(conn) -> str:
-    """Geeft bot status regel terug voor in elk bericht."""
-    if not is_bot_active(conn):
-        return "🔴 Bot: GESTOPT"
-    elif is_bot_paused(conn):
-        return "⏸️ Bot: GEPAUZEERD"
-    return "🟢 Bot: ACTIEF"
+                return safe_int(row[0]), safe_int(row[1]), safe_float(row[2])
+    except Exception as e:
+        log(f"⚠️ get_rolling_stats fout: {e}")
+    return 0, 0, 0.0
 
 
 def get_consecutive_losses(conn) -> int:
+    """
+    Telt opeenvolgende verliezen.
+    Identiek aan trade_monitor.py en live_trader.py.
+    Stopt bij eerste win — dus alleen recente streak.
+    """
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -789,39 +568,154 @@ def get_consecutive_losses(conn) -> int:
         return 0
 
 
+def get_profit_factor(conn, days: int = 30) -> float:
+    """
+    Berekent profit factor over de laatste X dagen.
+    Profit Factor = totale winst / totale verlies.
+    Doel: >1.5 voor een gezond systeem.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN'
+                    THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END), 0) AS totaal_winst,
+                COALESCE(SUM(CASE WHEN UPPER(outcome)='LOSS'
+                    THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END), 0.001) AS totaal_verlies
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+              AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '1 day' * %s
+            """, (days,))
+            row = cur.fetchone()
+            if row:
+                winst   = safe_float(row[0])
+                verlies = max(safe_float(row[1]), 0.001)
+                return round(winst / verlies, 2)
+    except Exception:
+        pass
+    return 0.0
+
+
+def get_open_trades_detail(conn) -> List[Dict]:
+    """Haalt details van open trades op voor TRADES command."""
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+            SELECT
+                COALESCE(coin, symbol, 'UNKNOWN') AS coin,
+                entry,
+                COALESCE(stop_loss, stop) AS stop,
+                target,
+                setup_type,
+                market_regime,
+                score,
+                entry_time,
+                amount_eur
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND TRIM(UPPER(COALESCE(outcome,''))) IN ('OPEN','','UNKNOWN')
+            ORDER BY entry_time DESC
+            LIMIT 5
+            """)
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        log(f"⚠️ get_open_trades_detail fout: {e}")
+        return []
+
+
+def get_pending_approvals_list(conn, limit: int = 5) -> List[Dict]:
+    """Haalt actieve pre-BUY signals op."""
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+            SELECT id, symbol, setup_type, regime, score, chance,
+                   confidence, entry, stop, target, expires_at,
+                   bitvavo_market, why_tag
+            FROM public.pending_approvals
+            WHERE COALESCE(status,'PENDING') IN ('PENDING','APPROVED')
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY score DESC
+            LIMIT %s
+            """, (limit,))
+            return [dict(r) for r in cur.fetchall()]
+    except Exception as e:
+        log(f"⚠️ get_pending_approvals_list fout: {e}")
+        return []
+
+
+def get_table_columns(conn, table: str) -> List[str]:
+    """Haalt kolomnamen op van een tabel."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = %s
+            ORDER BY ordinal_position
+            """, (table,))
+            return [row[0] for row in cur.fetchall()]
+    except Exception:
+        return []
+
+
+def table_has_column(conn, table: str, column: str) -> bool:
+    """Controleert of een kolom bestaat in een tabel."""
+    return column in get_table_columns(conn, table)
+
+
 # ============================================================
 # LIMIETEN CHECK
+# Identiek aan live_trader.py check_trading_limits
+# Bot stopt NOOIT automatisch — jij via STOP
 # ============================================================
 def check_trading_limits(conn) -> Tuple[bool, str]:
+    """
+    Controleert alle trading limieten voor een BUY.
+
+    Controles (in volgorde):
+    1. Bot actief?
+    2. Bot gepauzeerd?
+    3. Binnen trading hours?
+    4. Daglimiet trades bereikt?
+    5. Max open trades bereikt?
+
+    Opmerking: consecutive losses en daily stop loss stoppen
+    de bot NIET automatisch — alleen informeren via WhatsApp.
+    Jij beslist via STOP command.
+
+    Geeft (ok, reden) terug.
+    """
     if not is_bot_active(conn):
-        return False, "Bot GESTOPT"
+        return False, "Bot GESTOPT — stuur START om te beginnen"
 
     if is_bot_paused(conn):
         reason = get_bot_state(conn, "bot_paused_reason", "onbekend")
         until  = get_bot_state(conn, "bot_paused_until", "")
-        return False, f"Bot GEPAUZEERD: {reason} (tot {until})"
+        return False, f"Bot GEPAUZEERD: {reason} (tot {until[:16]})"
 
     if not is_trading_hours():
-        return False, f"Buiten hours ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
-    # Weekend: gewoon doorgaan — geen blokkering
+        return False, (
+            f"Buiten trading hours "
+            f"({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
+        )
 
+    # Weekend: gewoon doorgaan — geen blokkering
+    # Dagbudget: alleen informatief — bot gaat door
     _, _, daily_pnl = get_daily_pnl(conn, utc_day_str())
     if daily_pnl <= -DAILY_STOP_LOSS_EUR:
-        # Bot loopt gewoon door — jij beslist via STOP
-        log(f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — bot gaat door")
+        log(f"ℹ️ Dagbudget bereikt: {daily_pnl:.2f} — bot gaat door (jij beslist via STOP)")
 
     trades_today = get_real_trades_today(conn)
     if trades_today >= MAX_REAL_TRADES_PER_DAY:
-        return False, f"Daglimiet: {trades_today}/{MAX_REAL_TRADES_PER_DAY}"
+        return False, f"Daglimiet bereikt: {trades_today}/{MAX_REAL_TRADES_PER_DAY} trades"
 
-    open_trades = get_open_real_trades_count(conn)
-    if open_trades >= MAX_OPEN_REAL_TRADES:
-        return False, f"Max open: {open_trades}/{MAX_OPEN_REAL_TRADES}"
+    open_count = get_open_real_trades_count(conn)
+    if open_count >= MAX_OPEN_REAL_TRADES:
+        return False, f"Max open trades bereikt: {open_count}/{MAX_OPEN_REAL_TRADES}"
 
+    # Consecutive losses: alleen informatief
     consecutive = get_consecutive_losses(conn)
     if consecutive >= MAX_CONSECUTIVE_LOSSES:
-        # Bot loopt gewoon door — alleen informatief loggen
-        # Jij beslist zelf via STOP command
         log(f"ℹ️ {consecutive}x verlies op rij — bot gaat door (jij beslist via STOP)")
 
     return True, "OK"
@@ -829,849 +723,1138 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
 
 # ============================================================
 # TWILIO AUTHENTICATIE
+# Controleert of het bericht echt van Twilio komt
 # ============================================================
 def verify_twilio_signature() -> bool:
+    """
+    Verifieert Twilio webhook signature.
+    Voorkomt dat onbevoegden commands kunnen sturen.
+    Alleen in productie actief als Twilio beschikbaar is.
+    """
     if not TWILIO_AVAILABLE or not TWILIO_AUTH_TOKEN:
-        log("⚠️ Twilio auth overgeslagen (dev mode)")
-        return True
+        log("⚠️ Twilio auth overgeslagen (geen Twilio of token)")
+        return True  # Dev mode
     try:
         validator = RequestValidator(TWILIO_AUTH_TOKEN)
+        signature = request.headers.get("X-Twilio-Signature", "")
         return validator.validate(
             request.url,
             request.form.to_dict(),
-            request.headers.get("X-Twilio-Signature", ""),
+            signature,
         )
     except Exception as e:
-        log(f"Twilio verificatie fout: {e}")
+        log(f"⚠️ Twilio verificatie fout: {e}")
         return False
 
 
-# ============================================================
-# AUTO BUY
-# ============================================================
-def _get_buy_fn(mode: str):
-    module_path = "trading.live_trader" if mode == "live" else "trading.paper_trader"
-    mod = __import__(module_path, fromlist=["buy_eur"])
-    fn  = getattr(mod, "buy_eur", None)
-    if not callable(fn):
-        raise AttributeError(f"buy_eur niet in {module_path}")
-    return fn
-
-
-def _call_buy(buy_fn, symbol: str, amount_eur: float, meta: Dict[str, Any]) -> Any:
-    try:
-        sig    = inspect.signature(buy_fn)
-        kwargs = {"meta": meta} if "meta" in sig.parameters else {}
-        return buy_fn(symbol, amount_eur, **kwargs)
-    except Exception:
-        return buy_fn(symbol, amount_eur)
-
-
-def execute_auto_buy(prebuy: Dict[str, Any]) -> Tuple[bool, str, str]:
-    symbol = safe_str(prebuy.get("symbol"))
-    if not symbol:
-        return False, "Symbol ontbreekt", ""
-
-    meta = {
-        "prebuy_id":     safe_str(prebuy.get("id")),
-        "entry":         safe_float(prebuy.get("entry")),
-        "stop":          safe_float(prebuy.get("stop")),
-        "stop_loss":     safe_float(prebuy.get("stop")),
-        "target":        safe_float(prebuy.get("target")),
-        "setup_type":    safe_str(prebuy.get("setup_type"), "UNKNOWN"),
-        "regime":        safe_str(prebuy.get("regime"), "UNKNOWN"),
-        "timeframe":     safe_str(prebuy.get("timeframe"), "4h"),
-        "score":         safe_int(prebuy.get("score")),
-        "raw_score":     safe_int(prebuy.get("score")),
-        "chance":        safe_int(prebuy.get("chance")),
-        "confidence":    safe_int(prebuy.get("confidence")),
-        "label":         "GO",
-        "amount_eur":    MAX_PER_TRADE_EUR,
-        "user_decision": "AUTO",
-        "bot_decision":  "AUTO_BUY",
-    }
-
-    modes = (
-        ["live"]         if TRADER_MODE == "live"  else
-        ["paper"]        if TRADER_MODE == "paper" else
-        ["live", "paper"]
-    )
-
-    for mode in modes:
-        try:
-            buy_fn = _get_buy_fn(mode)
-            result = _call_buy(buy_fn, symbol, MAX_PER_TRADE_EUR, meta)
-            if isinstance(result, dict):
-                if result.get("ok") is True:
-                    price = safe_float(result.get("price"), meta["entry"])
-                    return True, f"{symbol} €{MAX_PER_TRADE_EUR:.2f} @ {price:.6f}", mode
-                log(f"BUY {mode} niet ok: {result}")
-            else:
-                return True, f"{symbol} €{MAX_PER_TRADE_EUR:.2f}", mode
-        except Exception as e:
-            log(f"BUY {mode} fout: {type(e).__name__}: {e}")
-
-    return False, f"BUY mislukt voor {symbol}", ""
-
-
-def get_pending_by_id(conn, prebuy_id: str) -> Optional[Dict[str, Any]]:
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute("""
-        SELECT id, symbol, setup_type, regime, score, chance, confidence,
-               entry, stop, target, status, created_at, expires_at,
-               timeframe, bitvavo_market
-        FROM public.pending_approvals WHERE id=%s LIMIT 1
-        """, (prebuy_id,))
-        row = cur.fetchone()
-        return dict(row) if row else None
-
-
-def mark_consumed(conn, prebuy_id: str) -> None:
-    with conn.cursor() as cur:
-        cur.execute("""
-        UPDATE public.pending_approvals
-        SET status='CONSUMED', consumed_at=NOW()
-        WHERE id=%s
-        """, (prebuy_id,))
-    conn.commit()
-
-
-def process_auto_buy(conn, prebuy: Dict[str, Any]) -> None:
-    symbol    = safe_str(prebuy.get("symbol"))
-    prebuy_id = safe_str(prebuy.get("id"))
-
-    mag, reden = check_trading_limits(conn)
-    if not mag:
-        log(f"Auto BUY geblokkeerd ({symbol}): {reden}")
-        return
-
-    ok, bericht, mode = execute_auto_buy(prebuy)
-    if ok:
-        mark_consumed(conn, prebuy_id)
-        log(f"✅ Auto BUY: {bericht} via {mode}")
-    else:
-        log(f"❌ Auto BUY mislukt: {bericht}")
-
-
-# ============================================================
-# RAPPORT
-# ============================================================
-def generate_daily_rapport(conn) -> str:
+def verify_internal_auth() -> bool:
     """
-    Dagrapport:
-    - Echte trades: wins / losses / win% / PnL
-    - Shadow trades: wins / losses (leerdata)
-
-    Als vandaag nog geen trades = toon gisteren automatisch.
+    Verifieert interne bot-naar-bot authenticatie.
+    Gebruikt voor /auto_buy en /send_* endpoints.
     """
-    today    = utc_day_str()
-    gisteren = utc_day_str(-1)
-
-    wins_v, losses_v, _ = get_daily_pnl(conn, today)
-    if wins_v + losses_v == 0:
-        rapport_dag = gisteren
-        dag_label   = f"Gisteren ({gisteren})"
-    else:
-        rapport_dag = today
-        dag_label   = f"Vandaag ({today})"
-
-    wins, losses, pnl          = get_daily_pnl(conn, rapport_dag)
-    shadow_wins, shadow_losses = get_shadow_daily(conn, rapport_dag)
-    sim_wins, sim_losses       = get_sim_daily(conn, rapport_dag)
-    bot_lijn                   = get_bot_status_line(conn)
-
-    total        = wins + losses
-    winrate      = (wins / total * 100)          if total > 0        else 0.0
-    shadow_total = shadow_wins + shadow_losses
-    shadow_wr    = (shadow_wins / shadow_total * 100) if shadow_total > 0 else 0.0
-    sim_total    = sim_wins + sim_losses
-    sim_wr       = (sim_wins / sim_total * 100)  if sim_total > 0    else 0.0
-    pnl_teken    = "+" if pnl >= 0 else ""
-
-    claude = claude_analyseer_dagrapport(
-        wins, losses, winrate, pnl, shadow_wr, sim_wr
-    )
-
-    return (
-        f"📊 DAGRAPPORT — {dag_label}\n"
-        f"{bot_lijn}\n"
-        f"{'─' * 28}\n\n"
-        f"💶 ECHTE TRADES:\n"
-        f"✅ Goed:     {wins} trades\n"
-        f"❌ Fout:     {losses} trades\n"
-        f"📈 Win rate: {winrate:.1f}%\n"
-        f"💰 Resultaat: {pnl_teken}€{pnl:.2f}\n\n"
-        f"🎭 SHADOW (leerdata):\n"
-        f"✅ Goed:     {shadow_wins} trades\n"
-        f"❌ Fout:     {shadow_losses} trades\n"
-        f"📈 Win rate: {shadow_wr:.1f}%\n\n"
-        f"🔮 SIMULATIE:\n"
-        f"✅ Goed:     {sim_wins} trades\n"
-        f"❌ Fout:     {sim_losses} trades\n"
-        f"📈 Win rate: {sim_wr:.1f}%"
-        f"{claude}"
-    )
+    auth_header = request.headers.get("X-Bot-Auth", "")
+    return auth_header == BOT_INTERNAL_SECRET
 
 
 # ============================================================
-# STATUS FORMATERING
+# LIVE TRADER AANROEPEN
 # ============================================================
-def fmt_status(conn) -> str:
-    bot_active   = is_bot_active(conn)
-    bot_paused   = is_bot_paused(conn)
-    pause_reason = get_bot_state(conn, "bot_paused_reason", "")
-    pause_until  = get_bot_state(conn, "bot_paused_until", "")
+def _call_live_trader_buy(
+    symbol: str,
+    amount_eur: float,
+    meta: Optional[Dict] = None,
+) -> Tuple[bool, str]:
+    """
+    Roept live_trader.buy_eur() aan.
 
-    if not bot_active:
-        bot_status = "🔴 GESTOPT"
-    elif bot_paused:
-        bot_status = f"⏸️ GEPAUZEERD\n  Reden: {pause_reason}\n  Tot:   {pause_until}"
-    else:
-        bot_status = "🟢 ACTIEF"
+    Fix: auto mode — live eerst, paper als fallback.
+    Was: paper eerst, dan live. Omgekeerd wat we wilen.
 
-    trades_today = get_real_trades_today(conn)
-    open_trades  = get_open_real_trades_count(conn)
-    consecutive  = get_consecutive_losses(conn)
-    _, _, pnl    = get_daily_pnl(conn, utc_day_str())
-
-    return (
-        f"🤖 BOT STATUS\n"
-        f"{'─' * 25}\n\n"
-        f"Status: {bot_status}\n\n"
-        f"📊 VANDAAG:\n"
-        f"• Trades:  {trades_today}/{MAX_REAL_TRADES_PER_DAY}\n"
-        f"• Open:    {open_trades}/{MAX_OPEN_REAL_TRADES}\n"
-        f"• PnL:     €{pnl:.2f}\n"
-        f"• Budget:  €{max(0.0, DAILY_STOP_LOSS_EUR - abs(pnl)):.2f} over\n\n"
-        f"⏰ CONDITIES:\n"
-        f"• Trading hours: {'✅' if is_trading_hours() else '❌'} ({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00)\n"
-        f"• Verlies rij:   {consecutive}/{MAX_CONSECUTIVE_LOSSES}\n\n"
-        f"Commands: START | STOP | TRADES | RAPPORT | HELP"
-    )
-
-
-HELP_TEXT = (
-    f"🤖 CRYPTO AI BOT\n"
-    f"{'─' * 25}\n\n"
-    f"AAN/UIT:\n"
-    f"• START       → bot begint traden\n"
-    f"• STOP        → bot stopt\n\n"
-    f"INFO:\n"
-    f"• STATUS      → bot status\n"
-    f"• TRADES      → open trades\n"
-    f"• RAPPORT     → dagrapport\n"
-    f"• WEEKRAPPORT → weekoverzicht\n"
-    f"• MAANDRAPPORT → maandoverzicht\n"
-    f"• HELP        → dit overzicht\n\n"
-    f"AUTOMATISCH:\n"
-    f"• Dagelijks   08:00 UTC\n"
-    f"• Wekelijks   maandag 08:00 UTC\n"
-    f"• Maandelijks 1e v/d maand 08:00 UTC\n\n"
-    f"LIMIETEN:\n"
-    f"• €{MAX_PER_TRADE_EUR:.2f} per trade\n"
-    f"• Max {MAX_REAL_TRADES_PER_DAY} trades/dag\n"
-    f"• Max {MAX_OPEN_REAL_TRADES} open tegelijk\n"
-    f"• Stop bij €{DAILY_STOP_LOSS_EUR:.2f} verlies/dag\n"
-    f"• Pauze na {MAX_CONSECUTIVE_LOSSES}x verlies\n"
-    f"• {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC\n\n"
-    f"🧠 Claude AI analyseert elk rapport.\n"
-    f"Bot handelt volledig automatisch.\n"
-    f"7 dagen per week — ook weekend."
-)
-
-
-# ============================================================
-# FLASK ROUTES
-# ============================================================
-@app.get("/")
-def root():
-    return "Crypto AI Bot — Webhook actief", 200
-
-
-@app.get("/healthz")
-def healthz():
-    return "OK", 200
-
-
-@app.get("/health")
-def health_check():
-    status = {
-        "ok":            True,
-        "timestamp":     now_utc().isoformat(),
-        "database":      False,
-        "twilio":        bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN),
-        "claude_api":    bool(ANTHROPIC_API_KEY),
-        "trading_hours": is_trading_hours(),
-        "weekend":       is_weekend(),
-        "trader_mode":   TRADER_MODE,
-    }
+    Geeft (success, message) terug.
+    """
+    meta = meta or {}
     try:
-        with db_connect() as conn:
+        # Importeer live_trader dynamisch
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+        if TRADER_MODE in ("live", "auto"):
+            try:
+                from trading.live_trader import buy_eur as live_buy
+                ok, msg = live_buy(symbol, amount_eur=amount_eur, meta=meta)
+                if ok:
+                    return True, f"✅ LIVE BUY: {symbol} €{amount_eur:.2f}"
+                log(f"⚠️ Live buy mislukt: {msg}")
+                if TRADER_MODE == "live":
+                    return False, f"Live BUY mislukt: {msg}"
+                # auto mode: probeer paper als live mislukt
+            except ImportError:
+                log("⚠️ live_trader niet gevonden — probeer paper")
+
+        if TRADER_MODE in ("paper", "auto"):
+            try:
+                from trading.paper_trader import buy as paper_buy
+                ok, msg = paper_buy(symbol, amount_eur=amount_eur, meta=meta)
+                if ok:
+                    return True, f"📄 PAPER BUY: {symbol} €{amount_eur:.2f}"
+                return False, f"Paper BUY mislukt: {msg}"
+            except ImportError:
+                log("⚠️ paper_trader niet gevonden")
+
+        return False, f"Geen trader beschikbaar voor mode: {TRADER_MODE}"
+
+    except Exception as e:
+        log(f"❌ _call_live_trader_buy fout: {type(e).__name__}: {e}")
+        return False, str(e)
+
+
+# ============================================================
+# AUTO BUY — wordt getriggerd door multi_coin_score.py
+# ============================================================
+def execute_auto_buy(prebuy_id: str, conn) -> Tuple[bool, str]:
+    """
+    Voert een automatische BUY uit op basis van een Pre-BUY ID.
+
+    Stappen:
+    1. Pre-BUY ophalen uit DB
+    2. Alle limieten controleren
+    3. BUY uitvoeren via live_trader
+    4. Pre-BUY status updaten naar CONSUMED
+    5. WhatsApp notificatie (ALLEEN bij kritieke fouten)
+
+    Bot koopt altijd automatisch — geen YES/NO meer nodig.
+    """
+    try:
+        # Pre-BUY ophalen
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("""
+            SELECT id, symbol, setup_type, regime, score, chance, confidence,
+                   entry, stop, target, expires_at, bitvavo_market,
+                   timeframe, why_tag, exp_n, exp_win_rate
+            FROM public.pending_approvals
+            WHERE id = %s
+              AND COALESCE(status,'PENDING') = 'PENDING'
+              AND (expires_at IS NULL OR expires_at > NOW())
+            LIMIT 1
+            """, (prebuy_id,))
+            row = cur.fetchone()
+
+        if not row:
+            return False, f"Pre-BUY {prebuy_id} niet gevonden of verlopen"
+
+        prebuy = dict(row)
+        symbol = safe_str(prebuy.get("symbol"))
+
+        if not symbol:
+            return False, "Geen symbol in Pre-BUY"
+
+        # Limieten check
+        ok, reason = check_trading_limits(conn)
+        if not ok:
+            log(f"⚠️ Auto BUY geblokkeerd ({symbol}): {reason}")
+            return False, reason
+
+        # Meta voor live_trader
+        meta = {
+            "prebuy_id":    prebuy_id,
+            "symbol":       symbol,
+            "entry":        safe_float(prebuy.get("entry")),
+            "stop":         safe_float(prebuy.get("stop")),
+            "target":       safe_float(prebuy.get("target")),
+            "setup_type":   safe_str(prebuy.get("setup_type")),
+            "regime":       safe_str(prebuy.get("regime")),
+            "score":        safe_int(prebuy.get("score")),
+            "timeframe":    safe_str(prebuy.get("timeframe"), "4h"),
+            "market":       safe_str(prebuy.get("bitvavo_market")),
+            "chance":       safe_int(prebuy.get("chance")),
+            "confidence":   safe_int(prebuy.get("confidence")),
+            "why_tag":      safe_str(prebuy.get("why_tag")),
+            "exp_n":        safe_int(prebuy.get("exp_n")),
+            "exp_win_rate": safe_float(prebuy.get("exp_win_rate")),
+        }
+
+        # BUY uitvoeren
+        success, msg = _call_live_trader_buy(symbol, MAX_PER_TRADE_EUR, meta)
+
+        if success:
+            # Status updaten naar CONSUMED
             with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-            status["database"]     = True
-            status["bot_active"]   = is_bot_active(conn)
-            status["bot_paused"]   = is_bot_paused(conn)
-            status["trades_today"] = get_real_trades_today(conn)
-            status["open_trades"]  = get_open_real_trades_count(conn)
-            _, _, pnl = get_daily_pnl(conn, utc_day_str())
-            status["daily_pnl"]    = pnl
-    except Exception as e:
-        status["ok"]       = False
-        status["db_error"] = str(e)
-    return status, 200
+                cur.execute("""
+                UPDATE public.pending_approvals
+                SET status='CONSUMED', consumed_at=NOW()
+                WHERE id=%s
+                """, (prebuy_id,))
+            conn.commit()
+            log(f"✅ Auto BUY uitgevoerd: {symbol} (prebuy={prebuy_id})")
+        else:
+            log(f"❌ Auto BUY mislukt: {symbol}: {msg}")
 
-
-@app.post("/whatsapp")
-def whatsapp():
-    """Hoofdroute — ontvangt WhatsApp commands."""
-    try:
-        if not verify_twilio_signature():
-            log("⚠️ Twilio signature mislukt")
-            return ("Unauthorized", 403)
-
-        body = (request.values.get("Body") or "").strip()
-        if not body:
-            return twiml_response("Stuur een command. Typ HELP.")
-
-        parts = body.split()
-        cmd   = parts[0].upper() if parts else "HELP"
-
-        if not DATABASE_URL:
-            return twiml_response("❌ DATABASE_URL ontbreekt.")
-
-        with db_connect() as conn:
-            ensure_bot_state_table(conn)
-
-            # ── START ──────────────────────────────────────
-            if cmd == "START":
-                set_bot_state(conn, "bot_active",       "true")
-                set_bot_state(conn, "bot_paused",       "false")
-                set_bot_state(conn, "bot_paused_until", "")
-                set_bot_state(conn, "bot_paused_reason","")
-
-                trades_today = get_real_trades_today(conn)
-                open_trades  = get_open_real_trades_count(conn)
-
-                return twiml_response(
-                    f"{get_bot_status_line(conn)}\n"
-                    f"🟢 BOT GESTART\n"
-                    f"{'─' * 25}\n\n"
-                    f"Bot handelt automatisch.\n"
-                    f"Bedrag: €{MAX_PER_TRADE_EUR:.2f} per trade\n"
-                    f"Hours:  {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC\n\n"
-                    f"Vandaag: {trades_today}/{MAX_REAL_TRADES_PER_DAY} trades\n"
-                    f"Open:    {open_trades}/{MAX_OPEN_REAL_TRADES}\n\n"
-                    f"Stuur STOP om te stoppen."
-                )
-
-            # ── STOP ───────────────────────────────────────
-            if cmd == "STOP":
-                set_bot_state(conn, "bot_active", "false")
-                open_trades = get_open_real_trades_count(conn)
-
-                return twiml_response(
-                    f"{get_bot_status_line(conn)}\n"
-                    f"🔴 BOT GESTOPT\n"
-                    f"{'─' * 25}\n\n"
-                    f"Geen nieuwe trades.\n"
-                    f"Open trades bewaakt: {open_trades}\n\n"
-                    f"Stuur START om te hervatten."
-                )
-
-            # ── STATUS ─────────────────────────────────────
-            if cmd == "STATUS":
-                return twiml_response(fmt_status(conn))
-
-            # ── TRADES ─────────────────────────────────────
-            if cmd == "TRADES":
-                try:
-                    with conn.cursor(
-                        cursor_factory=psycopg2.extras.RealDictCursor
-                    ) as cur:
-                        cur.execute("""
-                        SELECT coin, entry, stop, target, entry_time
-                        FROM public.experience_trades
-                        WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
-                          AND TRIM(UPPER(COALESCE(outcome,'')))
-                              IN ('OPEN','UNKNOWN','')
-                        ORDER BY entry_time DESC
-                        LIMIT 5
-                        """)
-                        rows = cur.fetchall()
-
-                    if not rows:
-                        return twiml_response(
-                            f"{get_bot_status_line(conn)}\n"
-                            f"📂 OPEN TRADES\n"
-                            f"{'─' * 25}\n\n"
-                            f"Geen open trades.\n"
-                            f"Bot scant de markt."
-                        )
-
-                    lines = [f"{get_bot_status_line(conn)}\n📂 OPEN TRADES ({len(rows)})\n{'─' * 25}"]
-                    for r in rows:
-                        coin   = safe_str(r.get("coin"), "-")
-                        entry  = safe_float(r.get("entry"))
-                        stop   = safe_float(r.get("stop"))
-                        target = safe_float(r.get("target"))
-                        lines.append(
-                            f"\n• {coin}\n"
-                            f"  Entry:  {entry:.6f}\n"
-                            f"  Stop:   {stop:.6f}\n"
-                            f"  Target: {target:.6f}"
-                        )
-                    return twiml_response("\n".join(lines))
-
-                except Exception as e:
-                    return twiml_response(
-                        f"Trades ophalen mislukt:\n{type(e).__name__}"
-                    )
-
-            # ── RAPPORT ────────────────────────────────────
-            if cmd == "RAPPORT":
-                return twiml_response(generate_daily_rapport(conn))
-
-            # ── WEEKRAPPORT ────────────────────────────────
-            if cmd == "WEEKRAPPORT":
-                return twiml_response(generate_weekly_rapport(conn))
-
-            # ── MAANDRAPPORT ───────────────────────────────
-            if cmd == "MAANDRAPPORT":
-                return twiml_response(generate_monthly_rapport(conn))
-
-            # ── ADVIES ─────────────────────────────────────
-            if cmd == "ADVIES":
-                # Handmatig Claude leeranalyse opvragen
-                return twiml_response(claude_trade_leeranalyse(conn))
-
-            # ── HEALTH ─────────────────────────────────────
-            if cmd == "HEALTH":
-                # Handmatig health check opvragen
-                return twiml_response(claude_health_check(conn))
-
-            # ── HELP ───────────────────────────────────────
-            if cmd in ("HELP", "?"):
-                return twiml_response(HELP_TEXT)
-
-            # ── Onbekend ───────────────────────────────────
-            return twiml_response(f"Onbekend: {cmd}\n\nStuur HELP.")
+        return success, msg
 
     except Exception as e:
-        log(f"❌ ERROR /whatsapp: {type(e).__name__}: {e}")
-        log(traceback.format_exc())
-        return twiml_response(
-            "⚠️ Interne fout.\n"
-            "Open trades worden bewaakt."
-        )
+        log(f"❌ execute_auto_buy fout: {type(e).__name__}: {e}")
+        report_error(e, "execute_auto_buy", symbol if 'symbol' in dir() else "", "HOOG")
+        return False, str(e)
 
 
 # ============================================================
-# AUTO BUY ROUTE — multi_coin_score.py roept dit aan
+# RAPPORT GENERATORS — voor dagelijks/wekelijks/maandelijks
 # ============================================================
-@app.post("/auto_buy")
-def auto_buy_route():
+def claude_analyseer_dagrapport(
+    wins_real:   int,
+    losses_real: int,
+    pnl_real:    float,
+    wins_shadow: int,
+    losses_shadow: int,
+    wins_sim:    int,
+    losses_sim:  int,
+    pf_30d:      float,
+    open_count:  int,
+) -> str:
+    """
+    Claude analyseert de dagelijkse performance.
+    Geeft een korte maar inzichtelijke analyse terug.
+    """
+    total_real = wins_real + losses_real
+    wr_real = (wins_real / total_real * 100) if total_real > 0 else 0.0
+
+    prompt = f"""
+Je bent een crypto trading bot coach die dagelijkse performance analyseert.
+Geef een korte analyse (3-4 zinnen) in het Nederlands.
+
+ECHTE TRADES GISTEREN:
+- Wins: {wins_real} | Losses: {losses_real} | Win rate: {wr_real:.1f}%
+- PnL: €{pnl_real:.2f}
+- Open trades: {open_count}
+
+SHADOW TRADES (leerdata):
+- Wins: {wins_shadow} | Losses: {losses_shadow}
+
+SIMULATIE:
+- Wins: {wins_sim} | Losses: {losses_sim}
+
+PROFIT FACTOR (30d): {pf_30d:.2f}
+
+Analyseer:
+1. Was dit een goede dag? Waarom?
+2. Wat valt op in de data?
+3. Aanbeveling voor vandaag (1 zin)
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=250)
+
+
+def claude_analyseer_weekrapport(
+    week_data: Dict,
+    pf_30d:    float,
+) -> str:
+    """Claude analyseert de wekelijkse performance."""
+    prompt = f"""
+Je bent een crypto trading bot coach die wekelijkse performance analyseert.
+Geef een analyse (4-5 zinnen) in het Nederlands.
+
+WEEK DATA:
+{json.dumps(week_data, indent=2, ensure_ascii=False, default=str)}
+
+PROFIT FACTOR (30d): {pf_30d:.2f}
+
+Analyseer:
+1. Beste setup type van de week
+2. Slechte setups die vermeden moeten worden
+3. Win rate trend (verbetering of verslechtering?)
+4. Concrete aanbeveling voor volgende week
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=350)
+
+
+def claude_analyseer_maandrapport(
+    maand_data: Dict,
+    sim_wr:     float,
+    live_wr:    float,
+) -> str:
+    """Claude analyseert de maandelijkse performance en edge decay."""
+    edge_diff = sim_wr - live_wr
+    prompt = f"""
+Je bent een crypto trading bot coach die maandelijkse performance analyseert.
+Geef een uitgebreide analyse (5-6 zinnen) in het Nederlands.
+
+MAAND DATA:
+{json.dumps(maand_data, indent=2, ensure_ascii=False, default=str)}
+
+EDGE DECAY CHECK:
+- Sim win rate: {sim_wr:.1f}%
+- Live win rate: {live_wr:.1f}%
+- Verschil: {edge_diff:.1f}% {'⚠️ ZORGWEKKEND' if edge_diff > 10 else '✅ OK'}
+
+Analyseer:
+1. Maandresultaat — positief of negatief?
+2. Beste en slechtste coins/setups
+3. Edge decay — werkt strategie nog goed live?
+4. Parameter aanpassingen aanbevolen?
+5. Doel voor volgende maand
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=400)
+
+
+def claude_trade_leeranalyse(conn) -> str:
+    """
+    Claude analyseert alle trades voor leerpatronen.
+    Stuurt elke 2 weken via /send_leeranalyse.
+    """
+    # Haal scoreboard op
     try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-
-        data      = request.get_json(force=True) or {}
-        prebuy_id = safe_str(data.get("prebuy_id"))
-        if not prebuy_id:
-            return {"ok": False, "error": "prebuy_id ontbreekt"}, 400
-
-        with db_connect() as conn:
-            ensure_bot_state_table(conn)
-            prebuy = get_pending_by_id(conn, prebuy_id)
-            if not prebuy:
-                return {"ok": False, "error": "prebuy niet gevonden"}, 404
-            process_auto_buy(conn, prebuy)
-            return {"ok": True, "prebuy_id": prebuy_id}
-
-    except Exception as e:
-        log(f"Auto buy route fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
-# ============================================================
-# DAGRAPPORT ROUTE — Render Cron 08:00 UTC elke dag
-# ============================================================
-@app.post("/send_daily_rapport")
-def send_daily_rapport_route():
-    """
-    Render Cron instelling:
-    Schedule: 0 8 * * *
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_daily_rapport
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-
-        with db_connect() as conn:
-            rapport = generate_daily_rapport(conn)
-
-        ok = send_whatsapp(rapport)
-        log(f"Dagrapport verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "rapport": rapport}
-
-    except Exception as e:
-        log(f"Dagrapport fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
-# ============================================================
-# WEEKRAPPORT ROUTE — Render Cron maandag 08:00 UTC
-# ============================================================
-def generate_weekly_rapport(conn) -> str:
-    """
-    Weekrapport — afgelopen 7 dagen.
-    Echte trades + shadow + sim.
-    """
-    today     = now_utc()
-    week_start = today - timedelta(days=7)
-    week_label = f"{week_start.strftime('%d %b')} – {today.strftime('%d %b %Y')}"
-
-    try:
-        with conn.cursor() as cur:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute("""
-            SELECT
-                UPPER(COALESCE(source,'')) AS src,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses,
-                COALESCE(SUM(
-                    CASE
-                        WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
-                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
-                        ELSE 0
-                    END
-                ), 0) AS pnl
-            FROM public.experience_trades
-            WHERE COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-            GROUP BY 1
-            """)
-            rows = cur.fetchall()
-
-        data = {}
-        for row in rows:
-            src  = safe_str(row[0])
-            wins = safe_int(row[1])
-            loss = safe_int(row[2])
-            pnl  = safe_float(row[3])
-            # Groepeer REAL + LIVE samen
-            key = "REAL" if src in ("REAL", "LIVE") else src
-            if key not in data:
-                data[key] = {"wins": 0, "losses": 0, "pnl": 0.0}
-            data[key]["wins"]   += wins
-            data[key]["losses"] += loss
-            data[key]["pnl"]    += pnl
-
-        def blok(label: str, emoji: str, key: str) -> str:
-            d     = data.get(key, {"wins": 0, "losses": 0, "pnl": 0.0})
-            w     = d["wins"]
-            l     = d["losses"]
-            p     = d["pnl"]
-            total = w + l
-            wr    = (w / total * 100) if total > 0 else 0.0
-            sign  = "+" if p >= 0 else ""
-            return (
-                f"{emoji} {label}:\n"
-                f"✅ Goed:     {w} | ❌ Fout: {l}\n"
-                f"📈 Win rate: {wr:.1f}%\n"
-                f"💰 Resultaat: {sign}€{p:.2f}"
-            )
-
-        claude = claude_analyseer_weekrapport(data)
-        bot_lijn = get_bot_status_line(conn)
-
-        return (
-            f"📅 WEEKRAPPORT\n"
-            f"{bot_lijn}\n"
-            f"{week_label}\n"
-            f"{'─' * 28}\n\n"
-            f"{blok('ECHTE TRADES', '💶', 'REAL')}\n\n"
-            f"{blok('SHADOW', '🎭', 'SHADOW')}\n\n"
-            f"{blok('SIMULATIE', '🔮', 'SIM')}"
-            f"{claude}"
-        )
-
-    except Exception as e:
-        return f"Weekrapport fout: {type(e).__name__}: {e}"
-
-
-@app.post("/send_weekly_rapport")
-def send_weekly_rapport_route():
-    """
-    Render Cron instelling:
-    Schedule: 0 8 * * 1   (elke maandag 08:00 UTC)
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_weekly_rapport
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-        with db_connect() as conn:
-            rapport = generate_weekly_rapport(conn)
-        ok = send_whatsapp(rapport)
-        log(f"Weekrapport verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "rapport": rapport}
-    except Exception as e:
-        log(f"Weekrapport fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
-@app.post("/send_monthly_rapport")
-def send_monthly_rapport_route():
-    """
-    Render Cron instelling:
-    Schedule: 0 8 1 * *   (1e van elke maand 08:00 UTC)
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_monthly_rapport
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-        with db_connect() as conn:
-            rapport = generate_monthly_rapport(conn)
-        ok = send_whatsapp(rapport)
-        log(f"Maandrapport verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "rapport": rapport}
-    except Exception as e:
-        log(f"Maandrapport fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
-# ============================================================
-# HEALTH CHECK ROUTE — Render Cron maandag 09:00 UTC
-# ============================================================
-@app.post("/send_health_check")
-def send_health_check_route():
-    """
-    Claude controleert wekelijks de volledige bot setup.
-    Kijkt naar: config, DB tabellen, win rate trend, edge decay.
-
-    Render Cron instelling:
-    Schedule: 0 9 * * 1   (elke maandag 09:00 UTC — na weekrapport)
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_health_check
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-
-        with db_connect() as conn:
-            health = claude_health_check(conn)
-
-        ok = send_whatsapp(health)
-        log(f"Health check verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "health": health}
-
-    except Exception as e:
-        log(f"Health check fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-
-
-# ============================================================
-# LEERANALYSE ROUTE — Render Cron elke 2 weken zondag 08:00 UTC
-# ============================================================
-@app.post("/send_leeranalyse")
-def send_leeranalyse_route():
-    """
-    Claude analyseert alle trades en geeft verbeteradvies.
-    Vindt patronen, beste/slechtste setups, concrete aanpassingen.
-
-    Render Cron instelling:
-    Schedule: 0 8 1,15 * *   (1e en 15e van de maand 08:00 UTC)
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_leeranalyse
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-
-        with db_connect() as conn:
-            analyse = claude_trade_leeranalyse(conn)
-
-        ok = send_whatsapp(analyse)
-        log(f"Leeranalyse verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "analyse": analyse}
-
-    except Exception as e:
-        log(f"Leeranalyse fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
-def generate_monthly_rapport(conn) -> str:
-    """
-    Maandrapport — afgelopen 30 dagen.
-    Echte trades + shadow + sim + trend.
-    """
-    today      = now_utc()
-    maand_naam = today.strftime("%B %Y")
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                UPPER(COALESCE(source,'')) AS src,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses,
-                COALESCE(SUM(
-                    CASE
-                        WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
-                        WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
-                        ELSE 0
-                    END
-                ), 0) AS pnl
-            FROM public.experience_trades
-            WHERE COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '30 days'
-              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-            GROUP BY 1
-            """)
-            rows = cur.fetchall()
-
-        data = {}
-        for row in rows:
-            src  = safe_str(row[0])
-            wins = safe_int(row[1])
-            loss = safe_int(row[2])
-            pnl  = safe_float(row[3])
-            key  = "REAL" if src in ("REAL", "LIVE") else src
-            if key not in data:
-                data[key] = {"wins": 0, "losses": 0, "pnl": 0.0}
-            data[key]["wins"]   += wins
-            data[key]["losses"] += loss
-            data[key]["pnl"]    += pnl
-
-        # Win rate trend: vergelijk eerste 15 vs laatste 15 dagen
-        with conn.cursor() as cur:
-            cur.execute("""
-            SELECT
-                CASE
-                    WHEN COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '15 days'
-                    THEN 'recent'
-                    ELSE 'eerder'
-                END AS periode,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+            SELECT setup_type, market_regime AS regime,
+                   COUNT(*) AS n,
+                   ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+                         / NULLIF(COUNT(*),0) * 100, 1) AS wr_pct,
+                   ROUND(AVG(COALESCE(pnl_eur,0))::numeric, 4) AS avg_pnl
             FROM public.experience_trades
             WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
               AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+              AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '60 days'
+              AND setup_type IS NOT NULL
+            GROUP BY 1, 2
+            HAVING COUNT(*) >= 3
+            ORDER BY wr_pct DESC
+            LIMIT 10
+            """)
+            scoreboard = [dict(r) for r in cur.fetchall()]
+    except Exception:
+        scoreboard = []
+
+    prompt = f"""
+Je bent een crypto trading bot coach die leerpatronen analyseert.
+Geef concrete aanbevelingen (6-8 zinnen) in het Nederlands.
+
+TOP SETUPS (laatste 60 dagen echte trades):
+{json.dumps(scoreboard, indent=2, ensure_ascii=False, default=str)}
+
+Analyseer:
+1. Welke setup/regime combinatie werkt het BESTE? (met cijfers)
+2. Welke setup/regime combinatie werkt het SLECHTSTE?
+3. Wat zou de score drempel moeten zijn op basis van de data?
+4. Welke coins zijn het meest winstgevend?
+5. Concrete actie voor de komende 2 weken
+6. Zijn er patronen die op edge decay wijzen?
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=450)
+
+
+def claude_health_check(conn) -> str:
+    """
+    Claude analyseert de bot gezondheid.
+    Stuurt wekelijks via /send_health_check.
+    """
+    # Verzamel data
+    try:
+        # Tabellen check
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public'
+              AND table_name IN (
+                  'experience_trades', 'pending_approvals',
+                  'bot_state', 'experience_scoreboard',
+                  'btc_regime_4h', 'market_regime'
+              )
+            ORDER BY table_name
+            """)
+            tabellen = [row[0] for row in cur.fetchall()]
+
+        # Win rates
+        w7, l7, pnl7 = get_rolling_stats(conn, 7)
+        w30, l30, pnl30 = get_rolling_stats(conn, 30)
+        t7  = w7 + l7
+        t30 = w30 + l30
+        wr7  = (w7 / t7 * 100) if t7 > 0 else 0.0
+        wr30 = (w30 / t30 * 100) if t30 > 0 else 0.0
+        pf30 = get_profit_factor(conn, 30)
+
+        # Edge decay
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT
+                    UPPER(COALESCE(source,'')) AS src,
+                    COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+                    COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+                FROM public.experience_trades
+                WHERE UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+                  AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '30 days'
+                GROUP BY 1
+                """)
+                edge_rows = cur.fetchall()
+            data = {}
+            for r in edge_rows:
+                src = safe_str(r[0])
+                key = "REAL" if src in ("REAL","LIVE") else src
+                w, l = safe_int(r[1]), safe_int(r[2])
+                data[key] = data.get(key, (0,0))
+                data[key] = (data[key][0]+w, data[key][1]+l)
+
+            def wr(k):
+                w, l = data.get(k, (0,0))
+                return (w/(w+l)*100) if (w+l) > 0 else 0.0
+            sim_wr = wr("SIM")
+            live_wr = wr("REAL")
+        except Exception:
+            sim_wr = live_wr = 0.0
+
+    except Exception as e:
+        return f"Health check data kon niet worden opgehaald: {e}"
+
+    config_checks = [
+        f"DATABASE_URL:      {'✅' if DATABASE_URL else '❌'}",
+        f"TWILIO:            {'✅' if TWILIO_ACCOUNT_SID else '❌'}",
+        f"ANTHROPIC_API_KEY: {'✅' if ANTHROPIC_API_KEY else '❌'}",
+        f"BOT_SECRET:        {'✅' if len(BOT_INTERNAL_SECRET) > 10 else '⚠️ te kort'}",
+        f"MAX_PER_TRADE:     €{MAX_PER_TRADE_EUR:.2f}",
+        f"DAILY_STOP_LOSS:   €{DAILY_STOP_LOSS_EUR:.2f}",
+        f"TRADING_HOURS:     {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC",
+    ]
+
+    prompt = f"""
+Je bent een crypto trading bot health monitor.
+Controleer of alles correct werkt en geef een health rapport.
+
+AANWEZIGE TABELLEN: {', '.join(tabellen)}
+
+WIN RATE TREND (echte trades):
+- Laatste 7 dagen:  {wr7:.1f}% ({w7}W/{l7}L) | PnL: €{pnl7:.2f}
+- Laatste 30 dagen: {wr30:.1f}% ({w30}W/{l30}L) | PnL: €{pnl30:.2f}
+- Profit Factor 30d: {pf30:.2f}
+
+EDGE DECAY CHECK:
+- Simulatie win rate (30d): {sim_wr:.1f}%
+- Live win rate (30d):      {live_wr:.1f}%
+- Verschil: {sim_wr - live_wr:.1f}%
+
+CONFIGURATIE:
+{chr(10).join(config_checks)}
+
+Geef een health rapport in het Nederlands (5-6 zinnen):
+1. Is de bot gezond? (ja/nee en waarom)
+2. Win rate trend: verbetert of verslechtert het?
+3. Edge decay analyse
+4. Configuratie problemen?
+5. Aanbeveling voor deze week
+""".strip()
+
+    return _claude_analyse(prompt, max_tokens=400)
+
+
+# ============================================================
+# RAPPORT OPMAAK
+# ============================================================
+def build_daily_rapport(conn) -> str:
+    """
+    Bouwt het dagelijkse WhatsApp rapport.
+    Verstuurd elke ochtend om 08:00 UTC via Render Cron.
+    Gisteren's data + open trades + Claude analyse.
+    """
+    gisteren = utc_day_str(-1)
+    vandaag  = utc_day_str(0)
+
+    # Gisteren data
+    w_real, l_real, pnl_real    = get_daily_pnl(conn, gisteren)
+    w_shad, l_shad, _           = get_daily_pnl(conn, gisteren)
+    w_sim,  l_sim,  _           = (0, 0, 0.0)  # sim trades hebben geen exit_time dagfilter
+
+    # Shadow trades ophalen
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
+                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) = 'SHADOW'
+              AND DATE(COALESCE(exit_time, updated_at) AT TIME ZONE 'UTC') = %s
+            """, (gisteren,))
+            row = cur.fetchone()
+            if row:
+                w_shad, l_shad = safe_int(row[0]), safe_int(row[1])
+    except Exception:
+        pass
+
+    # Sim trades
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT
+                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')  AS wins,
+                COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) = 'SIM'
+              AND DATE(COALESCE(exit_time, updated_at) AT TIME ZONE 'UTC') = %s
+            """, (gisteren,))
+            row = cur.fetchone()
+            if row:
+                w_sim, l_sim = safe_int(row[0]), safe_int(row[1])
+    except Exception:
+        pass
+
+    # Open trades
+    open_count = get_open_real_trades_count(conn)
+    open_trades = get_open_trades_detail(conn)
+
+    # Bot status
+    status_line = get_bot_status_line(conn)
+
+    # Win rates
+    tot_real = w_real + l_real
+    wr_real  = (w_real / tot_real * 100) if tot_real > 0 else 0.0
+    tot_shad = w_shad + l_shad
+    wr_shad  = (w_shad / tot_shad * 100) if tot_shad > 0 else 0.0
+
+    # Profit factor
+    pf_30d = get_profit_factor(conn, 30)
+
+    # Rolling 7 dagen
+    w7, l7, pnl7 = get_rolling_stats(conn, 7)
+    t7 = w7 + l7
+    wr7 = (w7 / t7 * 100) if t7 > 0 else 0.0
+
+    # Claude analyse
+    claude_tekst = claude_analyseer_dagrapport(
+        w_real, l_real, pnl_real,
+        w_shad, l_shad,
+        w_sim,  l_sim,
+        pf_30d, open_count,
+    )
+
+    # Open trades tekst
+    open_tekst = ""
+    if open_trades:
+        open_tekst = f"\n📂 OPEN TRADES ({open_count}):\n"
+        for t in open_trades[:3]:
+            coin  = safe_str(t.get("coin"), "?")
+            entry = safe_float(t.get("entry"))
+            open_tekst += f"• {coin}: entry={entry:.4f}\n"
+    else:
+        open_tekst = "\n📂 Geen open trades\n"
+
+    teken = "+" if pnl_real >= 0 else ""
+
+    bericht = (
+        f"📊 DAGRAPPORT — {gisteren}\n"
+        f"{'─' * 32}\n"
+        f"{status_line}\n\n"
+        f"💶 ECHTE TRADES:\n"
+        f"• Wins: {w_real} | Losses: {l_real}\n"
+        f"• Win rate: {wr_real:.1f}%\n"
+        f"• PnL gisteren: {teken}€{pnl_real:.2f}\n"
+        f"• PnL 7 dagen:  {'+' if pnl7>=0 else ''}€{pnl7:.2f} ({wr7:.1f}%)\n\n"
+        f"🎭 SHADOW (leerdata):\n"
+        f"• Wins: {w_shad} | Losses: {l_shad} | WR: {wr_shad:.1f}%\n\n"
+        f"🔮 SIMULATIE:\n"
+        f"• Wins: {w_sim} | Losses: {l_sim}\n\n"
+        f"📈 Profit Factor 30d: {pf_30d:.2f}"
+        f" {'✅' if pf_30d >= 1.5 else '⚠️'}\n"
+        f"{open_tekst}\n"
+        f"🧠 Claude:\n{claude_tekst}\n\n"
+        f"{'─' * 32}\n"
+        f"Commands: STOP | STATUS | TRADES"
+    )
+
+    return bericht
+
+
+def build_weekly_rapport(conn) -> str:
+    """
+    Bouwt het wekelijkse WhatsApp rapport.
+    Verstuurd elke maandag om 08:00 UTC.
+    """
+    # Verzamel week data
+    week_data: Dict = {}
+
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            # Beste setup types
+            cur.execute("""
+            SELECT setup_type,
+                   COUNT(*) AS n,
+                   COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+                   ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+                         / NULLIF(COUNT(*),0) * 100, 1) AS wr_pct,
+                   ROUND(SUM(COALESCE(pnl_eur,0))::numeric, 2) AS total_pnl
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+              AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'
+              AND setup_type IS NOT NULL
+            GROUP BY 1
+            ORDER BY wr_pct DESC
+            """)
+            week_data["per_setup"] = [dict(r) for r in cur.fetchall()]
+
+            # Beste regime
+            cur.execute("""
+            SELECT market_regime AS regime,
+                   COUNT(*) AS n,
+                   ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+                         / NULLIF(COUNT(*),0) * 100, 1) AS wr_pct,
+                   ROUND(SUM(COALESCE(pnl_eur,0))::numeric, 2) AS total_pnl
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+              AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+              AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'
+            GROUP BY 1
+            ORDER BY wr_pct DESC
+            """)
+            week_data["per_regime"] = [dict(r) for r in cur.fetchall()]
+
+    except Exception as e:
+        week_data["error"] = str(e)
+
+    # Totalen
+    w7, l7, pnl7 = get_rolling_stats(conn, 7)
+    t7 = w7 + l7
+    wr7 = (w7 / t7 * 100) if t7 > 0 else 0.0
+    pf30 = get_profit_factor(conn, 30)
+    status_line = get_bot_status_line(conn)
+
+    week_data["totaal"] = {"wins": w7, "losses": l7, "pnl": pnl7, "wr_pct": wr7}
+
+    # Claude analyse
+    claude_tekst = claude_analyseer_weekrapport(week_data, pf30)
+
+    teken = "+" if pnl7 >= 0 else ""
+
+    return (
+        f"📅 WEEKRAPPORT\n"
+        f"{'─' * 32}\n"
+        f"{status_line}\n\n"
+        f"💶 ECHTE TRADES DEZE WEEK:\n"
+        f"• Wins:     {w7}\n"
+        f"• Losses:   {l7}\n"
+        f"• Win rate: {wr7:.1f}%\n"
+        f"• PnL:      {teken}€{pnl7:.2f}\n\n"
+        f"📈 Profit Factor 30d: {pf30:.2f}"
+        f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
+        f"🧠 Claude analyse:\n{claude_tekst}\n\n"
+        f"{'─' * 32}\n"
+        f"Commands: STOP | STATUS | RAPPORT"
+    )
+
+
+def build_monthly_rapport(conn) -> str:
+    """
+    Bouwt het maandelijkse WhatsApp rapport.
+    Verstuurd op de 1e van de maand om 08:00 UTC.
+    """
+    w30, l30, pnl30 = get_rolling_stats(conn, 30)
+    t30 = w30 + l30
+    wr30 = (w30 / t30 * 100) if t30 > 0 else 0.0
+    pf30 = get_profit_factor(conn, 30)
+
+    # Edge decay
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT UPPER(COALESCE(source,'')) AS src,
+                   COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
+                   COUNT(*) FILTER (WHERE UPPER(outcome)='LOSS') AS losses
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
               AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '30 days'
             GROUP BY 1
             """)
-            trend_rows = cur.fetchall()
+            rows = cur.fetchall()
+        data = {}
+        for r in rows:
+            src = safe_str(r[0])
+            key = "REAL" if src in ("REAL","LIVE") else src
+            data[key] = data.get(key, (0,0))
+            data[key] = (data[key][0]+safe_int(r[1]), data[key][1]+safe_int(r[2]))
+        sim_wr  = (data["SIM"][0]/(data["SIM"][0]+data["SIM"][1])*100) if "SIM" in data and sum(data["SIM"])>0 else 0.0
+        live_wr = (data["REAL"][0]/(data["REAL"][0]+data["REAL"][1])*100) if "REAL" in data and sum(data["REAL"])>0 else 0.0
+    except Exception:
+        sim_wr = live_wr = 0.0
 
-        trend_data = {}
-        for row in trend_rows:
-            periode = safe_str(row[0])
-            w = safe_int(row[1])
-            l = safe_int(row[2])
-            trend_data[periode] = {"wins": w, "losses": l}
+    maand_data = {
+        "wins": w30, "losses": l30, "wr_pct": wr30,
+        "pnl": pnl30, "profit_factor": pf30,
+    }
 
-        def wr(d: dict) -> float:
-            t = d.get("wins", 0) + d.get("losses", 0)
-            return (d.get("wins", 0) / t * 100) if t > 0 else 0.0
+    claude_tekst = claude_analyseer_maandrapport(maand_data, sim_wr, live_wr)
+    status_line  = get_bot_status_line(conn)
+    teken = "+" if pnl30 >= 0 else ""
 
-        wr_eerder  = wr(trend_data.get("eerder", {}))
-        wr_recent  = wr(trend_data.get("recent", {}))
-        trend_diff = wr_recent - wr_eerder
+    return (
+        f"📆 MAANDRAPPORT (30 dagen)\n"
+        f"{'─' * 32}\n"
+        f"{status_line}\n\n"
+        f"💶 RESULTAAT:\n"
+        f"• Wins:        {w30}\n"
+        f"• Losses:      {l30}\n"
+        f"• Win rate:    {wr30:.1f}%\n"
+        f"• PnL:         {teken}€{pnl30:.2f}\n"
+        f"• Prof. Factor: {pf30:.2f} {'✅' if pf30>=1.5 else '⚠️'}\n\n"
+        f"⚡ EDGE DECAY:\n"
+        f"• Sim:  {sim_wr:.1f}%\n"
+        f"• Live: {live_wr:.1f}%\n"
+        f"• Diff: {sim_wr-live_wr:.1f}% {'⚠️' if sim_wr-live_wr>10 else '✅'}\n\n"
+        f"🧠 Claude:\n{claude_tekst}\n\n"
+        f"{'─' * 32}\n"
+        f"Commands: STOP | STATUS | HEALTH"
+    )
 
-        if trend_diff > 5:
-            trend_lijn = f"📈 Trend: STIJGEND (+{trend_diff:.1f}%)"
-        elif trend_diff < -5:
-            trend_lijn = f"📉 Trend: DALEND ({trend_diff:.1f}%)"
-        else:
-            trend_lijn = f"➡️ Trend: STABIEL ({trend_diff:+.1f}%)"
 
-        def blok(label: str, emoji: str, key: str) -> str:
-            d     = data.get(key, {"wins": 0, "losses": 0, "pnl": 0.0})
-            w     = d["wins"]
-            l     = d["losses"]
-            p     = d["pnl"]
-            total = w + l
-            rate  = (w / total * 100) if total > 0 else 0.0
-            sign  = "+" if p >= 0 else ""
-            return (
-                f"{emoji} {label}:\n"
-                f"✅ Goed:     {w} | ❌ Fout: {l}\n"
-                f"📈 Win rate: {rate:.1f}%\n"
-                f"💰 Resultaat: {sign}€{p:.2f}"
-            )
+def build_status_bericht(conn) -> str:
+    """
+    Bouwt het STATUS bericht.
+    Antwoord op WhatsApp STATUS command.
+    Uitgebreide context — win rate, PnL, open trades, limieten.
+    """
+    status_line = get_bot_status_line(conn)
 
-        real_d   = data.get("REAL",   {"wins": 0, "losses": 0, "pnl": 0.0})
-        shadow_d = data.get("SHADOW", {"wins": 0, "losses": 0, "pnl": 0.0})
-        sim_d    = data.get("SIM",    {"wins": 0, "losses": 0, "pnl": 0.0})
+    # Vandaag
+    w_v, l_v, pnl_v = get_daily_pnl(conn, utc_day_str())
+    tot_v = w_v + l_v
+    wr_v  = (w_v / tot_v * 100) if tot_v > 0 else 0.0
 
-        def _wr(d: dict) -> float:
-            t = d["wins"] + d["losses"]
-            return (d["wins"] / t * 100) if t > 0 else 0.0
+    # 7 dagen
+    w7, l7, pnl7 = get_rolling_stats(conn, 7)
+    t7 = w7 + l7
+    wr7 = (w7 / t7 * 100) if t7 > 0 else 0.0
 
-        claude = claude_analyseer_maandrapport(
-            real_wr   = _wr(real_d),
-            real_pnl  = real_d["pnl"],
-            shadow_wr = _wr(shadow_d),
-            sim_wr    = _wr(sim_d),
-            trend_diff = trend_diff,
-            wr_eerder  = wr_eerder,
-            wr_recent  = wr_recent,
-        )
+    # Limieten
+    trades_today = get_real_trades_today(conn)
+    open_count   = get_open_real_trades_count(conn)
+    pf30         = get_profit_factor(conn, 30)
+    consecutive  = get_consecutive_losses(conn)
 
-        bot_lijn = get_bot_status_line(conn)
+    # Bot pauzeer info
+    pause_info = ""
+    if is_bot_paused(conn):
+        reason = get_bot_state(conn, "bot_paused_reason", "")
+        until  = get_bot_state(conn, "bot_paused_until", "")
+        pause_info = f"\n⏸️ Pauze: {reason}\n   Tot: {until[:16]}\n"
 
+    teken_v = "+" if pnl_v >= 0 else ""
+    teken_7 = "+" if pnl7 >= 0 else ""
+
+    return (
+        f"📊 BOT STATUS\n"
+        f"{'─' * 32}\n"
+        f"{status_line}"
+        f"{pause_info}\n\n"
+        f"💶 VANDAAG:\n"
+        f"• Trades: {tot_v} ({w_v}W/{l_v}L) | WR: {wr_v:.1f}%\n"
+        f"• PnL: {teken_v}€{pnl_v:.2f}\n"
+        f"• Daglimiet: {trades_today}/{MAX_REAL_TRADES_PER_DAY} trades\n\n"
+        f"📈 LAATSTE 7 DAGEN:\n"
+        f"• Trades: {t7} ({w7}W/{l7}L) | WR: {wr7:.1f}%\n"
+        f"• PnL: {teken_7}€{pnl7:.2f}\n\n"
+        f"📂 Open trades: {open_count}/{MAX_OPEN_REAL_TRADES}\n"
+        f"📈 Profit Factor 30d: {pf30:.2f}"
+        f" {'✅' if pf30 >= 1.5 else '⚠️'}\n"
+        f"📉 Verliezen op rij: {consecutive}\n\n"
+        f"⚙️ LIMIETEN:\n"
+        f"• Max per trade: €{MAX_PER_TRADE_EUR:.2f}\n"
+        f"• Dagbudget:     €{DAILY_STOP_LOSS_EUR:.2f}\n"
+        f"• Trading hours: {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC\n\n"
+        f"🤖 BOT LOOPT GEWOON DOOR\n"
+        f"Stuur STOP als je wil pauzeren.\n\n"
+        f"Commands: STOP | TRADES | RAPPORT | HELP"
+    )
+
+
+def build_trades_bericht(conn) -> str:
+    """
+    Bouwt het TRADES bericht.
+    Toont alle open live trades met details.
+    """
+    open_trades = get_open_trades_detail(conn)
+    status_line = get_bot_status_line(conn)
+
+    if not open_trades:
         return (
-            f"📆 MAANDRAPPORT — {maand_naam}\n"
-            f"{bot_lijn}\n"
-            f"Afgelopen 30 dagen\n"
-            f"{'─' * 28}\n\n"
-            f"{blok('ECHTE TRADES', '💶', 'REAL')}\n\n"
-            f"{blok('SHADOW', '🎭', 'SHADOW')}\n\n"
-            f"{blok('SIMULATIE', '🔮', 'SIM')}\n\n"
-            f"{'─' * 28}\n"
-            f"{trend_lijn}\n"
-            f"Eerste 15d: {wr_eerder:.1f}%\n"
-            f"Laatste 15d: {wr_recent:.1f}%"
-            f"{claude}"
+            f"📂 OPEN TRADES\n"
+            f"{'─' * 32}\n"
+            f"{status_line}\n\n"
+            f"Geen open live trades.\n\n"
+            f"Commands: STATUS | RAPPORT"
         )
 
-    except Exception as e:
-        return f"Maandrapport fout: {type(e).__name__}: {e}"
+    tekst = (
+        f"📂 OPEN TRADES ({len(open_trades)})\n"
+        f"{'─' * 32}\n"
+        f"{status_line}\n\n"
+    )
+
+    for i, t in enumerate(open_trades, 1):
+        coin   = safe_str(t.get("coin"), "?")
+        entry  = safe_float(t.get("entry"))
+        stop   = safe_float(t.get("stop"))
+        target = safe_float(t.get("target"))
+        setup  = safe_str(t.get("setup_type"), "?")
+        regime = safe_str(t.get("market_regime"), "?")
+        score  = safe_int(t.get("score"))
+        amount = safe_float(t.get("amount_eur"))
+
+        risk   = entry - stop if entry > stop else 0
+        reward = target - entry if target > entry else 0
+        rr     = reward / risk if risk > 0 else 0
+
+        tekst += (
+            f"#{i} {coin} | {setup}/{regime}\n"
+            f"   Entry:  {entry:.6f}\n"
+            f"   Stop:   {stop:.6f} (R={risk:.6f})\n"
+            f"   Target: {target:.6f} (RR={rr:.1f})\n"
+            f"   Score:  {score} | €{amount:.2f}\n\n"
+        )
+
+    tekst += "Commands: STATUS | RAPPORT | STOP"
+    return tekst
 
 
-@app.post("/send_monthly_rapport")
-def send_monthly_rapport_route():
-    """
-    Render Cron instelling:
-    Schedule: 0 8 1 * *   (1e van elke maand 08:00 UTC)
-    Command:  curl -X POST -H "X-Bot-Auth: <secret>" https://jouw-app.onrender.com/send_monthly_rapport
-    """
-    try:
-        if request.headers.get("X-Bot-Auth", "") != BOT_INTERNAL_SECRET:
-            return {"ok": False, "error": "Unauthorized"}, 403
-
-        with db_connect() as conn:
-            rapport = generate_monthly_rapport(conn)
-
-        ok = send_whatsapp(rapport)
-        log(f"Maandrapport verstuurd: {'✅' if ok else '❌'}")
-        return {"ok": ok, "rapport": rapport}
-
-    except Exception as e:
-        log(f"Maandrapport fout: {e}")
-        return {"ok": False, "error": str(e)}, 500
+def build_help_bericht() -> str:
+    """Bouwt het HELP bericht met alle commands."""
+    return (
+        f"🤖 CRYPTO AI BOT — COMMANDS\n"
+        f"{'─' * 32}\n\n"
+        f"🟢 CONTROLE:\n"
+        f"START        → bot begint traden\n"
+        f"STOP         → bot stopt (jij beslist)\n\n"
+        f"📊 INFORMATIE:\n"
+        f"STATUS       → volledig overzicht\n"
+        f"TRADES       → open trades\n\n"
+        f"📋 RAPPORTEN:\n"
+        f"RAPPORT      → dagrapport nu\n"
+        f"WEEKRAPPORT  → weekoverzicht\n"
+        f"MAANDRAPPORT → maandoverzicht\n"
+        f"ADVIES       → leeranalyse\n"
+        f"HEALTH       → health check\n\n"
+        f"ℹ️ INFORMATIE:\n"
+        f"HELP         → dit bericht\n\n"
+        f"{'─' * 32}\n"
+        f"⚙️ FASE 1 LIMIETEN:\n"
+        f"• Max per trade: €{MAX_PER_TRADE_EUR:.2f}\n"
+        f"• Max trades/dag: {MAX_REAL_TRADES_PER_DAY}\n"
+        f"• Max open: {MAX_OPEN_REAL_TRADES}\n"
+        f"• Dagbudget: €{DAILY_STOP_LOSS_EUR:.2f}\n"
+        f"• Trading: {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC"
+    )
 
 
 # ============================================================
-# MAIN
+# COMMAND PROCESSOR — verwerkt WhatsApp berichten
+# ============================================================
+def process_command(body: str, conn) -> str:
+    """
+    Verwerkt een WhatsApp command.
+    Geeft antwoord terug als string.
+
+    Commands: START, STOP, STATUS, TRADES, RAPPORT,
+              WEEKRAPPORT, MAANDRAPPORT, ADVIES, HEALTH, HELP
+    """
+    cmd = body.strip().upper()
+
+    # ── START ──────────────────────────────────────────
+    if cmd == "START":
+        activate_bot(conn)
+        w_v, l_v, pnl_v = get_daily_pnl(conn, utc_day_str())
+        tot_v = w_v + l_v
+        wr_v  = (w_v / tot_v * 100) if tot_v > 0 else 0.0
+        pf30  = get_profit_factor(conn, 30)
+        return (
+            f"🟢 BOT GESTART\n"
+            f"{'─' * 32}\n\n"
+            f"Bot is nu actief en handelt automatisch.\n\n"
+            f"📊 VANDAAG TOT NU TOE:\n"
+            f"• Trades: {tot_v} ({w_v}W/{l_v}L)\n"
+            f"• Win rate: {wr_v:.1f}%\n"
+            f"• PnL: {'+'if pnl_v>=0 else ''}€{pnl_v:.2f}\n\n"
+            f"📈 Profit Factor 30d: {pf30:.2f}\n\n"
+            f"⚙️ Limieten:\n"
+            f"• Max trade: €{MAX_PER_TRADE_EUR:.2f}\n"
+            f"• Max/dag: {MAX_REAL_TRADES_PER_DAY} trades\n"
+            f"• Trading: {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC\n\n"
+            f"Stuur STOP om te pauzeren.\n"
+            f"Stuur STATUS voor overzicht."
+        )
+
+    # ── STOP ───────────────────────────────────────────
+    if cmd == "STOP":
+        deactivate_bot(conn)
+        open_count = get_open_real_trades_count(conn)
+        return (
+            f"🔴 BOT GESTOPT\n"
+            f"{'─' * 32}\n\n"
+            f"Bot handelt geen nieuwe trades meer.\n\n"
+            f"📂 Open trades: {open_count}\n"
+            f"(worden nog wel bewaakt door trade_monitor)\n\n"
+            f"Stuur START om te hervatten.\n"
+            f"Stuur TRADES voor open posities."
+        )
+
+    # ── STATUS ─────────────────────────────────────────
+    if cmd == "STATUS":
+        return build_status_bericht(conn)
+
+    # ── TRADES ─────────────────────────────────────────
+    if cmd == "TRADES":
+        return build_trades_bericht(conn)
+
+    # ── RAPPORT ────────────────────────────────────────
+    if cmd == "RAPPORT":
+        return build_daily_rapport(conn)
+
+    # ── WEEKRAPPORT ────────────────────────────────────
+    if cmd == "WEEKRAPPORT":
+        return build_weekly_rapport(conn)
+
+    # ── MAANDRAPPORT ───────────────────────────────────
+    if cmd == "MAANDRAPPORT":
+        return build_monthly_rapport(conn)
+
+    # ── ADVIES ─────────────────────────────────────────
+    if cmd == "ADVIES":
+        status_line  = get_bot_status_line(conn)
+        leer_analyse = claude_trade_leeranalyse(conn)
+        pf30         = get_profit_factor(conn, 30)
+        return (
+            f"🧠 CLAUDE LEERANALYSE\n"
+            f"{'─' * 32}\n"
+            f"{status_line}\n\n"
+            f"📈 Profit Factor 30d: {pf30:.2f}"
+            f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
+            f"{leer_analyse}\n\n"
+            f"{'─' * 32}\n"
+            f"Commands: STATUS | RAPPORT | STOP"
+        )
+
+    # ── HEALTH ─────────────────────────────────────────
+    if cmd == "HEALTH":
+        status_line   = get_bot_status_line(conn)
+        health_tekst  = claude_health_check(conn)
+        return (
+            f"🏥 HEALTH CHECK\n"
+            f"{'─' * 32}\n"
+            f"{status_line}\n\n"
+            f"🧠 Claude health analyse:\n{health_tekst}\n\n"
+            f"{'─' * 32}\n"
+            f"Commands: STATUS | ADVIES | STOP"
+        )
+
+    # ── HELP ───────────────────────────────────────────
+    if cmd == "HELP":
+        return build_help_bericht()
+
+    # ── ONBEKEND ───────────────────────────────────────
+    return (
+        f"❓ Onbekend command: '{body[:20]}'\n\n"
+        f"Stuur HELP voor alle commands."
+    )
+
+
+# ============================================================
+# FLASK ROUTES — webhook endpoints
+# ============================================================
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """Health check endpoint voor Render."""
+    try:
+        conn = db_connect()
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1")
+        conn.close()
+        return jsonify({"status": "ok", "db": "connected"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "detail": str(e)}), 500
+
+
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp_webhook():
+    """
+    Hoofdroute voor WhatsApp berichten van Twilio.
+    Verifieert Twilio signature, verwerkt command, stuurt antwoord.
+    """
+    # Twilio verificatie
+    if not verify_twilio_signature():
+        log("❌ Twilio verificatie mislukt")
+        return jsonify({"error": "Unauthorized"}), 403
+
+    body = safe_str(request.form.get("Body", ""))
+    from_nr = safe_str(request.form.get("From", ""))
+
+    log(f"📱 WhatsApp van {from_nr[:15]}: '{body[:40]}'")
+
+    if not body:
+        return "", 200
+
+    try:
+        conn = db_connect()
+        antwoord = process_command(body, conn)
+        conn.close()
+    except Exception as e:
+        log(f"❌ process_command fout: {e}")
+        antwoord = (
+            f"❌ Fout bij verwerken command.\n"
+            f"Probeer opnieuw of stuur HELP."
+        )
+
+    # WhatsApp antwoord via Twilio
+    send_whatsapp(antwoord)
+
+    # TwiML response (leeg — we sturen via API)
+    return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>', 200
+
+
+@app.route("/auto_buy", methods=["POST"])
+def auto_buy():
+    """
+    Interne route voor automatische BUY triggers.
+    Wordt aangeroepen door multi_coin_score.py na een goed signaal.
+    Vereist BOT_INTERNAL_SECRET header.
+    """
+    if not verify_internal_auth():
+        log("❌ Auto buy auth mislukt")
+        return jsonify({"ok": False, "error": "Unauthorized"}), 403
+
+    data = request.get_json(silent=True) or {}
+    prebuy_id = safe_str(data.get("prebuy_id"))
+
+    if not prebuy_id:
+        return jsonify({"ok": False, "error": "prebuy_id ontbreekt"}), 400
+
+    log(f"🤖 Auto BUY trigger: prebuy_id={prebuy_id}")
+
+    try:
+        conn = db_connect()
+        ok, msg = execute_auto_buy(prebuy_id, conn)
+        conn.close()
+        return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
+    except Exception as e:
+        log(f"❌ auto_buy route fout: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ── Cron rapport routes ──────────────────────────────────
+@app.route("/send_daily_rapport", methods=["POST"])
+def send_daily_rapport():
+    """Render Cron: 0 8 * * * — Dagrapport om 08:00 UTC."""
+    if not verify_internal_auth():
+        return jsonify({"ok": False}), 403
+    try:
+        conn   = db_connect()
+        bericht = build_daily_rapport(conn)
+        conn.close()
+        ok = send_whatsapp(bericht)
+        return jsonify({"ok": ok}), 200
+    except Exception as e:
+        log(f"❌ send_daily_rapport fout: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/send_weekly_rapport", methods=["POST"])
+def send_weekly_rapport():
+    """Render Cron: 0 8 * * 1 — Weekrapport op maandag 08:00 UTC."""
+    if not verify_internal_auth():
+        return jsonify({"ok": False}), 403
+    try:
+        conn    = db_connect()
+        bericht = build_weekly_rapport(conn)
+        conn.close()
+        ok = send_whatsapp(bericht)
+        return jsonify({"ok": ok}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/send_monthly_rapport", methods=["POST"])
+def send_monthly_rapport():
+    """Render Cron: 0 8 1 * * — Maandrapport op de 1e van de maand."""
+    if not verify_internal_auth():
+        return jsonify({"ok": False}), 403
+    try:
+        conn    = db_connect()
+        bericht = build_monthly_rapport(conn)
+        conn.close()
+        ok = send_whatsapp(bericht)
+        return jsonify({"ok": ok}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/send_health_check", methods=["POST"])
+def send_health_check():
+    """Render Cron: 0 9 * * 1 — Health check op maandag 09:00 UTC."""
+    if not verify_internal_auth():
+        return jsonify({"ok": False}), 403
+    try:
+        conn         = db_connect()
+        status_line  = get_bot_status_line(conn)
+        health_tekst = claude_health_check(conn)
+        conn.close()
+
+        bericht = (
+            f"🏥 WEKELIJKSE HEALTH CHECK\n"
+            f"{'─' * 32}\n"
+            f"{status_line}\n\n"
+            f"🧠 Claude health rapport:\n{health_tekst}\n\n"
+            f"{'─' * 32}\n"
+            f"Commands: STATUS | ADVIES | STOP"
+        )
+
+        ok = send_whatsapp(bericht)
+        return jsonify({"ok": ok}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+@app.route("/send_leeranalyse", methods=["POST"])
+def send_leeranalyse():
+    """Render Cron: 0 8 1,15 * * — Leeranalyse op 1e en 15e van de maand."""
+    if not verify_internal_auth():
+        return jsonify({"ok": False}), 403
+    try:
+        conn         = db_connect()
+        status_line  = get_bot_status_line(conn)
+        leer_analyse = claude_trade_leeranalyse(conn)
+        pf30         = get_profit_factor(conn, 30)
+        conn.close()
+
+        bericht = (
+            f"🧠 CLAUDE LEERANALYSE\n"
+            f"{'─' * 32}\n"
+            f"{status_line}\n\n"
+            f"📈 Profit Factor 30d: {pf30:.2f}"
+            f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
+            f"{leer_analyse}\n\n"
+            f"{'─' * 32}\n"
+            f"Commands: STATUS | RAPPORT | STOP"
+        )
+
+        ok = send_whatsapp(bericht)
+        return jsonify({"ok": ok}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
+# ============================================================
+# STARTUP
 # ============================================================
 if __name__ == "__main__":
-    port = int(os.getenv("PORT") or "10000")
-    log("=" * 50)
-    log("Crypto AI Bot — WhatsApp Webhook v2.1")
-    log("=" * 50)
-    log(f"Port:        {port}")
-    log(f"Twilio:      {'✅' if TWILIO_ACCOUNT_SID else '❌ ONTBREEKT'}")
-    log(f"Database:    {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
-    log(f"Claude API:  {'✅' if ANTHROPIC_API_KEY else '❌ ONTBREEKT'}")
-    log(f"Mode:        {TRADER_MODE}")
-    log(f"Max/trade:   €{MAX_PER_TRADE_EUR:.2f}")
-    log(f"Max/dag:     {MAX_REAL_TRADES_PER_DAY}")
-    log(f"Max open:    {MAX_OPEN_REAL_TRADES}")
-    log(f"Daily stop:  €{DAILY_STOP_LOSS_EUR:.2f}")
-    log(f"Hours:       {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
-    log("=" * 50)
-    app.run(host="0.0.0.0", port=port)
+    log("=" * 60)
+    log("WhatsApp Webhook v2.0 — gestart")
+    log("=" * 60)
+    log(f"Database:       {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
+    log(f"Twilio:         {'✅' if TWILIO_ACCOUNT_SID else '⚠️ niet ingesteld'}")
+    log(f"Claude API:     {'✅' if ANTHROPIC_API_KEY else '⚠️ niet ingesteld'}")
+    log(f"Bitvavo:        {'✅' if BITVAVO_API_KEY else '⚠️ niet ingesteld'}")
+    log(f"Trader mode:    {TRADER_MODE}")
+    log(f"Max trade:      €{MAX_PER_TRADE_EUR:.2f}")
+    log(f"Daily stop:     €{DAILY_STOP_LOSS_EUR:.2f}")
+    log(f"Max trades/dag: {MAX_REAL_TRADES_PER_DAY}")
+    log(f"Trading hours:  {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
+    log("=" * 60)
+
+    port = int(os.getenv("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)
