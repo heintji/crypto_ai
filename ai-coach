@@ -1629,7 +1629,7 @@ def analyseer_houdtijd(conn, days: int) -> Dict:
         COALESCE(setup_type,'UNKNOWN') AS setup,
         UPPER(outcome) AS uitkomst,
         ROUND(AVG(
-            EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,open_time)))/3600
+            EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,created_at)))/3600
         )::numeric,1) AS gem_uren,
         ROUND(MIN(
             EXTRACT(EPOCH FROM (COALESCE(exit_time,updated_at) - COALESCE(entry_time,created_at)))/3600
@@ -2542,7 +2542,7 @@ def analyseer_candle_database(conn) -> Dict:
             stats = run_query(conn, """
             SELECT symbol,
                 COUNT(*) AS n_candles,
-                MAX(to_timestamp(open_time/1000.0)) AS laatste_candle
+                GREATEST(MAX(updated_at), MAX(created_at)) AS laatste_candle
             FROM public.candles
             GROUP BY symbol ORDER BY laatste_candle DESC LIMIT 20
             """)
@@ -3630,17 +3630,9 @@ def monitor_data_versheid(conn) -> Dict:
     checks = [
         {
             "naam": "candles_recent",
-            # close_time kan unix ms (bigint) of timestamp zijn — beide afhandelen
-            "sql": """SELECT COALESCE(
-                MAX(CASE WHEN pg_typeof(close_time)::text LIKE '%timestamp%'
-                    THEN close_time::timestamptz
-                    ELSE to_timestamp(CASE WHEN close_time::bigint > 9999999999
-                         THEN close_time::bigint::double precision/1000.0
-                         ELSE close_time::double precision END)
-                END),
-                MAX(updated_at),
-                MAX(created_at)
-            ) AS laatste FROM public.candles""",
+            # Gebruik updated_at / created_at — veiligst, vermijdt close_time type issues
+            "sql": """SELECT GREATEST(MAX(updated_at), MAX(created_at)) AS laatste
+                      FROM public.candles""",
             "max_uren": 2,
             "omschrijving": "Candle data",
         },
@@ -3652,9 +3644,8 @@ def monitor_data_versheid(conn) -> Dict:
         },
         {
             "naam": "btc_regime",
-            # btc_regime_4h gebruikt open_time (unix ms), NIET created_at
-            "sql": """SELECT to_timestamp(MAX(open_time) / 1000)
-                      AS laatste FROM public.btc_regime_4h""",
+            # open_time in btc_regime_4h is een TIMESTAMP kolom (niet unix ms bigint)
+            "sql": """SELECT MAX(open_time) AS laatste FROM public.btc_regime_4h""",
             "max_uren": 5,
             "omschrijving": "BTC regime 4H",
         },
