@@ -845,11 +845,15 @@ def get_btc_sterkte(conn) -> float:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT COALESCE(strength, 50) FROM public.btc_regime_4h
+            SELECT close, ema200 FROM public.btc_regime_4h
             ORDER BY open_time DESC LIMIT 1
             """)
             row = cur.fetchone()
-            return safe_float(row[0], 50.0) if row else 50.0
+            if row:
+                _close  = safe_float(row[0])
+                _ema200 = safe_float(row[1])
+                return round(abs((_close - _ema200) / _ema200 * 100), 1) if _ema200 else 50.0
+            return 50.0
     except Exception: return 50.0
 
 
@@ -1271,7 +1275,7 @@ def get_prebuy_count_today(conn) -> int:
         with conn.cursor() as cur:
             cur.execute("""
             SELECT COUNT(*) FROM public.pending_approvals
-            WHERE DATE(aangemaakt AT TIME ZONE 'UTC') = CURRENT_DATE
+            WHERE DATE(created_at AT TIME ZONE 'UTC') = CURRENT_DATE
             """)
             row = cur.fetchone()
             return safe_int(row[0]) if row else 0
@@ -1369,16 +1373,16 @@ def zorg_voor_pending_tabel(conn) -> None:
                 exp_bias       TEXT DEFAULT 'NEUTRAL',
                 why_tag        TEXT,
                 claude_beoordeling TEXT,
-                aangemaakt     TIMESTAMPTZ DEFAULT NOW(),
+                created_at     TIMESTAMPTZ DEFAULT NOW(),
                 updated_at     TIMESTAMPTZ DEFAULT NOW(),
                 status         TEXT DEFAULT 'PENDING',
                 gebruikt_op    TIMESTAMPTZ,
                 score_details  JSONB
             );
             CREATE INDEX IF NOT EXISTS idx_pending_status
-                ON public.pending_approvals(status, aangemaakt);
+                ON public.pending_approvals(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_pending_coin
-                ON public.pending_approvals(coin, aangemaakt);
+                ON public.pending_approvals(coin, created_at);
             """)
         conn.commit()
     except Exception as e: log(f"Tabel check: {e}")
@@ -1403,7 +1407,7 @@ def insert_pending(conn, prebuy: Dict) -> str:
                 score, label, entry, stop, target, rr_ratio, expires_at,
                 raw_score, chance, confidence, bitvavo_market,
                 exp_n, exp_win_rate, exp_bias, why_tag, claude_beoordeling,
-                aangemaakt, status, score_details
+                created_at, status, score_details
             )
             VALUES (
                 %s,%s,%s,%s,'4H',%s,%s,
