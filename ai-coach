@@ -767,15 +767,18 @@ def voorspel_regime(conn) -> Dict:
     """Analyseert BTC regime patroon en geeft voorspelling."""
     try:
         rows = run_query(conn, """
-        SELECT regime, strength, close, ema200
+        SELECT regime, close, ema200
         FROM public.btc_regime_4h
         ORDER BY open_time DESC LIMIT 100
         """)
         if not rows:
             return {"voorspelling": "ONBEKEND", "betrouwbaarheid": 0, "huidig": "?"}
 
-        huidig    = safe_str(rows[0].get("regime"), "UNKNOWN")
-        strength  = safe_float(rows[0].get("strength"))
+        huidig  = safe_str(rows[0].get("regime"), "UNKNOWN")
+        _close  = safe_float(rows[0].get("close"))
+        _ema200 = safe_float(rows[0].get("ema200"))
+        # strength = % afstand close t.o.v. ema200 (proxy voor regime kracht)
+        strength = round(abs((_close - _ema200) / _ema200 * 100), 1) if _ema200 else 0.0
 
         # Hoelang al in dit regime?
         duur = sum(1 for r in rows if safe_str(r.get("regime")) == huidig)
@@ -2538,11 +2541,11 @@ def analyseer_candle_database(conn) -> Dict:
                     "verouderde_symbols": [], "leeg": True}
 
         # Veilige query op basis van beschikbare kolommen
-        if "symbol" in beschikbare_cols and "open_time" in beschikbare_cols:
+        if "symbol" in beschikbare_cols and "updated_at" in beschikbare_cols:
             stats = run_query(conn, """
             SELECT symbol,
                 COUNT(*) AS n_candles,
-                GREATEST(MAX(updated_at), MAX(created_at)) AS laatste_candle
+                MAX(updated_at) AS laatste_candle
             FROM public.candles
             GROUP BY symbol ORDER BY laatste_candle DESC LIMIT 20
             """)
@@ -3631,7 +3634,7 @@ def monitor_data_versheid(conn) -> Dict:
         {
             "naam": "candles_recent",
             # Gebruik updated_at / created_at — veiligst, vermijdt close_time type issues
-            "sql": """SELECT GREATEST(MAX(updated_at), MAX(created_at)) AS laatste
+            "sql": """SELECT MAX(updated_at) AS laatste
                       FROM public.candles""",
             "max_uren": 2,
             "omschrijving": "Candle data",
