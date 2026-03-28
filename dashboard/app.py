@@ -2893,12 +2893,1037 @@ def claude_btn(label: str, prompt: str, max_tokens: int = 300, key: str = "") ->
 
 
 # ============================================================
+# ALARM BANNER — toont actieve alarmen boven elke pagina
+# ============================================================
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_actieve_alarmen() -> List[Dict]:
+    """Laadt actieve (niet opgeloste) alarmen uit coach_anomalieen."""
+    if not table_exists("coach_anomalieen"):
+        return []
+    df = run_query("""
+        SELECT type, omschrijving, ernst
+        FROM public.coach_anomalieen
+        WHERE opgelost = FALSE
+          AND tijdstip >= NOW() - INTERVAL '24 hours'
+        ORDER BY
+            CASE ernst WHEN 'KRITIEK' THEN 1 WHEN 'HOOG' THEN 2
+                       WHEN 'MEDIUM' THEN 3 ELSE 4 END,
+            tijdstip DESC
+        LIMIT 10
+    """)
+    return df.to_dict("records") if not df.empty else []
+
+
+def render_alarm_banner() -> None:
+    """Rode/oranje banner boven de pagina als er actieve alarmen zijn."""
+    alarmen = _load_actieve_alarmen()
+    if not alarmen:
+        return
+    kritiek = [a for a in alarmen if a.get("ernst") == "KRITIEK"]
+    hoog    = [a for a in alarmen if a.get("ernst") == "HOOG"]
+
+    if kritiek:
+        kleur = "#c0392b"
+        label = f"🔴 {len(kritiek)} KRITIEK ALARM{'EN' if len(kritiek)>1 else ''}"
+        tekst = " | ".join(a.get("omschrijving","") for a in kritiek[:3])
+    elif hoog:
+        kleur = "#e67e22"
+        label = f"🟡 {len(hoog)} HOOG ALARM{'EN' if len(hoog)>1 else ''}"
+        tekst = " | ".join(a.get("omschrijving","") for a in hoog[:3])
+    else:
+        kleur = "#2c3e50"
+        label = f"⚪ {len(alarmen)} melding(en)"
+        tekst = alarmen[0].get("omschrijving","")
+
+    st.markdown(
+        f"""<div style="background:{kleur};padding:8px 14px;border-radius:6px;
+            margin-bottom:8px;display:flex;align-items:center;gap:12px;font-size:13px;">
+            <b style="color:#fff;white-space:nowrap;">{label}</b>
+            <span style="color:rgba(255,255,255,0.85);overflow:hidden;
+                text-overflow:ellipsis;white-space:nowrap;">{tekst}</span>
+            <span style="color:rgba(255,255,255,0.5);font-size:11px;
+                white-space:nowrap;margin-left:auto;">→ Monitor pagina voor details</span>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# DATA LOADERS — coach tabellen
+# ============================================================
+@st.cache_data(ttl=120, show_spinner=False)
+def load_coach_dagboek(n: int = 20) -> pd.DataFrame:
+    if not table_exists("coach_dagboek"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT datum, tijdstip, samenvatting, beslissingen, anomalieen, run_duur_sec
+        FROM public.coach_dagboek
+        ORDER BY tijdstip DESC LIMIT %s
+    """, (n,))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_coach_events(uren: int = 48) -> pd.DataFrame:
+    if not table_exists("coach_events"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT tijdstip, categorie, event_type, omschrijving, ernst
+        FROM public.coach_events
+        WHERE tijdstip >= NOW() - INTERVAL '1 hour' * %s
+        ORDER BY tijdstip DESC LIMIT 200
+    """, (uren,))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_coach_config_log(dagen: int = 30) -> pd.DataFrame:
+    if not table_exists("coach_config_log"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT tijdstip, parameter, oud_waarde, nieuw_waarde, bron, reden
+        FROM public.coach_config_log
+        WHERE tijdstip >= NOW() - INTERVAL '1 day' * %s
+        ORDER BY tijdstip DESC LIMIT 200
+    """, (dagen,))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_coach_analyses(n: int = 10) -> pd.DataFrame:
+    if not table_exists("coach_analyses"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT run_datum, periode_dagen, n_trades, win_rate,
+               profit_factor, aanpassingen, claude_advies
+        FROM public.coach_analyses
+        ORDER BY run_datum DESC LIMIT %s
+    """, (n,))
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_coach_anomalieen(dagen: int = 7) -> pd.DataFrame:
+    if not table_exists("coach_anomalieen"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT tijdstip, type, omschrijving, waarde, drempel, ernst, opgelost
+        FROM public.coach_anomalieen
+        WHERE tijdstip >= NOW() - INTERVAL '1 day' * %s
+        ORDER BY tijdstip DESC LIMIT 100
+    """, (dagen,))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_coach_regime_log(dagen: int = 30) -> pd.DataFrame:
+    if not table_exists("coach_regime_log"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT tijdstip, oud_regime, nieuw_regime, btc_prijs, reden
+        FROM public.coach_regime_log
+        WHERE tijdstip >= NOW() - INTERVAL '1 day' * %s
+        ORDER BY tijdstip DESC
+    """, (dagen,))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_coach_bestand_checksums() -> pd.DataFrame:
+    if not table_exists("coach_bestand_checksums"):
+        return pd.DataFrame()
+    return run_query("""
+        SELECT bestandsnaam, regels, checksum, bijgewerkt, verandering_gedetecteerd
+        FROM public.coach_bestand_checksums
+        ORDER BY bijgewerkt DESC
+    """)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_trade_flow_7d() -> Dict:
+    """Laadt trade flow statistieken: signaal → live → gesloten."""
+    def sc(sql, default=0):
+        v = run_scalar(sql)
+        return int(v) if v is not None else default
+
+    signalen    = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE aangemaakt >= NOW() - INTERVAL '7 days'")
+    goedgekeurd = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE UPPER(COALESCE(status,'')) = 'APPROVED' AND aangemaakt >= NOW() - INTERVAL '7 days'")
+    verlopen    = sc("""SELECT COUNT(*) FROM public.pending_approvals
+                        WHERE COALESCE(expires_at, aangemaakt + INTERVAL '4 hours') < NOW()
+                          AND UPPER(COALESCE(status,'PENDING')) = 'PENDING'
+                          AND aangemaakt >= NOW() - INTERVAL '7 days'""")
+    live_trades = sc("SELECT COUNT(*) FROM public.experience_trades WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE') AND COALESCE(created_at, entry_time) >= NOW() - INTERVAL '7 days'")
+    gesloten    = sc("SELECT COUNT(*) FROM public.experience_trades WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE') AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS') AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'")
+
+    return {
+        "signalen": signalen,
+        "goedgekeurd": goedgekeurd,
+        "verlopen": verlopen,
+        "live": live_trades,
+        "gesloten": gesloten,
+        "conversie_pct": round(live_trades / max(signalen, 1) * 100, 1),
+    }
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_systeem_audit_score() -> int:
+    """Laadt het laatste systeem audit score uit coach_memory."""
+    if not table_exists("coach_memory"):
+        return 100
+    row = run_query("""
+        SELECT waarde FROM public.coach_memory
+        WHERE type='audit' AND sleutel='laatste'
+        ORDER BY bijgewerkt DESC LIMIT 1
+    """)
+    if row.empty:
+        return 100
+    try:
+        data = json.loads(row.iloc[0]["waarde"])
+        return int(data.get("score", 100))
+    except Exception:
+        return 100
+
+
+# ============================================================
+# NIEUWE CHARTS — R-distributie, Score correlatie, Fee, Config
+# ============================================================
+def chart_r_distributie(df: pd.DataFrame) -> go.Figure:
+    """Histogram van R-multiples — toont of de bot consistent 2R+ haalt."""
+    r_col = next((c for c in ["pnl_r","result_r"] if c in df.columns), None)
+    if not r_col or df.empty:
+        return empty_fig("Geen R-data")
+
+    vals = pd.to_numeric(df[r_col], errors="coerce").dropna()
+    wins  = vals[vals >= 0]
+    loss  = vals[vals < 0]
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=loss, name="Verlies", nbinsx=20,
+        marker_color="#e74c3c", opacity=0.8,
+    ))
+    fig.add_trace(go.Histogram(
+        x=wins, name="Winst", nbinsx=20,
+        marker_color="#2ecc71", opacity=0.8,
+    ))
+    fig.add_vline(x=0, line_dash="dash", line_color="#f39c12", line_width=1)
+    fig.add_vline(x=float(vals.mean()), line_dash="dot", line_color="#3498db",
+                  annotation_text=f"Gem {vals.mean():.2f}R", line_width=1)
+    return style_fig(fig, height=300, title="R-Multiple Verdeling")
+
+
+def chart_score_winrate_correlatie(df: pd.DataFrame) -> go.Figure:
+    """Toont win rate per score bucket — correleert score met uitkomst?"""
+    if df.empty or "score" not in df.columns or "outcome" not in df.columns:
+        return empty_fig("Geen score data")
+
+    df = df.copy()
+    df["score_n"] = pd.to_numeric(df["score"], errors="coerce")
+    df["win"]     = df["outcome"].str.upper().isin(["WIN", "1"])
+
+    bins   = [0, 80, 85, 88, 90, 92, 95, 100]
+    labels = ["<80","80-84","85-87","88-89","90-91","92-94","95+"]
+    df["bucket"] = pd.cut(df["score_n"], bins=bins, labels=labels, right=False)
+
+    grp = df.groupby("bucket", observed=True).agg(
+        n=("win","count"), wins=("win","sum")
+    ).reset_index()
+    grp["wr"] = (grp["wins"] / grp["n"].replace(0,1) * 100).round(1)
+    grp = grp[grp["n"] >= 3]
+
+    if grp.empty:
+        return empty_fig("Te weinig data per bucket")
+
+    kleuren = ["#e74c3c" if w < 45 else "#f39c12" if w < 55 else "#2ecc71"
+               for w in grp["wr"]]
+    fig = go.Figure(go.Bar(
+        x=grp["bucket"].astype(str),
+        y=grp["wr"],
+        text=[f"{w:.1f}%<br>n={n}" for w, n in zip(grp["wr"], grp["n"])],
+        textposition="outside",
+        marker_color=kleuren,
+    ))
+    fig.add_hline(y=50, line_dash="dash", line_color="#7f8c8d", line_width=1,
+                  annotation_text="50%")
+    return style_fig(fig, height=300, title="Score → Win Rate Correlatie")
+
+
+def chart_fee_impact(df: pd.DataFrame) -> go.Figure:
+    """Gestapelde bar: bruto winst vs fees vs netto — per maand."""
+    if df.empty:
+        return empty_fig("Geen data")
+
+    df = df.copy()
+    for col in ["pnl_eur","fee_eur","outcome"]:
+        if col not in df.columns:
+            df[col] = 0
+    df["pnl_n"] = pd.to_numeric(df["pnl_eur"], errors="coerce").fillna(0)
+    df["fee_n"] = pd.to_numeric(df.get("fee_eur", 0), errors="coerce").fillna(0)
+    df["win"]   = df["outcome"].str.upper().isin(["WIN","1"])
+
+    ts_col = next((c for c in ["exit_time","updated_at"] if c in df.columns), None)
+    if not ts_col:
+        return empty_fig("Geen tijdstip data")
+
+    df["maand"] = pd.to_datetime(df[ts_col], errors="coerce").dt.to_period("M").astype(str)
+    grp = df.groupby("maand").agg(
+        bruto_winst=("pnl_n", lambda x: x[df.loc[x.index,"win"]].sum()),
+        bruto_verlies=("pnl_n", lambda x: abs(x[~df.loc[x.index,"win"]].sum())),
+        fees=("fee_n","sum"),
+    ).reset_index().tail(6)
+
+    grp["netto"] = grp["bruto_winst"] - grp["bruto_verlies"] - grp["fees"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(name="Bruto Winst",  x=grp["maand"], y=grp["bruto_winst"],  marker_color="#2ecc71"))
+    fig.add_trace(go.Bar(name="Bruto Verlies",x=grp["maand"], y=-grp["bruto_verlies"],marker_color="#e74c3c"))
+    fig.add_trace(go.Bar(name="Fees",         x=grp["maand"], y=-grp["fees"],         marker_color="#e67e22"))
+    fig.add_trace(go.Scatter(name="Netto",    x=grp["maand"], y=grp["netto"],
+                             mode="lines+markers", marker_color="#3498db", line_width=2))
+    fig.update_layout(barmode="relative")
+    return style_fig(fig, height=320, title="Fee Impact per Maand")
+
+
+def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
+    """Timeline van parameter wijzigingen — wanneer werd wat aangepast?"""
+    if config_df.empty:
+        return empty_fig("Geen config wijzigingen")
+
+    fig = go.Figure()
+    kleuren_map: Dict[str, str] = {}
+    palette = ["#3498db","#e74c3c","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22"]
+
+    params = config_df["parameter"].unique() if "parameter" in config_df.columns else []
+    for i, param in enumerate(params[:7]):
+        kleuren_map[param] = palette[i % len(palette)]
+
+    for _, row in config_df.iterrows():
+        param  = str(row.get("parameter",""))
+        ts     = row.get("tijdstip","")
+        oud    = str(row.get("oud_waarde",""))[:15]
+        nieuw  = str(row.get("nieuw_waarde",""))[:15]
+        kleur  = kleuren_map.get(param, "#95a5a6")
+        fig.add_trace(go.Scatter(
+            x=[ts], y=[param],
+            mode="markers+text",
+            marker=dict(size=12, color=kleur, symbol="diamond"),
+            text=[f"{oud}→{nieuw}"],
+            textposition="top center",
+            textfont=dict(size=9),
+            name=param,
+            showlegend=False,
+            hovertemplate=f"<b>{param}</b><br>{oud} → {nieuw}<br>%{{x}}<extra></extra>",
+        ))
+
+    fig.update_layout(showlegend=False)
+    return style_fig(fig, height=max(250, len(params) * 35 + 80), title="Config Wijzigingen Timeline")
+
+
+def chart_trade_flow_funnel(flow: Dict) -> go.Figure:
+    """Funnel chart: signalen → goedgekeurd → live → gesloten."""
+    labels = ["Signalen", "Goedgekeurd", "Live trades", "Gesloten"]
+    values = [
+        flow.get("signalen", 0),
+        flow.get("goedgekeurd", 0),
+        flow.get("live", 0),
+        flow.get("gesloten", 0),
+    ]
+    fig = go.Figure(go.Funnel(
+        y=labels, x=values,
+        textinfo="value+percent initial",
+        marker_color=["#3498db","#f39c12","#2ecc71","#27ae60"],
+    ))
+    return style_fig(fig, height=280, title="Trade Flow Funnel (7 dagen)")
+
+
+def chart_audit_gauge(score: int) -> go.Figure:
+    """Gauge chart voor systeem audit score 0-100."""
+    kleur = "#2ecc71" if score >= 90 else "#f39c12" if score >= 70 else "#e74c3c"
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number+delta",
+        value=score,
+        domain={"x":[0,1],"y":[0,1]},
+        title={"text":"Systeem Gezondheid","font":{"size":14,"color":"#aaa"}},
+        delta={"reference":90,"increasing":{"color":"#2ecc71"},"decreasing":{"color":"#e74c3c"}},
+        gauge={
+            "axis":{"range":[0,100],"tickcolor":"#555","tickfont":{"color":"#aaa"}},
+            "bar":{"color":kleur},
+            "steps":[
+                {"range":[0,60],"color":"#2c0a0a"},
+                {"range":[60,80],"color":"#2c1a0a"},
+                {"range":[80,100],"color":"#0a2c0a"},
+            ],
+            "threshold":{"line":{"color":"#fff","width":2},"thickness":0.75,"value":90},
+        },
+        number={"suffix":"/100","font":{"color":"#fff","size":36}},
+    ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        font={"color":"#ccc"},
+        height=220,
+        margin=dict(l=20,r=20,t=40,b=10),
+    )
+    return fig
+
+
+# ============================================================
+# PAGINA: COACH MONITOR
+# Dashboard van alle coach activiteit — dagboek, events, config
+# ============================================================
+def render_coach_monitor_page() -> None:
+    render_alarm_banner()
+    st.markdown('<div class="section-title">📋 Coach Monitor</div>', unsafe_allow_html=True)
+    st.caption("Volledig overzicht van alle coach activiteit, beslissingen en wijzigingen.")
+
+    # ── TABS ─────────────────────────────────────────────────
+    tab_dag, tab_events, tab_config, tab_anom, tab_regime, tab_files, tab_analyses = st.tabs([
+        "📖 Dagboek", "⚡ Events", "⚙️ Config Log", "🔬 Anomalieën",
+        "🔀 Regime Log", "📁 Bestanden", "🧠 Analyses",
+    ])
+
+    # ── DAGBOEK ──────────────────────────────────────────────
+    with tab_dag:
+        st.markdown("**Coach run history** — elke analyse run met samenvatting en beslissingen.")
+        df = load_coach_dagboek(30)
+        if df.empty:
+            st.info("Nog geen dagboek entries — coach heeft nog niet gedraaid.")
+        else:
+            for _, row in df.iterrows():
+                datum     = str(row.get("datum",""))
+                sam       = str(row.get("samenvatting",""))
+                besliss   = str(row.get("beslissingen",""))
+                anom      = str(row.get("anomalieen",""))
+                duur      = float(row.get("run_duur_sec",0) or 0)
+                with st.expander(f"📅 {datum} | {sam} | {duur:.0f}s", expanded=False):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**Beslissingen:**")
+                        st.text(besliss if besliss and besliss != "Geen aanpassingen" else "— geen —")
+                    with col2:
+                        st.markdown("**Anomalieën:**")
+                        st.text(anom if anom and anom != "Geen" else "— geen —")
+
+    # ── EVENTS ───────────────────────────────────────────────
+    with tab_events:
+        col_u, col_f = st.columns([3,1])
+        with col_u:
+            uren = st.selectbox("Periode", [6,12,24,48,72,168], index=2,
+                                format_func=lambda x: f"{x}u" if x < 48 else f"{x//24}d",
+                                key="events_uren")
+        df = load_coach_events(uren)
+        if df.empty:
+            st.info("Geen events in deze periode.")
+        else:
+            ernst_kleuren = {
+                "KRITIEK": "🔴", "HOOG": "🟡", "MEDIUM": "🟠", "INFO": "⚪",
+            }
+            # Filter op ernst
+            with col_f:
+                ernst_filter = st.selectbox("Ernst", ["ALLES","KRITIEK","HOOG","INFO"], key="events_ernst")
+            if ernst_filter != "ALLES":
+                df = df[df["ernst"] == ernst_filter]
+
+            st.markdown(f"**{len(df)} events** in de afgelopen {uren}u")
+            for _, row in df.head(100).iterrows():
+                ts     = str(row.get("tijdstip",""))[:16]
+                cat    = str(row.get("categorie",""))
+                etype  = str(row.get("event_type",""))
+                omschr = str(row.get("omschrijving",""))
+                ernst  = str(row.get("ernst","INFO"))
+                emoji  = ernst_kleuren.get(ernst,"⚪")
+                st.markdown(
+                    f'<div style="font-size:12px;padding:4px 8px;border-left:3px solid #333;margin:2px 0;">'
+                    f'{emoji} <b style="color:#aaa;">{ts}</b> '
+                    f'<span style="color:#f39c12;">[{cat}]</span> '
+                    f'<span style="color:#3498db;">{etype}</span> '
+                    f'<span style="color:#ccc;">{omschr[:120]}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── CONFIG LOG ───────────────────────────────────────────
+    with tab_config:
+        st.markdown("**Alle parameter wijzigingen** — wanneer, wat, door wie.")
+        config_df = load_coach_config_log(30)
+        if config_df.empty:
+            st.info("Nog geen config wijzigingen gelogd.")
+        else:
+            st.markdown(f"**{len(config_df)} wijzigingen** in de afgelopen 30 dagen")
+            # Timeline chart
+            if len(config_df) > 1:
+                st.plotly_chart(chart_config_timeline(config_df),
+                                use_container_width=True,
+                                config={"displayModeBar": False},
+                                key="config_timeline")
+
+            # Tabel
+            weergave = config_df.copy()
+            if "tijdstip" in weergave.columns:
+                weergave["tijdstip"] = pd.to_datetime(
+                    weergave["tijdstip"], errors="coerce"
+                ).dt.strftime("%d-%m %H:%M")
+            st.dataframe(
+                weergave[["tijdstip","parameter","oud_waarde","nieuw_waarde","bron","reden"]],
+                hide_index=True,
+                use_container_width=True,
+            )
+
+            csv = config_df.to_csv(index=False)
+            st.download_button("⬇️ Download config log", csv, "config_log.csv", "text/csv")
+
+    # ── ANOMALIEËN ───────────────────────────────────────────
+    with tab_anom:
+        anom_df = load_coach_anomalieen(14)
+        if anom_df.empty:
+            st.success("✅ Geen anomalieën gedetecteerd in de afgelopen 14 dagen.")
+        else:
+            open_anom = anom_df[anom_df.get("opgelost",False) == False] if "opgelost" in anom_df.columns else anom_df
+            opgelost  = anom_df[anom_df.get("opgelost",False) == True]  if "opgelost" in anom_df.columns else pd.DataFrame()
+
+            a1, a2, a3 = st.columns(3)
+            a1.metric("Totaal (14d)", len(anom_df))
+            a2.metric("Open", len(open_anom), delta=f"-{len(opgelost)} opgelost" if not opgelost.empty else None)
+            a3.metric("Kritiek", len(anom_df[anom_df.get("ernst","") == "KRITIEK"]) if "ernst" in anom_df.columns else 0)
+
+            ernst_map = {"KRITIEK":"🔴","HOOG":"🟡","MEDIUM":"🟠","LAAG":"⚪"}
+            for _, row in anom_df.iterrows():
+                ernst  = str(row.get("ernst","MEDIUM"))
+                emoji  = ernst_map.get(ernst,"⚪")
+                type_  = str(row.get("type",""))
+                omschr = str(row.get("omschrijving",""))
+                waarde = float(row.get("waarde",0) or 0)
+                drempel= float(row.get("drempel",0) or 0)
+                opg    = bool(row.get("opgelost",False))
+                ts     = str(row.get("tijdstip",""))[:16]
+                status = "✅ Opgelost" if opg else "🔴 Open"
+
+                st.markdown(
+                    f'<div style="background:#1a1a2e;border-left:4px solid '
+                    f'{"#e74c3c" if ernst=="KRITIEK" else "#e67e22" if ernst=="HOOG" else "#555"}'
+                    f';padding:8px 12px;border-radius:4px;margin:4px 0;">'
+                    f'<b>{emoji} {type_}</b> <span style="color:#aaa;font-size:11px;">{ts} | {status}</span><br>'
+                    f'<span style="font-size:12px;color:#ccc;">{omschr}</span>'
+                    f'<span style="font-size:11px;color:#888;margin-left:12px;">waarde: {waarde:.2f} | drempel: {drempel:.2f}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── REGIME LOG ───────────────────────────────────────────
+    with tab_regime:
+        regime_df = load_coach_regime_log(60)
+        if regime_df.empty:
+            st.info("Nog geen regime overgangen gelogd.")
+        else:
+            st.markdown(f"**{len(regime_df)} regime overgangen** in 60 dagen")
+            for _, row in regime_df.iterrows():
+                ts   = str(row.get("tijdstip",""))[:16]
+                oud  = str(row.get("oud_regime","?"))
+                nieuw= str(row.get("nieuw_regime","?"))
+                btc  = float(row.get("btc_prijs",0) or 0)
+                kleur_oud  = "#e74c3c" if "BEAR" in oud  else "#2ecc71" if "BULL" in oud  else "#f39c12"
+                kleur_nieuw= "#e74c3c" if "BEAR" in nieuw else "#2ecc71" if "BULL" in nieuw else "#f39c12"
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:10px;padding:6px;'
+                    f'border-bottom:1px solid #222;font-size:13px;">'
+                    f'<span style="color:#888;width:110px;">{ts}</span>'
+                    f'<span style="color:{kleur_oud};font-weight:bold;">{oud}</span>'
+                    f'<span style="color:#555;">→</span>'
+                    f'<span style="color:{kleur_nieuw};font-weight:bold;">{nieuw}</span>'
+                    f'<span style="color:#888;margin-left:auto;">BTC: €{btc:,.0f}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── BESTANDEN ────────────────────────────────────────────
+    with tab_files:
+        files_df = load_coach_bestand_checksums()
+        if files_df.empty:
+            st.info("Nog geen bestand checksums — coach heeft nog niet gedraaid.")
+        else:
+            st.markdown("**Code bestand versies** — coach detecteert automatisch deploys.")
+            for _, row in files_df.iterrows():
+                naam     = str(row.get("bestandsnaam",""))
+                regels   = int(row.get("regels",0) or 0)
+                checksum = str(row.get("checksum",""))[:8]
+                bijgew   = str(row.get("bijgewerkt",""))[:16]
+                verand   = bool(row.get("verandering_gedetecteerd",False))
+                badge    = '🟡 Gewijzigd' if verand else '✅ Ongewijzigd'
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:12px;padding:6px 0;'
+                    f'border-bottom:1px solid #222;font-size:13px;">'
+                    f'<code style="color:#3498db;width:220px;">{naam}</code>'
+                    f'<span style="color:#888;">{regels:,} regels</span>'
+                    f'<span style="color:#555;font-family:monospace;">{checksum}</span>'
+                    f'<span style="color:#888;font-size:11px;">{bijgew}</span>'
+                    f'<span style="margin-left:auto;">{badge}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── ANALYSES ────────────────────────────────────────────
+    with tab_analyses:
+        an_df = load_coach_analyses(10)
+        if an_df.empty:
+            st.info("Nog geen coach analyses opgeslagen.")
+        else:
+            for _, row in an_df.iterrows():
+                datum = str(row.get("run_datum",""))[:10]
+                dagen = int(row.get("periode_dagen",0) or 0)
+                n     = int(row.get("n_trades",0) or 0)
+                wr    = float(row.get("win_rate",0) or 0)
+                pf    = float(row.get("profit_factor",0) or 0)
+                aanp  = str(row.get("aanpassingen",""))
+                advies= str(row.get("claude_advies",""))
+                with st.expander(
+                    f"📅 {datum} | {n} trades | {wr:.1f}% WR | PF {pf:.2f} | {dagen}d",
+                    expanded=False
+                ):
+                    if aanp and aanp.strip():
+                        st.markdown("**Aanpassingen:**")
+                        st.text(aanp[:600])
+                    if advies and advies.strip():
+                        st.markdown("**Claude advies:**")
+                        st.info(advies[:800])
+
+
+# ============================================================
+# PAGINA: SYSTEEM GEZONDHEID
+# ============================================================
+def render_health_page() -> None:
+    render_alarm_banner()
+    st.markdown('<div class="section-title">🏥 Systeem Gezondheid</div>', unsafe_allow_html=True)
+    st.caption("Realtime overzicht van de bot gezondheid, data versheid en trade flow.")
+
+    # ── AUDIT SCORE GAUGE ────────────────────────────────────
+    score = load_systeem_audit_score()
+    col_gauge, col_flow, col_info = st.columns([1, 1.4, 1.6])
+
+    with col_gauge:
+        st.plotly_chart(chart_audit_gauge(score),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                        key="audit_gauge")
+
+    with col_flow:
+        flow = load_trade_flow_7d()
+        st.plotly_chart(chart_trade_flow_funnel(flow),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                        key="flow_funnel")
+
+    with col_info:
+        st.markdown("**Trade Flow (7d)**")
+        items = [
+            ("📨 Signalen gegenereerd", flow["signalen"]),
+            ("✅ Goedgekeurd",           flow["goedgekeurd"]),
+            ("⏰ Verlopen",              flow["verlopen"]),
+            ("💶 Live trades",           flow["live"]),
+            ("🏁 Gesloten",             flow["gesloten"]),
+        ]
+        for label, val in items:
+            st.markdown(
+                f'<div style="display:flex;justify-content:space-between;'
+                f'padding:5px 0;border-bottom:1px solid #1e1e1e;font-size:13px;">'
+                f'<span style="color:#aaa;">{label}</span>'
+                f'<b style="color:#f39c12;">{val}</b>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        conv = flow.get("conversie_pct",0)
+        kleur = "#2ecc71" if conv >= 5 else "#e74c3c" if conv < 2 else "#f39c12"
+        st.markdown(
+            f'<div style="margin-top:8px;font-size:12px;color:{kleur};">'
+            f'Conversie: {conv:.1f}% signalen → live</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── DATA VERSHEID ────────────────────────────────────────
+    st.markdown("**📡 Data Versheid**")
+    versheid_checks = [
+        {
+            "naam": "Candles (1H)",
+            "sql": "SELECT MAX(close_time) FROM public.candles WHERE interval_='1h'",
+            "max_uren": 2,
+        },
+        {
+            "naam": "Markt Regime",
+            "sql": "SELECT MAX(updated_at) FROM public.market_regime",
+            "max_uren": 6,
+        },
+        {
+            "naam": "BTC Regime 4H",
+            "sql": "SELECT MAX(created_at) FROM public.btc_regime_4h",
+            "max_uren": 5,
+        },
+        {
+            "naam": "Pending Signals",
+            "sql": "SELECT MAX(aangemaakt) FROM public.pending_approvals",
+            "max_uren": 4,
+        },
+        {
+            "naam": "Live Trades",
+            "sql": "SELECT MAX(COALESCE(updated_at, created_at)) FROM public.experience_trades WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')",
+            "max_uren": 48,
+        },
+    ]
+
+    cols = st.columns(len(versheid_checks))
+    now  = datetime.now(timezone.utc)
+    for i, check in enumerate(versheid_checks):
+        with cols[i]:
+            try:
+                ts = run_scalar(check["sql"])
+                if ts is None:
+                    st.markdown(
+                        f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
+                        f'<div style="font-size:22px;">❓</div><div style="font-size:10px;color:#555;">Geen data</div></div>',
+                        unsafe_allow_html=True)
+                    continue
+                if hasattr(ts, "tzinfo") and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                elif isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts.replace("Z","+00:00"))
+                uren = (now - ts).total_seconds() / 3600
+                ok   = uren < check["max_uren"]
+                kleur= "#2ecc71" if ok else "#e74c3c"
+                label= f"{uren:.1f}u" if uren < 48 else f"{uren/24:.1f}d"
+                st.markdown(
+                    f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
+                    f'<div style="font-size:22px;color:{kleur};">{"✅" if ok else "⚠️"}</div>'
+                    f'<div style="font-size:12px;color:{kleur};">{label} oud</div>'
+                    f'<div style="font-size:10px;color:#555;">max {check["max_uren"]}u</div></div>',
+                    unsafe_allow_html=True)
+            except Exception:
+                st.markdown(
+                    f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
+                    f'<div style="font-size:22px;">❌</div></div>',
+                    unsafe_allow_html=True)
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── DB TABEL STATISTIEKEN ────────────────────────────────
+    st.markdown("**🗄️ Database Tabellen**")
+    tabellen = [
+        "experience_trades","pending_approvals","bot_state","market_regime",
+        "btc_regime_4h","candles","coach_memory","coach_events","coach_dagboek",
+        "coach_config_log","coach_anomalieen","coach_regime_log",
+    ]
+    tabel_data = []
+    for tabel in tabellen:
+        if table_exists(tabel):
+            n = run_scalar(f"SELECT COUNT(*) FROM public.{tabel}") or 0
+            tabel_data.append({"Tabel": tabel, "Records": int(n), "Status": "✅"})
+        else:
+            tabel_data.append({"Tabel": tabel, "Records": 0, "Status": "❌ Ontbreekt"})
+
+    tabel_df = pd.DataFrame(tabel_data)
+    st.dataframe(tabel_df, hide_index=True, use_container_width=True)
+
+    # ── ALARMEN OVERZICHT ────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("**🚨 Actieve Alarmen**")
+    alarmen = _load_actieve_alarmen()
+    if not alarmen:
+        st.success("✅ Geen actieve alarmen.")
+    else:
+        for a in alarmen:
+            ernst = str(a.get("ernst","MEDIUM"))
+            kleur = "#e74c3c" if ernst=="KRITIEK" else "#e67e22" if ernst=="HOOG" else "#555"
+            emoji = "🔴" if ernst=="KRITIEK" else "🟡"
+            st.markdown(
+                f'<div style="background:#111;border-left:4px solid {kleur};'
+                f'padding:8px 12px;border-radius:4px;margin:4px 0;">'
+                f'{emoji} <b>{a.get("type","")}</b> — {a.get("omschrijving","")}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+# ============================================================
+# PAGINA: BOT QUICK CONTROLS
+# START/STOP/PAUSE direct vanuit dashboard + parameter sliders
+# ============================================================
+def _set_bot_state_key(key: str, value: str) -> bool:
+    """Schrijft een waarde naar bot_state in de DB."""
+    try:
+        conn = get_db_conn()
+        if not conn:
+            return False
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO public.bot_state(key, value, updated_at)
+                VALUES(%s, %s, NOW())
+                ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()
+            """, (key, value))
+        conn.commit()
+        conn.close()
+        st.cache_data.clear()
+        return True
+    except Exception as e:
+        st.error(f"DB fout: {e}")
+        return False
+
+
+def _send_whatsapp_command(commando: str) -> bool:
+    """Stuurt een WhatsApp commando via Twilio API."""
+    sid   = os.getenv("TWILIO_ACCOUNT_SID","")
+    token = os.getenv("TWILIO_AUTH_TOKEN","")
+    van   = os.getenv("TWILIO_WHATSAPP_FROM","")
+    naar  = os.getenv("TWILIO_WHATSAPP_TO","")
+    if not all([sid, token, van, naar]):
+        return False
+    try:
+        resp = requests.post(
+            f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+            auth=(sid, token),
+            data={"From": van, "To": naar, "Body": commando},
+            timeout=8,
+        )
+        return resp.status_code == 201
+    except Exception:
+        return False
+
+
+def render_controls_page() -> None:
+    render_alarm_banner()
+    st.markdown('<div class="section-title">🎮 Bot Quick Controls</div>', unsafe_allow_html=True)
+    st.caption("Bestuur de bot direct vanuit het dashboard — geen WhatsApp nodig.")
+
+    # ── BOT STATUS + GROTE KNOPPEN ───────────────────────────
+    bot_actief_raw = get_bot_state_val("bot_active", "false").lower()
+    bot_actief = bot_actief_raw == "true"
+    bot_gepauz = get_bot_state_val("bot_paused", "false").lower() == "true"
+
+    if bot_actief and not bot_gepauz:
+        status_label = "🟢 BOT ACTIEF"
+        status_kleur = "#2ecc71"
+    elif bot_gepauz:
+        status_label = "🟡 BOT GEPAUZEERD"
+        status_kleur = "#f39c12"
+    else:
+        status_label = "🔴 BOT GESTOPT"
+        status_kleur = "#e74c3c"
+
+    st.markdown(
+        f'<div style="text-align:center;background:#111;border:2px solid {status_kleur};'
+        f'border-radius:12px;padding:20px;margin-bottom:16px;">'
+        f'<div style="font-size:28px;font-weight:bold;color:{status_kleur};">{status_label}</div>'
+        f'<div style="font-size:12px;color:#888;margin-top:4px;">Laatste check: {datetime.now(timezone.utc).strftime("%H:%M:%S UTC")}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    btn_c1, btn_c2, btn_c3, btn_c4 = st.columns(4)
+
+    with btn_c1:
+        if st.button("▶️ START", use_container_width=True, type="primary",
+                     disabled=bot_actief and not bot_gepauz):
+            if _set_bot_state_key("bot_active", "true") and _set_bot_state_key("bot_paused","false"):
+                _send_whatsapp_command("START")
+                st.success("✅ Bot gestart")
+                st.rerun()
+
+    with btn_c2:
+        if st.button("⏸️ PAUZEER", use_container_width=True, disabled=not bot_actief or bot_gepauz):
+            if _set_bot_state_key("bot_paused", "true"):
+                st.warning("⏸️ Bot gepauzeerd")
+                st.rerun()
+
+    with btn_c3:
+        if st.button("⏩ HERVAT", use_container_width=True, disabled=not bot_gepauz):
+            if _set_bot_state_key("bot_paused", "false"):
+                st.success("▶️ Bot hervat")
+                st.rerun()
+
+    with btn_c4:
+        if st.button("⏹️ STOP", use_container_width=True,
+                     disabled=not bot_actief, type="secondary"):
+            if _set_bot_state_key("bot_active", "false"):
+                _send_whatsapp_command("STOP")
+                st.error("⏹️ Bot gestopt")
+                st.rerun()
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── PARAMETER SLIDERS ────────────────────────────────────
+    st.markdown("**⚙️ Parameters direct aanpassen**")
+    st.caption("Wijzigingen worden direct in bot_state opgeslagen én gelogd in coach_config_log.")
+
+    p1, p2 = st.columns(2)
+    with p1:
+        huidig_score = int(get_bot_state_val("min_score_to_trade","92") or "92")
+        nieuw_score  = st.slider("🎯 Min Score to Trade", 75, 99, huidig_score, 1,
+                                 key="ctrl_score")
+        if nieuw_score != huidig_score:
+            if st.button(f"Opslaan score={nieuw_score}", key="save_score"):
+                if _set_bot_state_key("min_score_to_trade", str(nieuw_score)):
+                    st.success(f"✅ Score drempel → {nieuw_score}")
+                    st.cache_data.clear()
+
+        huidig_start = int(get_bot_state_val("trading_hours_start","9") or "9")
+        huidig_end   = int(get_bot_state_val("trading_hours_end","17") or "17")
+        nieuw_start, nieuw_end = st.select_slider(
+            "⏰ Trading Uren (UTC)",
+            options=list(range(0,24)),
+            value=(huidig_start, huidig_end),
+            key="ctrl_uren",
+        )
+        if (nieuw_start, nieuw_end) != (huidig_start, huidig_end):
+            if st.button(f"Opslaan uren {nieuw_start}-{nieuw_end}u", key="save_uren"):
+                ok = (_set_bot_state_key("trading_hours_start", str(nieuw_start)) and
+                      _set_bot_state_key("trading_hours_end",   str(nieuw_end)))
+                if ok:
+                    st.success(f"✅ Trading uren → {nieuw_start}:00-{nieuw_end}:00 UTC")
+
+    with p2:
+        huidig_atr = float(get_bot_state_val("atr_multiplier","1.6") or "1.6")
+        nieuw_atr  = st.slider("📏 ATR Multiplier (stop loss)", 0.8, 3.0, huidig_atr, 0.1,
+                                key="ctrl_atr")
+        if abs(nieuw_atr - huidig_atr) > 0.05:
+            if st.button(f"Opslaan ATR={nieuw_atr:.1f}", key="save_atr"):
+                if _set_bot_state_key("atr_multiplier", str(round(nieuw_atr,1))):
+                    st.success(f"✅ ATR multiplier → {nieuw_atr:.1f}")
+
+        huidig_size = float(get_bot_state_val("position_size_eur","0.5") or "0.5")
+        nieuw_size  = st.slider("💶 Positiegrootte (EUR)", 0.10, 2.00, huidig_size, 0.05,
+                                 format="€%.2f", key="ctrl_size")
+        if abs(nieuw_size - huidig_size) > 0.01:
+            if st.button(f"Opslaan positie=€{nieuw_size:.2f}", key="save_size"):
+                if _set_bot_state_key("position_size_eur", str(round(nieuw_size,2))):
+                    st.success(f"✅ Positiegrootte → €{nieuw_size:.2f}")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── WHATSAPP COMMANDO'S ──────────────────────────────────
+    st.markdown("**📱 WhatsApp Commando's**")
+    wa_cols = st.columns(5)
+    commando_labels = {
+        "STATUS":  ("📊 Status",   "wa_status"),
+        "TRADES":  ("📋 Trades",   "wa_trades"),
+        "RAPPORT": ("📈 Rapport",  "wa_rapport"),
+        "HEALTH":  ("🏥 Health",   "wa_health"),
+        "ANALYSE": ("🧠 Analyse",  "wa_analyse"),
+    }
+    for i, (cmd, (label, key)) in enumerate(commando_labels.items()):
+        with wa_cols[i]:
+            if st.button(label, key=key, use_container_width=True):
+                if _send_whatsapp_command(cmd):
+                    st.success(f"✅ {cmd} verstuurd")
+                else:
+                    st.warning("⚠️ Twilio niet geconfigureerd")
+
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── DAGBUDGET RESET / EMERGENCY ─────────────────────────
+    st.markdown("**🚨 Emergency Controls**")
+    ec1, ec2, ec3 = st.columns(3)
+
+    with ec1:
+        if st.button("🔄 Reset Dagbudget", use_container_width=True):
+            if _set_bot_state_key("daily_pnl","0"):
+                st.success("✅ Dagbudget gereset naar €0")
+
+    with ec2:
+        if st.button("🧹 Leeg Cooldown", use_container_width=True):
+            if _set_bot_state_key("coin_cooldown","{}"):
+                st.success("✅ Cooldown lijst geleegd")
+
+    with ec3:
+        with st.expander("⚠️ Reset Drawdown Pause", expanded=False):
+            st.warning("Dit heft de drawdown bescherming tijdelijk op.")
+            if st.button("Reset Drawdown", key="reset_dd"):
+                if _set_bot_state_key("drawdown_paused","false"):
+                    st.success("✅ Drawdown pause opgeheven")
+
+    # ── RECENTE WIJZIGINGEN ──────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("**📋 Recente parameter wijzigingen**")
+    recent_cfg = load_coach_config_log(2)  # 2 dagen
+    if recent_cfg.empty:
+        st.caption("Nog geen wijzigingen via dashboard gelogd.")
+    else:
+        for _, row in recent_cfg.head(10).iterrows():
+            ts   = str(row.get("tijdstip",""))[:16]
+            param= str(row.get("parameter",""))
+            oud  = str(row.get("oud_waarde",""))
+            nieuw= str(row.get("nieuw_waarde",""))
+            bron = str(row.get("bron",""))
+            st.markdown(
+                f'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #1e1e1e;">'
+                f'<span style="color:#888;">{ts}</span> '
+                f'<b style="color:#f39c12;">{param}</b>: '
+                f'<span style="color:#e74c3c;">{oud}</span> → '
+                f'<span style="color:#2ecc71;">{nieuw}</span> '
+                f'<span style="color:#555;">[{bron}]</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+# ============================================================
+# UITBREIDING ANALYSE PAGINA — R, Score correlatie, Fees
+# ============================================================
+def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    """Extra analyse tabs: R-distributie, Score correlatie, Fees, Config timeline."""
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("**🔬 Geavanceerde Analyse**")
+
+    tab_r, tab_sc, tab_fee, tab_cfg = st.tabs([
+        "📐 R-Distributie", "📊 Score Correlatie", "💰 Fee Impact", "⚙️ Config Timeline",
+    ])
+
+    with tab_r:
+        st.plotly_chart(chart_r_distributie(real_df if not real_df.empty else df),
+                        use_container_width=True, config={"displayModeBar":False}, key="xr_dist")
+        r_col = next((c for c in ["pnl_r","result_r"] if c in df.columns), None)
+        if r_col and not df.empty:
+            vals = pd.to_numeric(df[r_col], errors="coerce").dropna()
+            wins = vals[vals >= 0]
+            loss = vals[vals < 0]
+            c1,c2,c3,c4 = st.columns(4)
+            c1.metric("Gem Win R",  f"{wins.mean():.2f}R"  if not wins.empty  else "—")
+            c2.metric("Gem Loss R", f"{loss.mean():.2f}R"  if not loss.empty  else "—")
+            c3.metric("≥ 2R trades", f"{(vals>=2).sum()}")
+            c4.metric("Expectancy",  f"{(wins.mean()*(len(wins)/len(vals)) - abs(loss.mean())*(len(loss)/len(vals))):.3f}R" if len(vals)>0 else "—")
+
+    with tab_sc:
+        st.plotly_chart(chart_score_winrate_correlatie(df),
+                        use_container_width=True, config={"displayModeBar":False}, key="xsc")
+        st.caption("Een gezond scoremodel toont stijgende win rate bij hogere score buckets.")
+
+    with tab_fee:
+        st.plotly_chart(chart_fee_impact(df),
+                        use_container_width=True, config={"displayModeBar":False}, key="xfee")
+        if "fee_eur" in df.columns:
+            fee_sum  = pd.to_numeric(df.get("fee_eur",0), errors="coerce").fillna(0).sum()
+            pnl_sum  = pd.to_numeric(df.get("pnl_eur",0), errors="coerce").fillna(0)
+            win_pnl  = pnl_sum[pnl_sum > 0].sum()
+            fee_pct  = fee_sum / max(win_pnl, 0.001) * 100
+            f1,f2,f3 = st.columns(3)
+            f1.metric("Totale fees", f"€{fee_sum:.4f}")
+            f2.metric("Fees / bruto winst", f"{fee_pct:.1f}%",
+                      delta="Te hoog" if fee_pct > 25 else "OK",
+                      delta_color="inverse" if fee_pct > 25 else "normal")
+            f3.metric("Gem fee / trade", f"€{fee_sum/max(len(df),1):.4f}")
+        else:
+            st.info("Fee data (fee_eur kolom) niet beschikbaar.")
+
+    with tab_cfg:
+        cfg_df = load_coach_config_log(90)
+        if cfg_df.empty:
+            st.info("Nog geen config wijzigingen gelogd door de coach.")
+        else:
+            st.plotly_chart(chart_config_timeline(cfg_df),
+                            use_container_width=True, config={"displayModeBar":False}, key="xcfg")
+            st.caption(f"{len(cfg_df)} wijzigingen in 90 dagen — elk punt = een parameter aanpassing.")
+
+
+# ============================================================
 # NAVIGATIE HELPERS
 # ============================================================
 PAGE_NAMES = {
     "dashboard":   "◉ Dashboard",
     "coach":       "◉ 🤖 AI Coach Chat",
     "positions":   "◉ Open Posities (P&L)",
+    "monitor":     "◉ 📋 Coach Monitor",
+    "health":      "◉ 🏥 Systeem Gezondheid",
+    "controls":    "◉ 🎮 Bot Controls",
     "live":        "◉ Live Performance",
     "sim":         "◉ Simulator",
     "shadow":      "◉ Shadow Review",
@@ -2950,9 +3975,14 @@ def render_sidebar() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="nav-header">📊 Overzicht</div>', unsafe_allow_html=True)
-    nav_btn("◉ Dashboard",          "dashboard")
-    nav_btn("◉ 🤖 AI Coach Chat",   "coach")
+    nav_btn("◉ Dashboard",           "dashboard")
+    nav_btn("◉ 🤖 AI Coach Chat",    "coach")
     nav_btn("◉ Open Posities (P&L)", "positions")
+
+    st.markdown('<div class="nav-header" style="margin-top:8px;">🤖 Bot Beheer</div>', unsafe_allow_html=True)
+    nav_btn("◉ 🎮 Bot Controls",     "controls")
+    nav_btn("◉ 🏥 Systeem Gezondheid","health")
+    nav_btn("◉ 📋 Coach Monitor",    "monitor")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">📈 Trade Analyse</div>', unsafe_allow_html=True)
     nav_btn("◉ Live Performance",    "live")
@@ -2975,13 +4005,21 @@ def render_sidebar() -> None:
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # Auto refresh
+    # Auto refresh — instelbaar interval
     auto = st.checkbox("⚡ Auto-refresh", value=st.session_state.auto_refresh)
     if auto != st.session_state.auto_refresh:
         st.session_state.auto_refresh = auto
     if auto:
-        st.caption(f"Ververst elke {DASHBOARD_REFRESH}s")
-        time.sleep(DASHBOARD_REFRESH)
+        refresh_interval = st.select_slider(
+            "Interval",
+            options=[15, 30, 60, 120, 300],
+            value=st.session_state.get("refresh_interval", DASHBOARD_REFRESH),
+            format_func=lambda x: f"{x}s" if x < 60 else f"{x//60}min",
+            key="sidebar_refresh_interval",
+        )
+        st.session_state["refresh_interval"] = refresh_interval
+        st.caption(f"🔄 Ververst elke {refresh_interval}s")
+        time.sleep(refresh_interval)
         st.rerun()
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
@@ -3040,13 +4078,15 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    outcome  = safe_str(row.get("outcome"))
-    pnl_r    = safe_float(row.get("pnl_r"))
-    pnl_eur  = safe_float(row.get("pnl_eur"))
-    entry    = safe_float(row.get("entry"))
-    stop     = safe_float(row.get("stop"))
-    target   = safe_float(row.get("target"))
-    rr       = abs(target - entry) / max(abs(entry - stop), 0.0001) if entry > 0 and stop > 0 and target > 0 else 0.0
+    outcome   = safe_str(row.get("outcome"))
+    pnl_r     = safe_float(row.get("pnl_r"))
+    pnl_eur   = safe_float(row.get("pnl_eur"))
+    entry     = safe_float(row.get("entry"))
+    stop      = safe_float(row.get("stop"))
+    target    = safe_float(row.get("target"))
+    trade_type = safe_str(row.get("trade_type","")).upper()
+    is_real   = trade_type in ("REAL","LIVE")
+    rr        = abs(target - entry) / max(abs(entry - stop), 0.0001) if entry > 0 and stop > 0 and target > 0 else 0.0
 
     outcome_color = "#34d399" if outcome == "WIN" else "#fb7185" if outcome == "LOSS" else "#94a3b8"
 
@@ -3054,7 +4094,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     <div class="trade-chip-row">
         <div class="trade-chip" style="color:{outcome_color}">{outcome}</div>
         <div class="trade-chip">{safe_str(row.get("symbol"))}</div>
-        <div class="trade-chip">{safe_str(row.get("trade_type"))}</div>
+        <div class="trade-chip">{trade_type}</div>
         <div class="trade-chip">{safe_str(row.get("setup_type"))}</div>
         <div class="trade-chip">{safe_str(row.get("timeframe"))}</div>
         <div class="trade-chip">{safe_str(row.get("regime"))}</div>
@@ -3064,7 +4104,6 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     c1, c2 = st.columns(2, gap="small")
     with c1:
         for label, value in [
-            ("Trade ID",   safe_str(row.get("trade_id"))),
             ("Score",      str(safe_int(row.get("score")))),
             ("Chance",     format_pct(row.get("chance"))),
             ("Confidence", format_pct(row.get("confidence"))),
@@ -3074,6 +4113,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
             ("R/R",        f"1:{rr:.2f}"),
         ]:
             st.markdown(f'<div class="list-row"><div class="list-left">{label}</div><div class="list-right">{value}</div></div>', unsafe_allow_html=True)
+
     with c2:
         dur_str = "-"
         created = parse_dt(row.get("created_at"))
@@ -3081,16 +4121,20 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
         if not pd.isna(created) and not pd.isna(closed):
             mins    = int((closed - created).total_seconds() / 60)
             dur_str = f"{mins//60}h {mins%60}m"
-        for label, value in [
-            ("P&L R",       format_r(pnl_r)),
-            ("P&L EUR",     format_money(pnl_eur)),
-            ("Open",        format_dt(row.get("created_at"))),
-            ("Close",       format_dt(row.get("closed_at"))),
-            ("Duur",        dur_str),
-            ("Source",      safe_str(row.get("source"))),
-            ("Label",       safe_str(row.get("label"), "-")),
-            ("MFE",         format_price(row.get("mfe")) if safe_float(row.get("mfe")) > 0 else "-"),
-        ]:
+
+        # P&L EUR alleen tonen bij echte trades
+        pnl_rij = [
+            ("P&L",    format_r(pnl_r) + (f" / {format_money(pnl_eur)}" if is_real and abs(pnl_eur) > 0.0001 else "")),
+        ]
+        rest = [
+            ("Open",   format_dt(row.get("created_at"))),
+            ("Close",  format_dt(row.get("closed_at"))),
+            ("Duur",   dur_str),
+            ("Label",  safe_str(row.get("label"), "-")),
+            ("MFE",    format_price(row.get("mfe")) if safe_float(row.get("mfe")) > 0 else "-"),
+            ("MAE",    format_price(row.get("mae")) if safe_float(row.get("mae")) > 0 else "-"),
+        ]
+        for label, value in pnl_rij + rest:
             st.markdown(f'<div class="list-row"><div class="list-left">{label}</div><div class="list-right">{value}</div></div>', unsafe_allow_html=True)
 
     st.plotly_chart(chart_trade_detail(row), use_container_width=True,
@@ -3101,11 +4145,11 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     sym    = safe_str(row.get("symbol"))
     setup  = safe_str(row.get("setup_type"))
     regime = safe_str(row.get("regime"))
-    ttype  = safe_str(row.get("trade_type"))
+    eur_deel = f" ({format_money(pnl_eur)})" if is_real and abs(pnl_eur) > 0.0001 else ""
     analyse = (
-        f"{'✅ WIN' if outcome=='WIN' else '❌ LOSS'} op {sym} — setup '{setup}' in regime '{regime}' via {ttype}. "
-        f"Entry: {format_price(entry)}, Stop: {format_price(stop)}, Target: {format_price(target)}. "
-        f"R/R = 1:{rr:.2f}. Resultaat: {format_r(pnl_r)} ({format_money(pnl_eur)})."
+        f"{'✅ WIN' if outcome=='WIN' else '❌ LOSS'} | {sym} | {setup} | {regime} | {trade_type}\n"
+        f"Entry: {format_price(entry)} → Stop: {format_price(stop)} → Target: {format_price(target)} | R/R 1:{rr:.2f}\n"
+        f"Resultaat: {format_r(pnl_r)}{eur_deel} | Duur: {dur_str}"
     )
     st.markdown(f'<div class="trade-note">{analyse}</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
@@ -3214,16 +4258,17 @@ def render_dashboard(
         st.markdown(metric_card("Trades (totaal)", str(int(summary_all["count"])), "", "blue"), unsafe_allow_html=True)
     with c2:
         wr_all = format_pct(summary_all["winrate"])
-        st.markdown(metric_card("Win Rate (all)", wr_all, f"R:{format_r(summary_all['total_r'])}", "green"), unsafe_allow_html=True)
+        st.markdown(metric_card("Win Rate (all)", wr_all, f"R: {format_r(summary_all['total_r'])}", "green"), unsafe_allow_html=True)
     with c3:
         wr_real = format_pct(summary_real["winrate"])
-        st.markdown(metric_card("Win Rate (live)", wr_real, f"€{summary_real['total_eur']:.2f}", "orange"), unsafe_allow_html=True)
+        eur_sub = f"€{summary_real['total_eur']:.4f}" if abs(summary_real['total_eur']) > 0 else "—"
+        st.markdown(metric_card("Win Rate (live)", wr_real, eur_sub, "orange"), unsafe_allow_html=True)
     with c4:
         pf = summary_real["profit_factor"]
         pf_color = "green" if pf >= 1.5 else "red"
         st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", "✅ OK" if pf >= 1.5 else "⚠️ Laag", pf_color), unsafe_allow_html=True)
     with c5:
-        st.markdown(metric_card("Expectancy", f"{summary_all['expectancy']:.2f} R", "Per trade", "purple"), unsafe_allow_html=True)
+        st.markdown(metric_card("Expectancy", f"{summary_all['expectancy']:.3f} R", "Per trade gemiddeld", "purple"), unsafe_allow_html=True)
     with c6:
         dd = summary_real["max_dd"]
         st.markdown(metric_card("Max Drawdown", f"{dd:.2f} R", "Live trades", "red"), unsafe_allow_html=True)
@@ -3269,14 +4314,15 @@ def render_dashboard(
         st.markdown('<div class="section-title">Live Statistieken</div>', unsafe_allow_html=True)
 
         stats_rows = [
-            ("Trades",         str(int(summary_real["count"])),      ""),
+            ("Live Trades",    str(int(summary_real["count"])),                          ""),
             ("Wins",           str(int(summary_real["count"] * summary_real["winrate"] / 100)), f'{summary_real["winrate"]:.1f}%'),
             ("Losses",         str(int(summary_real["count"] * (100 - summary_real["winrate"]) / 100)), f'{100-summary_real["winrate"]:.1f}%'),
-            ("Totale Winst",   format_money(summary_real["gross_profit"]), ""),
-            ("Totale Verlies", format_money(summary_real["gross_loss"]),   ""),
-            ("Netto",          format_money(summary_real["total_eur"]),    ""),
-            ("Profit Factor",  f'{summary_real["profit_factor"]:.2f}',     "doel: >1.5"),
-            ("Expectancy",     f'{summary_real["expectancy"]:.2f} R',      "per trade"),
+            ("Netto R",        format_r(summary_real["total_r"]),                        ""),
+            ("Netto EUR",      format_money(summary_real["total_eur"]),                  "echt geld"),
+            ("Bruto Winst",    format_money(summary_real["gross_profit"]),               ""),
+            ("Bruto Verlies",  format_money(summary_real["gross_loss"]),                 ""),
+            ("Profit Factor",  f'{summary_real["profit_factor"]:.2f}',                  "doel: >1.5"),
+            ("Expectancy",     f'{summary_real["expectancy"]:.3f} R',                   "per trade"),
         ]
         for label, value, badge in stats_rows:
             badge_html = f'<span class="hero-stat-badge blue">{badge}</span>' if badge else ""
@@ -3365,35 +4411,47 @@ def render_trade_page(
     subtitle:  str,
 ) -> None:
     """Generieke pagina voor REAL, SIM, SHADOW trades."""
+    render_alarm_banner()
+    is_real_page = page_name == "live"
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-
     st.markdown(f'<div class="section-title">{title}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="section-subtitle">{subtitle}</div>', unsafe_allow_html=True)
 
     filtered = render_filters(df, include_trade_type=False)
     summary  = perf_summary(filtered)
 
+    # ── METRICS ──────────────────────────────────────────────
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     with m1: st.markdown(metric_card("Trades", str(int(summary["count"])), "", "blue"), unsafe_allow_html=True)
-    with m2: st.markdown(metric_card("Win Rate", format_pct(summary["winrate"]), "", "green"), unsafe_allow_html=True)
-    with m3: st.markdown(metric_card("Totale R", format_r(summary["total_r"]), "", "orange"), unsafe_allow_html=True)
-    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', "doel: >1.5", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
+    with m2: st.markdown(metric_card("Win Rate", format_pct(summary["winrate"]), f"E: {summary['expectancy']:.3f}R", "green"), unsafe_allow_html=True)
+    with m3:
+        if is_real_page:
+            st.markdown(metric_card("Netto EUR", format_money(summary["total_r"] * MAX_PER_TRADE_EUR / 0.5 if summary["total_eur"] == 0 else summary["total_eur"]).replace("+",""), f"R: {format_r(summary['total_r'])}", "orange"), unsafe_allow_html=True)
+        else:
+            st.markdown(metric_card("Totale R", format_r(summary["total_r"]), "SIM — geen echt geld", "orange"), unsafe_allow_html=True)
+    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', "✅ OK" if summary["profit_factor"] >= 1.5 else "⚠️ Laag", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
     with m5: st.markdown(metric_card("Max Drawdown", f'{summary["max_dd"]:.2f} R', "", "red"), unsafe_allow_html=True)
 
+    # ── CHARTS ──────────────────────────────────────────────
     c1, c2 = st.columns([1.4, 1.0], gap="small")
     with c1:
-        st.plotly_chart(chart_equity_curve(filtered, f"{title} Equity Curve"), use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_equity")
+        st.plotly_chart(chart_equity_curve(filtered, f"{title} Equity Curve"),
+                        use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_equity")
     with c2:
-        st.plotly_chart(chart_win_loss_bar(filtered, "Win / Loss"), use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_wl")
+        st.plotly_chart(chart_win_loss_bar(filtered, "Win / Loss"),
+                        use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_wl")
 
     c3, c4 = st.columns([1.4, 1.0], gap="small")
     with c3:
-        st.plotly_chart(chart_setup_perf(filtered, "Setup Performance"), use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_setup")
+        st.plotly_chart(chart_setup_perf(filtered, "Setup Performance"),
+                        use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_setup")
     with c4:
-        st.plotly_chart(chart_daily_r(filtered, "Dagresultaten"), use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_daily")
+        st.plotly_chart(chart_daily_r(filtered, "Dagresultaten"),
+                        use_container_width=True, config={"displayModeBar":False}, key=f"{page_name}_daily")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
+    # ── TRADE LIJST + DETAIL ─────────────────────────────────
     tl, tr = st.columns([1.2, 0.95], gap="small")
     with tl:
         render_trade_list(filtered, f"{title} — Trade Lijst")
@@ -3403,9 +4461,31 @@ def render_trade_page(
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    display_cols = [c for c in ["trade_id","symbol","setup_type","regime","timeframe","outcome","pnl_r","pnl_eur","score","datetime"] if c in filtered.columns]
-    if display_cols:
-        st.dataframe(filtered[display_cols].head(100), use_container_width=True, hide_index=True)
+    # ── DATA TABEL — alleen relevante kolommen ──────────────
+    # EUR kolommen alleen bij REAL pagina
+    basis_cols = ["symbol","setup_type","regime","timeframe","outcome","pnl_r","score"]
+    eur_cols   = ["pnl_eur"] if is_real_page else []
+    extra_cols = ["datetime"] if "datetime" in filtered.columns else []
+    display_cols = [c for c in basis_cols + eur_cols + extra_cols if c in filtered.columns]
+
+    if not filtered.empty and display_cols:
+        # Hernoem voor leesbaarheid
+        rename = {
+            "symbol": "Coin", "setup_type": "Setup", "regime": "Regime",
+            "timeframe": "TF", "outcome": "Uitkomst", "pnl_r": "R",
+            "pnl_eur": "EUR", "score": "Score", "datetime": "Datum",
+        }
+        weergave = filtered[display_cols].head(200).rename(columns=rename)
+        # Kleur uitkomst kolom
+        def kleur_uitkomst(val):
+            if str(val).upper() == "WIN":
+                return "color: #2ecc71"
+            elif str(val).upper() == "LOSS":
+                return "color: #e74c3c"
+            return ""
+
+        styled = weergave.style.applymap(kleur_uitkomst, subset=["Uitkomst"]) if "Uitkomst" in weergave.columns else weergave
+        st.dataframe(styled, hide_index=True, use_container_width=True)
 
     csv = filtered.to_csv(index=False).encode("utf-8")
     st.download_button(f"⬇️ Download {title} CSV", csv, f"{page_name}_trades.csv", "text/csv", use_container_width=True)
@@ -4349,7 +5429,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 <div class="coin-row coin-row-white">
                     <div>
                         <div class="coin-name">🌟 {name}</div>
-                        <div class="coin-stats">Win rate: {wr:.1f}% | {n} trades | Gem. PnL: {format_money(avg_pnl)}</div>
+                        <div class="coin-stats">Win rate: {wr:.1f}% | {n} trades | Gem. R: {avg_pnl:+.3f}R</div>
                     </div>
                     <span class="top-status-chip chip-green">TOPPERFORMER</span>
                 </div>
@@ -4363,18 +5443,21 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             st.markdown("#### 🏆 Top 5 Beste Trades")
             if not best.empty:
                 for _, row in best.iterrows():
-                    sym  = safe_str(row.get("symbol"))
-                    r    = safe_float(row.get("pnl_r"))
-                    eur  = safe_float(row.get("pnl_eur"))
+                    sym   = safe_str(row.get("symbol"))
+                    r     = safe_float(row.get("pnl_r"))
                     setup = safe_str(row.get("setup_type"))
-                    dt   = safe_str(row.get("datetime"))
+                    dt    = safe_str(row.get("datetime"))
+                    src   = safe_str(row.get("trade_type","")).upper()
+                    is_real = src in ("REAL","LIVE")
+                    eur   = safe_float(row.get("pnl_eur"))
+                    eur_deel = f" / {format_money(eur)}" if is_real and abs(eur) > 0.0001 else ""
                     st.markdown(f"""
                     <div class="top-trade-card">
                         <div>
                             <div class="top-trade-left">{sym} — {setup}</div>
-                            <div class="top-trade-sub">{dt}</div>
+                            <div class="top-trade-sub">{dt} | {src}</div>
                         </div>
-                        <div class="top-trade-right float-green">+{r:.2f} R / {format_money(eur)}</div>
+                        <div class="top-trade-right float-green">+{r:.2f} R{eur_deel}</div>
                     </div>
                     """, unsafe_allow_html=True)
             else:
@@ -4386,16 +5469,19 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 for _, row in worst.iterrows():
                     sym   = safe_str(row.get("symbol"))
                     r     = safe_float(row.get("pnl_r"))
-                    eur   = safe_float(row.get("pnl_eur"))
                     setup = safe_str(row.get("setup_type"))
                     dt    = safe_str(row.get("datetime"))
+                    src   = safe_str(row.get("trade_type","")).upper()
+                    is_real = src in ("REAL","LIVE")
+                    eur   = safe_float(row.get("pnl_eur"))
+                    eur_deel = f" / {format_money(eur)}" if is_real and abs(eur) > 0.0001 else ""
                     st.markdown(f"""
                     <div class="top-trade-card">
                         <div>
                             <div class="top-trade-left">{sym} — {setup}</div>
-                            <div class="top-trade-sub">{dt}</div>
+                            <div class="top-trade-sub">{dt} | {src}</div>
                         </div>
-                        <div class="top-trade-right float-red">{r:.2f} R / {format_money(eur)}</div>
+                        <div class="top-trade-right float-red">{r:.2f} R{eur_deel}</div>
                     </div>
                     """, unsafe_allow_html=True)
             else:
@@ -4441,91 +5527,194 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
 # ============================================================
 def render_kalender_page(history_df: pd.DataFrame) -> None:
     """Kalender P&L heatmap — visuele consistentie check."""
+    render_alarm_banner()
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📅 P&L Kalender</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
-        'P&L per dag gevisualiseerd als kalender. '
-        'Groen = winstdag, Rood = verliesdag. '
-        'Geeft snel inzicht in consistentie over de maand.'
+        'Win/verlies per dag. Groen = winstdag, rood = verliesdag. '
+        'Intensiteit = hoe groot de dag. Hover over een dag voor details.'
         '</div>',
         unsafe_allow_html=True,
     )
 
     import calendar as cal_module
 
-    # Maand selectie
-    mc1, mc2, _ = st.columns([1, 1, 2], gap="small")
+    # ── MAAND SELECTIE ────────────────────────────────────────
+    mc1, mc2, mc3 = st.columns([1, 1, 2], gap="small")
     now = now_utc()
     with mc1:
-        sel_year  = st.selectbox("Jaar", list(range(2024, now.year + 2)), index=now.year - 2024, key="cal_year")
+        sel_year  = st.selectbox("Jaar", list(range(2024, now.year + 2)),
+                                 index=now.year - 2024, key="cal_year")
     with mc2:
         sel_month = st.selectbox("Maand", list(range(1, 13)), index=now.month - 1,
                                  format_func=lambda m: cal_module.month_name[m], key="cal_month")
+    with mc3:
+        # Alleen REAL trades voor kalender (omdat alleen die echt geld zijn)
+        cal_filter = st.radio(
+            "Trades",
+            ["Alleen REAL", "Alles"],
+            horizontal=True,
+            key="cal_filter",
+        )
 
-    pnl_data = get_calendar_pnl(history_df, sel_year, sel_month)
+    if cal_filter == "Alleen REAL" and not history_df.empty and "trade_type" in history_df.columns:
+        cal_df = history_df[history_df["trade_type"].str.upper().isin(["REAL","LIVE"])]
+    else:
+        cal_df = history_df
 
-    # Kalender grid
+    # P&L per dag op basis van R (altijd vergelijkbaar, ongeacht inzet)
+    pnl_data_r: Dict[str, float]   = {}
+    pnl_data_eur: Dict[str, float] = {}
+    count_per_dag: Dict[str, int]  = {}
+    wins_per_dag: Dict[str, int]   = {}
+
+    if not cal_df.empty:
+        ts_col = next((c for c in ["exit_time","closed_at","updated_at","created_at","datetime"] if c in cal_df.columns), None)
+        if ts_col:
+            tmp = cal_df.copy()
+            tmp["_dag"] = pd.to_datetime(tmp[ts_col], errors="coerce").dt.strftime("%Y-%m-%d")
+            tmp["_r"]   = pd.to_numeric(tmp.get("pnl_r", 0), errors="coerce").fillna(0)
+            tmp["_eur"] = pd.to_numeric(tmp.get("pnl_eur", 0), errors="coerce").fillna(0)
+            tmp["_win"] = tmp.get("outcome","").str.upper().isin(["WIN","1"])
+            grp = tmp.dropna(subset=["_dag"]).groupby("_dag")
+            pnl_data_r   = grp["_r"].sum().to_dict()
+            pnl_data_eur = grp["_eur"].sum().to_dict()
+            count_per_dag = grp["_r"].count().to_dict()
+            wins_per_dag  = grp["_win"].sum().to_dict()
+
+    pnl_data = pnl_data_r  # Kalender toont altijd R
+
+    # ── KALENDER GRID ─────────────────────────────────────────
     days_in_month = cal_module.monthrange(sel_year, sel_month)[1]
     first_weekday = cal_module.monthrange(sel_year, sel_month)[0]
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # Weekdag headers
-    day_headers = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
-    header_html = "".join(f'<div class="cal-header">{d}</div>' for d in day_headers)
+    dag_namen = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+    header_html = "".join(f'<div class="cal-header">{d}</div>' for d in dag_namen)
     st.markdown(f'<div class="cal-grid">{header_html}</div>', unsafe_allow_html=True)
 
-    # Dag cellen
     cells = []
     for _ in range(first_weekday):
         cells.append('<div class="cal-day cal-empty"></div>')
 
-    month_wins = 0
+    month_wins   = 0
     month_losses = 0
-    month_pnl = 0.0
+    month_r      = 0.0
+    month_eur    = 0.0
+    month_trades = 0
 
     for day_num in range(1, days_in_month + 1):
-        dag_str = f"{sel_year}-{sel_month:02d}-{day_num:02d}"
-        pnl_val = pnl_data.get(dag_str)
-        if pnl_val is None:
-            cells.append(f'<div class="cal-day cal-flat">{day_num}</div>')
+        dag_str   = f"{sel_year}-{sel_month:02d}-{day_num:02d}"
+        pnl_val   = pnl_data.get(dag_str)
+        eur_val   = pnl_data_eur.get(dag_str, 0)
+        n_trades  = int(count_per_dag.get(dag_str, 0))
+        n_wins    = int(wins_per_dag.get(dag_str, 0))
+        is_vandaag = dag_str == now.strftime("%Y-%m-%d")
+        vandaag_border = "border:2px solid #f39c12;" if is_vandaag else ""
+
+        if pnl_val is None or n_trades == 0:
+            cells.append(f'<div class="cal-day cal-flat" style="{vandaag_border}">{day_num}</div>')
         elif pnl_val > 0:
-            intensity = min(int(abs(pnl_val) * 50 + 20), 80)
-            cells.append(f'<div class="cal-day cal-win" style="background:rgba(52,211,153,0.{intensity:02d});" title="+€{pnl_val:.2f}">{day_num}</div>')
+            intensity = min(int(abs(pnl_val) * 30 + 15), 75)
+            tooltip   = f"+{pnl_val:.2f}R | {n_wins}/{n_trades} wins"
+            cells.append(
+                f'<div class="cal-day cal-win" '
+                f'style="background:rgba(52,211,153,0.{intensity:02d});{vandaag_border}" '
+                f'title="{tooltip}">'
+                f'{day_num}'
+                f'<div style="font-size:9px;color:rgba(52,211,153,0.9);">+{pnl_val:.1f}R</div>'
+                f'</div>'
+            )
             month_wins += 1
-            month_pnl  += pnl_val
-        elif pnl_val < 0:
-            intensity = min(int(abs(pnl_val) * 50 + 20), 80)
-            cells.append(f'<div class="cal-day cal-loss" style="background:rgba(239,68,68,0.{intensity:02d});" title="-€{abs(pnl_val):.2f}">{day_num}</div>')
-            month_losses += 1
-            month_pnl    += pnl_val
+            month_r    += pnl_val
+            month_eur  += eur_val
+            month_trades += n_trades
         else:
-            cells.append(f'<div class="cal-day cal-flat">{day_num}</div>')
+            intensity = min(int(abs(pnl_val) * 30 + 15), 75)
+            tooltip   = f"{pnl_val:.2f}R | {n_wins}/{n_trades} wins"
+            cells.append(
+                f'<div class="cal-day cal-loss" '
+                f'style="background:rgba(239,68,68,0.{intensity:02d});{vandaag_border}" '
+                f'title="{tooltip}">'
+                f'{day_num}'
+                f'<div style="font-size:9px;color:rgba(239,68,68,0.9);">{pnl_val:.1f}R</div>'
+                f'</div>'
+            )
+            month_losses += 1
+            month_r      += pnl_val
+            month_eur    += eur_val
+            month_trades += n_trades
 
     grid_html = '<div class="cal-grid">' + "".join(cells) + '</div>'
     st.markdown(grid_html, unsafe_allow_html=True)
 
-    # Maand samenvatting
+    # ── MAAND SAMENVATTING ────────────────────────────────────
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    active_days = month_wins + month_losses
-    win_day_pct = (month_wins / max(active_days, 1)) * 100
-    sign = "+" if month_pnl >= 0 else ""
+    active_days  = month_wins + month_losses
+    win_day_pct  = (month_wins / max(active_days, 1)) * 100
+    r_teken      = "+" if month_r >= 0 else ""
 
-    ms1, ms2, ms3, ms4 = st.columns(4, gap="small")
+    ms1, ms2, ms3, ms4, ms5 = st.columns(5, gap="small")
     with ms1:
-        st.markdown(metric_card("Winstdagen", str(month_wins), f"{win_day_pct:.1f}% van actieve dagen", "green"), unsafe_allow_html=True)
+        st.markdown(metric_card("Winstdagen", str(month_wins),
+                                f"{win_day_pct:.1f}% van aktieve dagen", "green"), unsafe_allow_html=True)
     with ms2:
-        st.markdown(metric_card("Verliessdagen", str(month_losses), f"{100-win_day_pct:.1f}% van actieve dagen", "red"), unsafe_allow_html=True)
+        st.markdown(metric_card("Verliessdagen", str(month_losses),
+                                f"{100-win_day_pct:.1f}%", "red"), unsafe_allow_html=True)
     with ms3:
-        st.markdown(metric_card("Maand P&L", f"{sign}€{abs(month_pnl):.2f}", "", "green" if month_pnl >= 0 else "red"), unsafe_allow_html=True)
+        st.markdown(metric_card("Maand R", f"{r_teken}{month_r:.2f}R",
+                                "", "green" if month_r >= 0 else "red"), unsafe_allow_html=True)
     with ms4:
-        st.markdown(metric_card("Actieve Handelsdagen", str(active_days), f"van {days_in_month} dagen", "blue"), unsafe_allow_html=True)
+        # EUR alleen tonen als er echte trades zijn (filter = REAL)
+        if cal_filter == "Alleen REAL" and abs(month_eur) > 0.0001:
+            eur_teken = "+" if month_eur >= 0 else ""
+            st.markdown(metric_card("Maand EUR", f"{eur_teken}€{month_eur:.4f}",
+                                    "echt geld", "green" if month_eur >= 0 else "red"), unsafe_allow_html=True)
+        else:
+            st.markdown(metric_card("Actieve Dagen", str(active_days),
+                                    f"van {days_in_month} dagen", "blue"), unsafe_allow_html=True)
+    with ms5:
+        st.markdown(metric_card("Trades", str(month_trades),
+                                f"gem. {month_trades/max(active_days,1):.1f}/dag", "blue"), unsafe_allow_html=True)
 
-    # Vergelijk meerdere maanden met Plotly heatmap
+    # ── 30-DAAGSE R TREND ─────────────────────────────────────
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("#### 📊 30-Dagen P&L Trend")
-    st.plotly_chart(chart_daily_r(history_df, "Dagelijkse P&L (euro)"), use_container_width=True, config={"displayModeBar":False}, key="cal_daily_eur")
+    st.markdown("#### 📊 Dagelijkse R — 30 dagen")
+    st.plotly_chart(chart_daily_r(cal_df, "Dagelijkse R (alle types)"),
+                    use_container_width=True, config={"displayModeBar":False}, key="cal_daily_r")
+
+    # ── BESTE EN SLECHTSTE DAGEN ──────────────────────────────
+    if pnl_data_r:
+        sorted_dagen = sorted(pnl_data_r.items(), key=lambda x: x[1], reverse=True)
+        top3  = [(d, r) for d, r in sorted_dagen if r > 0][:3]
+        bot3  = [(d, r) for d, r in sorted_dagen if r < 0][-3:]
+
+        if top3 or bot3:
+            bc1, bc2 = st.columns(2, gap="small")
+            with bc1:
+                st.markdown("**🏆 Beste dagen deze maand**")
+                for dag, r in top3:
+                    n = int(count_per_dag.get(dag, 0))
+                    st.markdown(
+                        f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
+                        f'<b style="color:#2ecc71;">{dag}</b> — '
+                        f'<span style="color:#f39c12;">+{r:.2f}R</span> | {n} trades'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+            with bc2:
+                st.markdown("**💀 Slechtste dagen deze maand**")
+                for dag, r in reversed(bot3):
+                    n = int(count_per_dag.get(dag, 0))
+                    st.markdown(
+                        f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
+                        f'<b style="color:#e74c3c;">{dag}</b> — '
+                        f'<span style="color:#e74c3c;">{r:.2f}R</span> | {n} trades'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5106,7 +6295,17 @@ else:
             def _coach_history():
                 sql = build_trades_sql("ALL", 500)
                 return normalize_trade_df(run_query(sql)) if sql else empty_trade_df()
+            render_alarm_banner()
             render_coach_chat_page(_coach_history(), _coach_data())
+
+        elif page == "monitor":
+            render_coach_monitor_page()
+
+        elif page == "health":
+            render_health_page()
+
+        elif page == "controls":
+            render_controls_page()
 
         elif page == "live":
             with st.spinner("Live trades laden..."):
@@ -5133,7 +6332,9 @@ else:
             with st.spinner("Analyse data laden..."):
                 real_df   = load_real_trades()
                 history_df = load_all_trades()
+            render_alarm_banner()
             render_analyse_page(history_df, real_df)
+            _render_extra_analyse_tabs(history_df, real_df)
 
         elif page == "coins":
             with st.spinner("Coin data laden..."):
