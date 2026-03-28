@@ -5000,7 +5000,9 @@ source_mode     = "DB" if db_ready() else "DEMO"
 # Dagelijks PnL via lichte query — beperkt tot vandaag
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_pnl_today_light() -> float:
-    return run_scalar("""
+    if not db_ready():
+        return 0.0
+    result = run_scalar("""
     SELECT COALESCE(SUM(
         CASE WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
              WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
@@ -5009,35 +5011,45 @@ def _get_pnl_today_light() -> float:
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND DATE(COALESCE(exit_time,updated_at) AT TIME ZONE 'UTC') = CURRENT_DATE
-    """, default=0.0) if db_ready() else 0.0
+    """, default=0.0)
+    return safe_float(result)
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_pf30_light() -> float:
-    rows = run_query("""
+    if not db_ready():
+        return 0.0
+    df = run_query("""
     SELECT COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0) AS w,
            COALESCE(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001) AS l
     FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
       AND COALESCE(exit_time,updated_at) >= NOW() - INTERVAL '30 days'
-    """) if db_ready() else []
-    if rows:
-        w = safe_float(rows[0].get("w")); l = max(safe_float(rows[0].get("l")), 0.001)
-        return round(w / l, 2)
-    return 0.0
+    """)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 0.0
+    w = safe_float(df.iloc[0].get("w", 0))
+    l = max(safe_float(df.iloc[0].get("l", 0.001)), 0.001)
+    return round(w / l, 2)
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_cons_light() -> int:
-    rows = run_query("""
+    if not db_ready():
+        return 0
+    df = run_query("""
     SELECT outcome FROM public.experience_trades
     WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
       AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
     ORDER BY COALESCE(exit_time,updated_at) DESC LIMIT 10
-    """) if db_ready() else []
+    """)
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return 0
     count = 0
-    for r in rows:
-        if safe_str(r.get("outcome")).upper() == "LOSS": count += 1
-        else: break
+    for _, row in df.iterrows():
+        if safe_str(row.get("outcome")).upper() == "LOSS":
+            count += 1
+        else:
+            break
     return count
 
 @st.cache_data(ttl=30, show_spinner=False)
