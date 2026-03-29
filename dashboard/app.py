@@ -1,7 +1,7 @@
 # app.py
 # ============================================================
 # Crypto AI Terminal — Streamlit Dashboard v3.0
-# Bloomberg Terminal Stijl — Professioneel & Uitgebreid
+# Cyber Neon Command Center — Professioneel & Uitgebreid
 # ============================================================
 #
 # WAT DIT BESTAND DOET:
@@ -93,6 +93,178 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ============================================================
+# CYBER NEON CSS — injectie na set_page_config
+# ============================================================
+st.markdown("""<style>
+:root {
+    --bg:#030308; --bg2:#060610; --panel:#0a0a16; --card:#0d0d1a;
+    --border:rgba(0,212,255,0.10); --grid:rgba(0,212,255,0.06); --zero:rgba(0,212,255,0.15);
+    --txt:#e8f0ff; --txt-hi:#ffffff; --muted:#6e7a9a;
+    --win:#00e676; --loss:#ff2d55; --live:#00d4ff;
+    --shadow:#bf5fff; --sim:#ff6b00; --warn:#ffe600; --info:#3d8bff;
+    --gwin:rgba(0,230,118,0.18); --gloss:rgba(255,45,85,0.18); --glive:rgba(0,212,255,0.18);
+}
+.stApp{background:radial-gradient(ellipse at 15% 0%,rgba(0,212,255,0.05) 0%,transparent 55%),radial-gradient(ellipse at 85% 0%,rgba(191,95,255,0.06) 0%,transparent 55%),radial-gradient(ellipse at 50% 100%,rgba(0,230,118,0.03) 0%,transparent 60%),linear-gradient(180deg,var(--bg) 0%,#020208 100%);color:var(--txt);font-family:'Courier New',Courier,monospace;}
+header[data-testid="stHeader"]{background:transparent;}
+section[data-testid="stSidebar"]{display:none;}
+.block-container{max-width:1880px;padding-top:0.4rem;padding-bottom:1rem;}
+.shell{background:linear-gradient(180deg,rgba(7,7,18,0.98),rgba(3,3,12,0.98));border:1px solid var(--border);border-radius:24px;box-shadow:0 24px 60px rgba(0,0,0,0.6),0 0 80px rgba(0,212,255,0.03);padding:14px;}
+.panel,.panel-tight{background:linear-gradient(180deg,var(--panel),rgba(6,6,16,0.98));border:1px solid var(--border);border-radius:20px;box-shadow:0 12px 34px rgba(0,0,0,0.50),inset 0 1px 0 rgba(0,212,255,0.06);}
+.panel{padding:14px;} .panel-tight{padding:10px 12px;}
+.metric-card{background:linear-gradient(135deg,var(--card),rgba(6,6,15,0.99));border:1px solid var(--border);border-radius:16px;padding:14px;min-height:88px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.50),inset 0 1px 0 rgba(0,212,255,0.06);transition:border-color 0.2s ease,box-shadow 0.2s ease;}
+.metric-card:hover{border-color:rgba(0,212,255,0.22);box-shadow:0 8px 24px rgba(0,0,0,0.50),0 0 24px rgba(0,212,255,0.08);}
+.metric-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,0.5),rgba(191,95,255,0.5),transparent);}
+.metric-card.green-accent{border-top:2px solid var(--win);box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 20px var(--gwin);}
+.metric-card.red-accent{border-top:2px solid var(--loss);box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 20px var(--gloss);}
+.metric-card.blue-accent{border-top:2px solid var(--live);box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 20px var(--glive);}
+.metric-card.orange-accent,.metric-card.purple-accent{border-top:2px solid var(--shadow);box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 20px rgba(191,95,255,0.15);}
+.metric-value{color:var(--txt-hi);font-size:22px;line-height:1.05;font-weight:900;margin-bottom:5px;}
+.metric-delta{font-size:11px;font-weight:700;margin-bottom:4px;}
+.metric-label{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;}
+.accent-blue{color:var(--live)!important;text-shadow:0 0 10px var(--glive);}
+.accent-green{color:var(--win)!important;text-shadow:0 0 10px var(--gwin);}
+.accent-red{color:var(--loss)!important;text-shadow:0 0 10px var(--gloss);}
+.accent-purple{color:var(--shadow)!important;text-shadow:0 0 10px rgba(191,95,255,0.4);}
+.accent-yellow{color:var(--warn)!important;text-shadow:0 0 10px rgba(255,230,0,0.4);}
+.accent-orange{color:var(--live)!important;text-shadow:0 0 10px var(--glive);}
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:4px 2px 12px 2px;border-bottom:1px solid var(--grid);margin-bottom:12px;}
+.brand{display:flex;align-items:center;gap:12px;}
+.brand-mark{width:18px;height:38px;border-radius:8px 16px 8px 16px;background:linear-gradient(180deg,var(--live),var(--shadow));transform:skewX(-18deg);box-shadow:0 8px 22px var(--glive);}
+.brand-title{font-size:22px;line-height:1.05;font-weight:900;letter-spacing:-0.03em;color:var(--txt-hi);}
+.brand-sub{font-size:11px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-top:1px;}
+.top-status-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.top-status-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:900;letter-spacing:0.04em;}
+.chip-green{background:rgba(0,230,118,0.12);color:var(--win);border:1px solid rgba(0,230,118,0.28);}
+.chip-red{background:rgba(255,45,85,0.12);color:var(--loss);border:1px solid rgba(255,45,85,0.28);}
+.chip-yellow{background:rgba(255,230,0,0.10);color:var(--warn);border:1px solid rgba(255,230,0,0.25);}
+.chip-blue{background:rgba(0,212,255,0.10);color:var(--live);border:1px solid rgba(0,212,255,0.25);}
+.chip-orange{background:rgba(0,212,255,0.10);color:var(--live);border:1px solid rgba(0,212,255,0.20);}
+.chip-purple{background:rgba(191,95,255,0.12);color:var(--shadow);border:1px solid rgba(191,95,255,0.28);}
+.chip-gray{background:rgba(0,212,255,0.03);color:var(--muted);border:1px solid rgba(0,212,255,0.08);}
+.nav-header{color:var(--txt-hi);font-size:12px;font-weight:900;text-transform:uppercase;margin-bottom:8px;letter-spacing:0.04em;}
+.nav-caption{color:var(--muted);font-size:11px;line-height:1.5;margin-bottom:10px;}
+.page-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:linear-gradient(90deg,rgba(0,212,255,0.14),rgba(191,95,255,0.14));border:1px solid var(--border);color:var(--txt-hi);font-size:11px;font-weight:900;margin-bottom:12px;letter-spacing:0.04em;text-transform:uppercase;}
+.nav-button-active div.stButton>button{background:linear-gradient(90deg,rgba(0,212,255,0.18),rgba(191,95,255,0.18))!important;border-color:rgba(0,212,255,0.28)!important;color:var(--txt-hi)!important;box-shadow:0 0 20px var(--glive)!important;padding-left:20px!important;}
+div.stButton>button,div.stFormSubmitButton>button,div.stDownloadButton>button{width:100%;background:linear-gradient(180deg,#0e0e1e,#080810)!important;color:var(--txt)!important;border:1px solid var(--border)!important;border-radius:12px!important;font-weight:800!important;font-family:'Courier New',monospace!important;font-size:12px!important;min-height:40px!important;transition:all 0.15s ease!important;}
+div.stButton>button:hover{background:linear-gradient(180deg,#121224,#0c0c1c)!important;color:var(--live)!important;border-color:rgba(0,212,255,0.40)!important;transform:translateY(-1px)!important;box-shadow:0 4px 16px var(--glive)!important;}
+.tc{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 12px;margin-bottom:6px;font-size:12px;line-height:1.6;}
+.tc-win{border-left:3px solid var(--win);box-shadow:inset 3px 0 14px rgba(0,230,118,0.08);}
+.tc-loss{border-left:3px solid var(--loss);box-shadow:inset 3px 0 14px rgba(255,45,85,0.08);}
+.tc-open{border-left:3px solid var(--live);box-shadow:inset 3px 0 14px rgba(0,212,255,0.08);}
+.tc-shad{border-left:3px solid var(--shadow);box-shadow:inset 3px 0 14px rgba(191,95,255,0.08);}
+.tc-pend{border-left:3px solid var(--warn);box-shadow:inset 3px 0 14px rgba(255,230,0,0.08);}
+.trade-chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;}
+.trade-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;border-radius:999px;border:1px solid var(--border);background:rgba(0,212,255,0.04);color:var(--txt);font-size:11px;font-weight:900;}
+.status-ok{display:inline-block;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:900;background:rgba(0,230,118,0.12);color:var(--win);border:1px solid rgba(0,230,118,0.30);box-shadow:0 0 8px var(--gwin);}
+.status-warn{display:inline-block;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:900;background:rgba(255,230,0,0.10);color:var(--warn);border:1px solid rgba(255,230,0,0.28);box-shadow:0 0 8px rgba(255,230,0,0.10);}
+.status-bad{display:inline-block;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:900;background:rgba(255,45,85,0.12);color:var(--loss);border:1px solid rgba(255,45,85,0.30);box-shadow:0 0 8px var(--gloss);}
+.regime-badge{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:900;letter-spacing:0.04em;}
+.regime-bull{background:rgba(0,230,118,0.15);color:var(--win);border:1px solid rgba(0,230,118,0.35);box-shadow:0 0 12px var(--gwin);}
+.regime-bear{background:rgba(255,45,85,0.15);color:var(--loss);border:1px solid rgba(255,45,85,0.35);box-shadow:0 0 12px var(--gloss);}
+.regime-range{background:rgba(255,230,0,0.12);color:var(--warn);border:1px solid rgba(255,230,0,0.30);box-shadow:0 0 12px rgba(255,230,0,0.10);}
+.regime-unkown{background:rgba(0,212,255,0.04);color:var(--muted);border:1px solid var(--border);}
+.scanner-card{background:rgba(0,212,255,0.03);border:1px solid rgba(0,212,255,0.14);border-radius:14px;padding:14px;margin-bottom:8px;}
+.scanner-title{color:var(--txt-hi);font-size:13px;font-weight:900;margin-bottom:6px;}
+.scanner-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--grid);}
+.scanner-key{color:var(--muted);font-size:12px;} .scanner-val{color:var(--txt-hi);font-size:12px;font-weight:700;}
+.signal-card{background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.18);border-radius:14px;padding:12px;margin-bottom:6px;}
+.signal-symbol{color:var(--txt-hi);font-size:14px;font-weight:900;}
+.signal-score{color:var(--win);font-size:13px;font-weight:900;text-shadow:0 0 8px var(--gwin);}
+.signal-details{color:var(--muted);font-size:11px;margin-top:4px;}
+.winloss-bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:14px;border:1px solid var(--border);background:rgba(0,212,255,0.02);margin-bottom:10px;flex-wrap:wrap;}
+.winloss-source{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:10px;background:rgba(0,212,255,0.04);border:1px solid var(--grid);min-width:180px;}
+.winloss-label{color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;}
+.winloss-pct-w{color:var(--win);font-size:15px;font-weight:900;text-shadow:0 0 8px var(--gwin);}
+.winloss-pct-l{color:var(--loss);font-size:15px;font-weight:900;text-shadow:0 0 8px var(--gloss);}
+.winloss-count{color:var(--muted);font-size:11px;} .winloss-divider{width:1px;height:28px;background:var(--grid);}
+.float-card{background:linear-gradient(180deg,var(--card),rgba(6,6,15,0.99));border:1px solid var(--border);border-radius:14px;padding:12px;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;}
+.float-left{color:var(--txt-hi);font-size:13px;font-weight:800;} .float-right{font-size:13px;font-weight:900;text-align:right;}
+.float-green{color:var(--win);text-shadow:0 0 8px var(--gwin);} .float-red{color:var(--loss);text-shadow:0 0 8px var(--gloss);}
+.float-sub{color:var(--muted);font-size:11px;margin-top:2px;}
+.budget-bar{height:8px;border-radius:999px;background:rgba(0,212,255,0.08);overflow:hidden;margin:6px 0;}
+.budget-fill-safe{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--win),var(--live));box-shadow:0 0 8px var(--glive);}
+.budget-fill-warn{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--warn),var(--loss));box-shadow:0 0 8px var(--gloss);}
+.pf-bar{height:6px;border-radius:999px;background:rgba(0,212,255,0.08);overflow:hidden;margin-top:4px;}
+.pf-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,var(--win),var(--live));box-shadow:0 0 6px var(--glive);}
+.score-row{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-radius:10px;margin-bottom:4px;background:rgba(0,212,255,0.03);border:1px solid rgba(0,212,255,0.08);}
+.score-left{color:var(--txt-hi);font-size:12px;font-weight:800;} .score-right{color:var(--txt);font-size:12px;font-weight:700;text-align:right;}
+.list-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid);}
+.list-left{color:var(--txt-hi);font-size:12px;font-weight:700;} .list-right{color:var(--txt);font-size:12px;font-weight:700;text-align:right;}
+.holding-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--grid);}
+.holding-symbol{color:var(--txt-hi);font-size:13px;font-weight:900;} .holding-sub{color:var(--muted);font-size:11px;}
+.holding-value{color:var(--txt);font-size:13px;font-weight:900;text-align:right;} .holding-share{color:var(--live);font-size:11px;font-weight:700;text-align:right;}
+.coin-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;border-radius:10px;margin-bottom:4px;background:rgba(0,212,255,0.03);border:1px solid var(--grid);}
+.coin-row-black{border-left:3px solid var(--loss);box-shadow:inset 3px 0 12px rgba(255,45,85,0.08);}
+.coin-row-cool{border-left:3px solid var(--warn);box-shadow:inset 3px 0 12px rgba(255,230,0,0.08);}
+.coin-row-white{border-left:3px solid var(--win);box-shadow:inset 3px 0 12px rgba(0,230,118,0.08);}
+.coin-name{color:var(--txt-hi);font-size:12px;font-weight:800;} .coin-stats{color:var(--muted);font-size:11px;}
+.activity-card{background:rgba(0,212,255,0.03);border:1px solid var(--grid);border-radius:14px;padding:10px;margin-bottom:8px;}
+.activity-title{font-size:12px;font-weight:900;margin-bottom:3px;}
+.activity-sub{color:var(--txt);font-size:11px;line-height:1.45;} .activity-time{color:var(--muted);font-size:10px;margin-top:4px;}
+.section-title{color:var(--txt-hi);font-size:20px;font-weight:900;margin-bottom:8px;letter-spacing:-0.02em;}
+.section-subtitle{color:var(--muted);font-size:12px;line-height:1.6;margin-bottom:12px;}
+.section-shell{background:linear-gradient(180deg,rgba(0,212,255,0.018),rgba(0,212,255,0.008));border:1px solid rgba(0,212,255,0.06);border-radius:18px;padding:14px;margin:10px 0;}
+.divider{height:1px;background:var(--grid);border-radius:999px;margin:10px 0 12px 0;}
+.section-divider-subtle{height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,0.12),transparent);margin:12px 2px;border-radius:999px;}
+.small-muted{color:var(--muted);font-size:11px;line-height:1.55;}
+.fee-card{background:rgba(255,230,0,0.04);border:1px solid rgba(255,230,0,0.14);border-radius:14px;padding:14px;margin-bottom:8px;}
+.top-trade-card{background:rgba(0,212,255,0.03);border:1px solid var(--grid);border-radius:12px;padding:10px 12px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;}
+.top-trade-left{color:var(--txt-hi);font-size:12px;font-weight:800;} .top-trade-right{font-size:13px;font-weight:900;} .top-trade-sub{color:var(--muted);font-size:10px;margin-top:2px;}
+.hero-card{background:linear-gradient(135deg,var(--card),rgba(5,5,14,0.99));border:1px solid rgba(0,212,255,0.10);border-radius:20px;padding:20px;box-shadow:inset 0 1px 0 rgba(0,212,255,0.04);overflow:hidden;min-height:100%;}
+.hero-main-amount{font-size:32px;font-weight:900;color:var(--txt-hi);line-height:1;margin-bottom:6px;}
+.hero-stat-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--grid);}
+.hero-stat-label{font-size:13px;color:var(--txt);font-weight:700;} .hero-stat-value{font-size:14px;color:var(--txt-hi);font-weight:900;text-align:right;}
+.hero-stat-badge{display:inline-block;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:900;margin-left:8px;}
+.hero-stat-badge.green{background:rgba(0,230,118,0.14);color:var(--win);} .hero-stat-badge.red{background:rgba(255,45,85,0.14);color:var(--loss);} .hero-stat-badge.blue{background:rgba(0,212,255,0.14);color:var(--live);}
+.dominance-pill{display:inline-flex;align-items:center;gap:6px;padding:8px 14px;border-radius:999px;margin-bottom:14px;font-size:12px;font-weight:900;letter-spacing:0.04em;border:1px solid var(--border);}
+.dominance-pill.green{color:var(--txt-hi);background:linear-gradient(90deg,rgba(0,40,20,0.5),rgba(0,230,118,0.10));box-shadow:0 0 20px var(--gwin);}
+.dominance-pill.red{color:var(--txt-hi);background:linear-gradient(90deg,rgba(80,0,20,0.5),rgba(255,45,85,0.10));box-shadow:0 0 20px var(--gloss);}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-top:8px;}
+.cal-day{aspect-ratio:1;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;cursor:default;min-height:28px;}
+.cal-win{background:rgba(0,230,118,0.25);color:var(--win);box-shadow:inset 0 0 6px rgba(0,230,118,0.20);}
+.cal-loss{background:rgba(255,45,85,0.20);color:var(--loss);box-shadow:inset 0 0 6px rgba(255,45,85,0.20);}
+.cal-flat{background:rgba(0,212,255,0.05);color:var(--muted);} .cal-empty{background:transparent;}
+.cal-header{color:var(--muted);font-size:10px;font-weight:700;text-align:center;padding:2px 0;}
+.corr-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--grid);}
+.corr-label{color:var(--txt-hi);font-size:12px;font-weight:800;width:80px;flex-shrink:0;}
+.corr-bar-wrap{flex:1;height:8px;background:rgba(0,212,255,0.08);border-radius:999px;overflow:hidden;}
+.corr-bar-fill{height:100%;border-radius:999px;}
+.corr-pct{color:var(--txt-hi);font-size:12px;font-weight:900;width:48px;text-align:right;flex-shrink:0;}
+.corr-count{color:var(--muted);font-size:11px;width:60px;text-align:right;flex-shrink:0;}
+.streak-row{display:flex;align-items:center;gap:4px;margin-bottom:6px;flex-wrap:wrap;}
+.streak-dot-w{width:14px;height:14px;border-radius:3px;background:var(--win);display:inline-block;box-shadow:0 0 6px var(--gwin);}
+.streak-dot-l{width:14px;height:14px;border-radius:3px;background:var(--loss);display:inline-block;box-shadow:0 0 6px var(--gloss);}
+.bot-status-bar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;border:1px solid var(--border);background:rgba(0,212,255,0.03);margin-bottom:12px;box-shadow:0 0 20px rgba(0,212,255,0.04);}
+.pulse-dot{width:8px;height:8px;border-radius:50%;background:var(--win);box-shadow:0 0 0 0 var(--gwin);animation:pulse-green 2s infinite;display:inline-block;}
+@keyframes pulse-green{0%{box-shadow:0 0 0 0 var(--gwin);}70%{box-shadow:0 0 0 8px rgba(0,230,118,0);}100%{box-shadow:0 0 0 0 rgba(0,230,118,0);}}
+.neon-win{color:var(--win)!important;text-shadow:0 0 12px var(--gwin),0 0 24px rgba(0,230,118,0.15);}
+.neon-loss{color:var(--loss)!important;text-shadow:0 0 12px var(--gloss),0 0 24px rgba(255,45,85,0.15);}
+.neon-live{color:var(--live)!important;text-shadow:0 0 12px var(--glive),0 0 24px rgba(0,212,255,0.15);}
+.neon-shadow{color:var(--shadow)!important;text-shadow:0 0 12px rgba(191,95,255,0.4);}
+.neon-warn{color:var(--warn)!important;text-shadow:0 0 10px rgba(255,230,0,0.5);}
+.chat-container{display:flex;flex-direction:column;gap:12px;max-height:520px;overflow-y:auto;padding:14px;background:rgba(3,3,10,0.80);border:1px solid var(--border);border-radius:16px;margin-bottom:12px;scroll-behavior:smooth;}
+.chat-msg-user{display:flex;justify-content:flex-end;} .chat-msg-coach{display:flex;justify-content:flex-start;align-items:flex-start;gap:8px;}
+.chat-bubble-user{background:linear-gradient(135deg,rgba(0,212,255,0.18),rgba(0,230,118,0.14));border:1px solid rgba(0,212,255,0.35);border-radius:18px 18px 4px 18px;padding:10px 14px;color:var(--txt-hi);font-size:13px;line-height:1.55;max-width:75%;}
+.chat-bubble-coach{background:linear-gradient(135deg,var(--card),rgba(8,8,16,0.99));border:1px solid rgba(191,95,255,0.22);border-radius:4px 18px 18px 18px;padding:12px 14px;color:var(--txt);font-size:13px;line-height:1.65;max-width:82%;white-space:pre-wrap;}
+.chat-avatar-coach{width:32px;height:32px;border-radius:999px;background:linear-gradient(135deg,var(--live),var(--shadow));display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;box-shadow:0 0 12px var(--glive);}
+.chat-time{color:#4a5568;font-size:10px;margin-top:4px;text-align:right;}
+.chat-context-card{background:rgba(0,212,255,0.04);border:1px solid rgba(0,212,255,0.14);border-radius:12px;padding:10px 12px;margin-bottom:10px;font-size:11px;color:var(--muted);}
+.chat-context-title{color:var(--live);font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;}
+.chat-suggestion{display:inline-block;padding:5px 10px;border-radius:999px;background:rgba(0,212,255,0.08);border:1px solid rgba(0,212,255,0.25);color:var(--live);font-size:11px;font-weight:700;cursor:pointer;margin:3px;}
+.chat-action-card{background:rgba(0,230,118,0.06);border:1px solid rgba(0,230,118,0.22);border-radius:12px;padding:10px 12px;margin-top:8px;font-size:12px;color:var(--win);}
+.chat-empty{text-align:center;padding:40px 20px;color:#4a5568;font-size:13px;}
+[data-testid="stTextInput"] input,[data-testid="stSelectbox"] div[data-baseweb="select"]>div{background:rgba(0,212,255,0.04)!important;color:var(--txt)!important;border-radius:10px!important;border:1px solid var(--border)!important;}
+[data-testid="stDataFrame"]{border:1px solid var(--border)!important;border-radius:12px!important;}
+pre,code,.stCodeBlock{background:#050510!important;color:var(--live)!important;border-radius:12px!important;border:1px solid var(--border)!important;}
+code{background:#05050f!important;color:var(--live)!important;}
+.filter-card{background:rgba(0,212,255,0.03);border:1px solid var(--grid);border-radius:14px;padding:10px;margin-bottom:10px;}
+.trade-note{background:rgba(0,212,255,0.03);border:1px solid var(--border);border-radius:12px;padding:12px;color:var(--txt);font-size:12px;line-height:1.65;}
+p,li,span{color:#8090b0!important;} .stCaption{color:#4a5568!important;font-size:11px!important;}
+.tiny-button div.stButton>button{min-height:36px!important;border-radius:10px!important;font-size:11px!important;}
+.trade-button div.stButton>button{text-align:left!important;min-height:46px!important;font-size:11px!important;border-radius:10px!important;}
+</style>""", unsafe_allow_html=True)
+
 
 # ============================================================
 # CONFIGURATIE — via Render Environment Variables
@@ -128,1007 +300,110 @@ TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END", "22"))
 BOT_STATE_TABLE         = "public.bot_state"
 
 
-def _get_data_dir() -> str:
-    d = (os.getenv("DATA_DIR") or "").strip()
-    if d:
-        return d
-    return "/data" if os.path.isdir("/data") else "/tmp/data"
 
+# ================================================================
+# KLEURENPALET — Cyber Neon Design System v1.0
+# ================================================================
+# ENIGE bron van alle kleuren in dit dashboard.
+# Gebruik ALTIJD deze constanten — nooit losse hex codes.
+#
+# SEMANTISCH SYSTEEM:
+#   WIN / positief / omhoog  →  C_WIN    (electric green)
+#   LOSS / negatief / omlaag →  C_LOSS   (neon red)
+#   Open / primair / live    →  C_LIVE   (electric cyan)
+#   Shadow trades            →  C_SHADOW (electric purple)
+#   Simulator trades         →  C_SIM    (neon orange)
+#   Waarschuwing / RANGE     →  C_WARN   (electric yellow)
+#   Info / neutraal          →  C_INFO   (deep blue)
+#   BTC BULL regime          →  C_BULL   (= C_WIN)
+#   BTC BEAR regime          →  C_BEAR   (= C_LOSS)
+#   BTC RANGE regime         →  C_RANGE  (= C_WARN)
+#
+# LAYOUT:
+#   Achtergrond diepste      →  BG_DEEP
+#   Achtergrond panel        →  BG_PANEL
+#   Achtergrond card         →  BG_CARD
+#   Border standaard         →  BORDER
+#   Tekst hoofd              →  TXT_MAIN
+#   Tekst dimmed             →  TXT_DIM
+#   Grid lijnen              →  GRID
+#   Nul-lijn                 →  ZEROLINE
+# ================================================================
+
+# ── Semantische kleuren ──────────────────────────────────────
+C_WIN    = "#00e676"   # electric green  — WIN, positief, omhoog
+C_LOSS   = "#ff2d55"   # neon red        — LOSS, negatief, omlaag
+C_LIVE   = "#00d4ff"   # electric cyan   — live trades, primair, open
+C_SHADOW = "#bf5fff"   # electric purple — shadow trades
+C_SIM    = "#ff6b00"   # neon orange     — simulator trades
+C_WARN   = "#ffe600"   # electric yellow — waarschuwing, RANGE regime
+C_INFO   = "#3d8bff"   # deep blue       — algemene info
+
+# ── Alias voor backwards-compat (worden niet meer uitgebreid) ─
+C_GREEN  = C_WIN
+C_RED    = C_LOSS
+C_CYAN   = C_LIVE
+C_PURPLE = C_SHADOW
+C_ORANGE = C_SIM
+C_YELLOW = C_WARN
+C_BLUE   = C_INFO
+
+# ── Regime kleuren ───────────────────────────────────────────
+C_BULL   = C_WIN      # BTC / coin BULL regime
+C_BEAR   = C_LOSS     # BTC / coin BEAR regime
+C_RANGE  = C_WARN     # BTC / coin RANGE regime
+
+# ── Alpha varianten (rgba strings, direct bruikbaar in CSS/Plotly) ─
+WIN_A10  = "rgba(0,230,118,0.10)"
+WIN_A20  = "rgba(0,230,118,0.20)"
+WIN_A35  = "rgba(0,230,118,0.35)"
+LOSS_A10 = "rgba(255,45,85,0.10)"
+LOSS_A20 = "rgba(255,45,85,0.20)"
+LOSS_A35 = "rgba(255,45,85,0.35)"
+LIVE_A10 = "rgba(0,212,255,0.10)"
+LIVE_A20 = "rgba(0,212,255,0.20)"
+SHAD_A10 = "rgba(191,95,255,0.10)"
+WARN_A10 = "rgba(255,230,0,0.10)"
+
+# ── Layout kleuren ───────────────────────────────────────────
+BG_DEEP  = "#030308"             # diepste achtergrond
+BG_PANEL = "rgba(10,10,20,0.98)" # panel achtergrond
+BG_CARD  = "rgba(8,8,16,0.99)"   # card achtergrond
+
+BORDER   = "rgba(0,212,255,0.10)"   # standaard border
+GRID     = "rgba(0,212,255,0.06)"   # grafiek gridlijnen
+ZEROLINE = "rgba(0,212,255,0.15)"   # nul-lijn in grafieken
+
+TXT_MAIN = "#e8f0ff"    # hoofd tekst kleur
+TXT_DIM  = "#6e7a9a"    # gedimd / muted tekst
+TXT_HIGH = "#ffffff"    # highlight tekst (titels)
+
+# ── Lookup dictionaries ──────────────────────────────────────
+COLORS_BY_OUTCOME = {
+    "WIN":  C_WIN,
+    "LOSS": C_LOSS,
+    "OPEN": C_LIVE,
+}
+
+COLORS_BY_REGIME = {
+    "BULL":    C_BULL,
+    "BEAR":    C_BEAR,
+    "RANGE":   C_RANGE,
+    "UNKNOWN": TXT_DIM,
+}
+
+COLORS_BY_TYPE = {
+    "REAL":   C_LIVE,
+    "LIVE":   C_LIVE,
+    "SHADOW": C_SHADOW,
+    "SIM":    C_SIM,
+}
+
+# ── Neon glow helpers (tekst-shadow CSS strings) ─────────────
+GLOW_WIN  = f"0 0 10px {WIN_A20}, 0 0 20px {WIN_A10}"
+GLOW_LOSS = f"0 0 10px {LOSS_A20}, 0 0 20px {LOSS_A10}"
+GLOW_LIVE = f"0 0 10px {LIVE_A20}, 0 0 20px {LIVE_A10}"
 
-DATA_DIR          = _get_data_dir()
-LIVE_STATE_PATH   = os.path.join(DATA_DIR, "live_state.json")
-SHADOW_STATE_PATH = os.path.join(DATA_DIR, "shadow_trades.json")
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
-SESSION_DEFAULTS = {
-    "page":                      "dashboard",
-    "selected_page_trade_id":    None,
-    "status_notice":             "",
-    "show_debug":                False,
-    "search_text":               "",
-    "global_days_filter":        "ALLES",
-    "global_trade_type_filter":  "ALLES",
-    "global_setup_filter":       "ALLES",
-    "global_regime_filter":      "ALLES",
-    "global_outcome_filter":     "ALLES",
-    "global_symbol_filter":      "ALLES",
-    "debug_events":              [],
-    "last_error_text":           "",
-    "auto_refresh":              False,
-    "portfolio_search":          "",
-    "coach_messages":            [],   # chat geschiedenis AI Coach
-    "coach_context":             {},   # live data context voor coach
-}
-for _k, _v in SESSION_DEFAULTS.items():
-    if _k not in st.session_state:
-        st.session_state[_k] = _v
-
-
-# ============================================================
-# BLOOMBERG TERMINAL STYLING
-# Professioneel donker thema met oranje accenten.
-# Gebaseerd op Bloomberg Terminal + TradingView Dark.
-# ============================================================
-st.markdown("""
-<style>
-/* ── ROOT KLEUREN — Cyber Neon Theme ─────────────────────── */
-:root {
-    --bg:      #030308;
-    --bg2:     #07070f;
-    --panel:   #0a0a14;
-    --panel2:  #0e0e1a;
-    --line:    rgba(0,220,255,0.08);
-    --text:    #e8f0ff;
-    --muted:   #6e7a9a;
-    --blue:    #00d4ff;
-    --cyan:    #00ffea;
-    --green:   #00ff88;
-    --green2:  #00e676;
-    --yellow:  #ffe600;
-    --red:     #ff2d55;
-    --orange:  #ff6b00;
-    --purple:  #bf5fff;
-    --pink:    #ff00aa;
-}
-
-/* ── GLOBALE ACHTERGROND — deep space cyber ───────────────── */
-.stApp {
-    background:
-        radial-gradient(ellipse at 20% 0%, rgba(0,212,255,0.06) 0%, transparent 50%),
-        radial-gradient(ellipse at 80% 0%, rgba(191,95,255,0.07) 0%, transparent 50%),
-        radial-gradient(ellipse at 50% 100%, rgba(0,255,136,0.04) 0%, transparent 60%),
-        linear-gradient(180deg, #030308 0%, #02020a 100%);
-    color: var(--text);
-    font-family: 'Courier New', monospace;
-}
-
-header[data-testid="stHeader"] { background: transparent; }
-section[data-testid="stSidebar"] { display: none; }
-
-.block-container {
-    max-width: 1880px;
-    padding-top: 0.5rem;
-    padding-bottom: 1rem;
-}
-
-/* ── SHELL / CONTAINER ─────────────────────────────────────── */
-.shell {
-    border-radius: 24px;
-    border: 1px solid rgba(0,212,255,0.12);
-    background: linear-gradient(180deg,rgba(7,7,18,0.98),rgba(3,3,12,0.98));
-    box-shadow: 0 24px 60px rgba(0,0,0,0.6), 0 0 80px rgba(0,212,255,0.04);
-    padding: 14px;
-}
-
-/* ── TOP BAR ───────────────────────────────────────────────── */
-.topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
-    padding: 4px 2px 12px 2px;
-    border-bottom: 1px solid rgba(0,212,255,0.08);
-    margin-bottom: 12px;
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-}
-
-.brand-mark {
-    width: 18px;
-    height: 38px;
-    border-radius: 8px 16px 8px 16px;
-    background: linear-gradient(180deg,#00d4ff 0%, #bf5fff 100%);
-    transform: skewX(-18deg);
-    box-shadow: 0 8px 22px rgba(0,212,255,0.35);
-}
-
-.brand-title {
-    font-size: 22px;
-    line-height: 1.05;
-    font-weight: 900;
-    letter-spacing: -0.03em;
-    color: #ffffff;
-}
-
-.brand-sub {
-    font-size: 11px;
-    color: #94a3b8;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin-top: 1px;
-}
-
-.top-status-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.top-status-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 5px 10px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 900;
-    letter-spacing: 0.04em;
-    border: 1px solid rgba(255,255,255,0.10);
-}
-
-.chip-green  { background: rgba(0,230,118,0.12);  color: #00e676; border-color: rgba(0,230,118,0.28); }
-.chip-red    { background: rgba(255,45,85,0.12);  color: #ff2d55; border-color: rgba(255,45,85,0.28); }
-.chip-yellow { background: rgba(251,191,36,0.15); color: #fbbf24; border-color: rgba(251,191,36,0.25); }
-.chip-blue   { background: rgba(0,212,255,0.10);  color: #00d4ff; border-color: rgba(0,212,255,0.25); }
-.chip-orange { background: rgba(0,212,255,0.12);  color: #00d4ff; border-color: rgba(0,212,255,0.25); }
-.chip-purple { background: rgba(191,95,255,0.12); color: #bf5fff; border-color: rgba(191,95,255,0.28);}
-.chip-gray   { background: rgba(0,212,255,0.04);  color: #6e7a9a; border-color: rgba(0,212,255,0.08); }
-
-/* ── PANELS ────────────────────────────────────────────────── */
-.panel, .panel-tight {
-    background: linear-gradient(180deg,rgba(10,10,22,0.98),rgba(6,6,16,0.98));
-    border: 1px solid rgba(0,212,255,0.10);
-    border-radius: 20px;
-    box-shadow: 0 12px 34px rgba(0,0,0,0.50), inset 0 1px 0 rgba(0,212,255,0.06);
-}
-.panel       { padding: 14px; }
-.panel-tight { padding: 10px 12px; }
-
-/* ── METRIC CARDS ──────────────────────────────────────────── */
-.metric-card {
-    background: linear-gradient(135deg,rgba(10,10,22,0.99),rgba(6,6,18,0.99));
-    border: 1px solid rgba(0,212,255,0.13);
-    border-radius: 16px;
-    padding: 14px;
-    min-height: 88px;
-    position: relative;
-    overflow: hidden;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5), inset 0 1px 0 rgba(0,212,255,0.07);
-    transition: border-color 0.2s ease;
-}
-
-.metric-card:hover {
-    border-color: rgba(0,212,255,0.25);
-}
-
-.metric-card::before {
-    content: "";
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 1px;
-    background: linear-gradient(90deg,transparent,rgba(0,212,255,0.6),rgba(191,95,255,0.6),transparent);
-    border-radius: 999px;
-}
-
-.metric-value {
-    color: #ffffff;
-    font-size: 22px;
-    line-height: 1.05;
-    font-weight: 900;
-    margin-bottom: 5px;
-}
-
-.metric-delta {
-    font-size: 11px;
-    font-weight: 700;
-    margin-bottom: 4px;
-}
-
-.metric-label {
-    color: var(--muted);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-}
-
-.metric-card.green-accent { border-top: 2px solid #00e676; box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 20px rgba(0,230,118,0.08); }
-.metric-card.red-accent   { border-top: 2px solid #ff2d55; box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 20px rgba(255,45,85,0.08); }
-.metric-card.blue-accent  { border-top: 2px solid #00d4ff; box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 20px rgba(0,212,255,0.10); }
-.metric-card.orange-accent{ border-top: 2px solid #bf5fff; box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 20px rgba(191,95,255,0.08); }
-.metric-card.purple-accent{ border-top: 2px solid #bf5fff; box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 20px rgba(191,95,255,0.10); }
-
-.accent-blue   { color: #00d4ff !important; text-shadow: 0 0 10px rgba(0,212,255,0.4); }
-.accent-green  { color: #00e676 !important; text-shadow: 0 0 10px rgba(0,230,118,0.4); }
-.accent-red    { color: #ff2d55 !important; text-shadow: 0 0 10px rgba(255,45,85,0.4); }
-.accent-purple { color: #bf5fff !important; text-shadow: 0 0 10px rgba(191,95,255,0.4); }
-.accent-yellow { color: #ffe600 !important; text-shadow: 0 0 10px rgba(255,230,0,0.4); }
-.accent-orange { color: #00d4ff !important; text-shadow: 0 0 10px rgba(0,212,255,0.4); }
-
-/* ── SECTION TITELS ────────────────────────────────────────── */
-.section-title {
-    color: #ffffff;
-    font-size: 20px;
-    font-weight: 900;
-    margin-bottom: 8px;
-    letter-spacing: -0.02em;
-}
-
-.section-subtitle {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 1.6;
-    margin-bottom: 12px;
-}
-
-.section-shell {
-    background: linear-gradient(180deg,rgba(0,212,255,0.018),rgba(0,212,255,0.008));
-    border: 1px solid rgba(0,212,255,0.06);
-    border-radius: 18px;
-    padding: 14px;
-    margin-top: 10px;
-    margin-bottom: 10px;
-}
-
-.divider {
-    height: 1px;
-    background: rgba(0,212,255,0.07);
-    border-radius: 999px;
-    margin: 10px 0 12px 0;
-}
-
-.section-divider-subtle {
-    height: 1px;
-    background: linear-gradient(90deg,transparent,rgba(0,212,255,0.12),transparent);
-    margin: 12px 2px;
-    border-radius: 999px;
-}
-
-/* ── NAVIGATIE ─────────────────────────────────────────────── */
-.nav-header {
-    color: #ffffff;
-    font-size: 12px;
-    font-weight: 900;
-    text-transform: uppercase;
-    margin-bottom: 8px;
-    letter-spacing: 0.04em;
-}
-
-.nav-caption {
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 1.5;
-    margin-bottom: 10px;
-}
-
-.page-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 10px;
-    border-radius: 999px;
-    background: linear-gradient(90deg,rgba(0,212,255,0.14),rgba(191,95,255,0.14));
-    border: 1px solid rgba(255,255,255,0.10);
-    color: #ffffff;
-    font-size: 11px;
-    font-weight: 900;
-    margin-bottom: 12px;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-/* ── KNOPPEN — altijd donker ──────────────────────────────── */
-div.stButton > button,
-div.stFormSubmitButton > button,
-div.stDownloadButton > button {
-    width: 100%;
-    background: linear-gradient(180deg,#0e0e1e,#08080f) !important;
-    background-color: #0e0e1e !important;
-    color: #f8fafc !important;
-    border: 1px solid rgba(0,212,255,0.18) !important;
-    border-radius: 12px !important;
-    font-weight: 800 !important;
-    font-family: 'Courier New', monospace !important;
-    font-size: 12px !important;
-    min-height: 40px !important;
-    box-shadow: none !important;
-    opacity: 1 !important;
-    transition: all 0.15s ease !important;
-}
-
-div.stButton > button:hover,
-div.stFormSubmitButton > button:hover {
-    background: linear-gradient(180deg,#0f1520,#0a0f18) !important;
-    color: #00d4ff !important;
-    border-color: rgba(0,212,255,0.45) !important;
-    transform: translateY(-1px) !important;
-}
-
-/* ── ACTIEVE NAV KNOP ──────────────────────────────────────── */
-.nav-button-active div.stButton > button {
-    background: linear-gradient(90deg,rgba(0,212,255,0.18),rgba(191,95,255,0.20)) !important;
-    border-color: rgba(255,255,255,0.22) !important;
-    color: #ffffff !important;
-    box-shadow: 0 0 0 1px rgba(0,212,255,0.12), 0 0 28px rgba(0,212,255,0.18) !important;
-    position: relative !important;
-    padding-left: 20px !important;
-}
-
-/* ── TRADE CARDS ───────────────────────────────────────────── */
-.tc {
-    background: #080812;
-    border: 1px solid rgba(0,212,255,0.10);
-    border-radius: 14px;
-    padding: 10px 12px;
-    margin-bottom: 6px;
-    font-size: 12px;
-    line-height: 1.6;
-}
-.tc-win  { border-left: 3px solid #00e676; box-shadow: inset 3px 0 15px rgba(0,230,118,0.08); }
-.tc-loss { border-left: 3px solid #ff2d55; box-shadow: inset 3px 0 15px rgba(255,45,85,0.08); }
-.tc-open { border-left: 3px solid #00d4ff; box-shadow: inset 3px 0 15px rgba(0,212,255,0.10); }
-.tc-shad { border-left: 3px solid #bf5fff; box-shadow: inset 3px 0 15px rgba(191,95,255,0.08); }
-.tc-pend { border-left: 3px solid #00ffea; box-shadow: inset 3px 0 15px rgba(0,255,234,0.08); }
-
-/* ── TRADE CHIP ROW ────────────────────────────────────────── */
-.trade-chip-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 8px;
-}
-.trade-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 4px 8px;
-    border-radius: 999px;
-    border: 1px solid rgba(255,255,255,0.08);
-    background: rgba(255,255,255,0.04);
-    color: #dbe4f0;
-    font-size: 11px;
-    font-weight: 900;
-}
-
-/* ── TRADE NOTE / BESCHRIJVING ─────────────────────────────── */
-.trade-note {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 12px;
-    padding: 12px;
-    color: #e2e8f0;
-    font-size: 12px;
-    line-height: 1.65;
-}
-
-/* ── STATUS BADGES ─────────────────────────────────────────── */
-.status-ok, .status-warn, .status-bad {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-size: 10px;
-    font-weight: 900;
-    margin-right: 4px;
-}
-.status-ok   { background: rgba(0,230,118,0.12);  color: #00e676; border: 1px solid rgba(0,230,118,0.30); box-shadow: 0 0 8px rgba(0,230,118,0.10); }
-.status-warn { background: rgba(255,230,0,0.10);  color: #ffe600; border: 1px solid rgba(255,230,0,0.28); box-shadow: 0 0 8px rgba(255,230,0,0.10); }
-.status-bad  { background: rgba(255,45,85,0.12);  color: #ff2d55; border: 1px solid rgba(255,45,85,0.30); box-shadow: 0 0 8px rgba(255,45,85,0.10); }
-
-/* ── ACTIVITY CARDS ────────────────────────────────────────── */
-.activity-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    padding: 10px;
-    margin-bottom: 8px;
-}
-.activity-title { font-size: 12px; font-weight: 900; margin-bottom: 3px; }
-.activity-sub   { color: #e2e8f0; font-size: 11px; line-height: 1.45; }
-.activity-time  { color: var(--muted); font-size: 10px; margin-top: 4px; }
-
-/* ── LIJST ROWS ────────────────────────────────────────────── */
-.list-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 0;
-    border-bottom: 1px solid rgba(0,212,255,0.07);
-}
-.list-left  { color: #ffffff; font-size: 12px; font-weight: 700; }
-.list-right { color: #cbd5e1; font-size: 12px; font-weight: 700; text-align: right; }
-
-/* ── HOLDING ROWS ──────────────────────────────────────────── */
-.holding-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 9px 0;
-    border-bottom: 1px solid rgba(0,212,255,0.07);
-}
-.holding-symbol { color: #ffffff; font-size: 13px; font-weight: 900; }
-.holding-sub    { color: #94a3b8; font-size: 11px; }
-.holding-value  { color: #e2e8f0; font-size: 13px; font-weight: 900; text-align: right; }
-.holding-share  { color: #60a5fa; font-size: 11px; font-weight: 700; text-align: right; }
-
-/* ── TEKST HULPEN ──────────────────────────────────────────── */
-.small-muted { color: var(--muted); font-size: 11px; line-height: 1.55; }
-p, li, span  { color: #8090b0 !important; }
-code         { background: #05050f !important; color: #00ffea !important; }
-
-/* ── FILTER CARD ───────────────────────────────────────────── */
-.filter-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 14px;
-    padding: 10px;
-    margin-bottom: 10px;
-}
-
-/* ── INPUT STIJLEN ─────────────────────────────────────────── */
-[data-testid="stTextInput"] input,
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-    background: rgba(0,212,255,0.04) !important;
-    color: #e8f0ff !important;
-    border-radius: 10px !important;
-    border: 1px solid rgba(0,212,255,0.15) !important;
-}
-
-/* ── DATAFRAME ─────────────────────────────────────────────── */
-[data-testid="stDataFrame"] {
-    border: 1px solid rgba(0,212,255,0.12) !important;
-    border-radius: 12px !important;
-}
-
-/* ── CODE BLOCKS ───────────────────────────────────────────── */
-pre, code, .stCodeBlock {
-    background: #070710 !important;
-    color: #00ffea !important;
-    border-radius: 12px !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-}
-
-/* ── CAPTION ───────────────────────────────────────────────── */
-.stCaption { color: #555 !important; font-size: 11px !important; }
-
-/* ── HERO SECTION ──────────────────────────────────────────── */
-.hero-card {
-    background: linear-gradient(135deg,rgba(8,8,18,0.99),rgba(5,5,14,0.99));
-    border: 1px solid rgba(0,212,255,0.10);
-    border-radius: 20px;
-    padding: 20px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-    overflow: hidden;
-    min-height: 100%;
-}
-
-.hero-main-amount {
-    font-size: 32px;
-    font-weight: 900;
-    color: #ffffff;
-    line-height: 1;
-    margin-bottom: 6px;
-}
-
-.hero-stat-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 0;
-    border-bottom: 1px solid rgba(0,212,255,0.07);
-}
-
-.hero-stat-label { font-size: 13px; color: #f8fafc; font-weight: 700; }
-.hero-stat-value { font-size: 14px; color: #ffffff; font-weight: 900; text-align: right; }
-
-.hero-stat-badge {
-    display: inline-block;
-    padding: 3px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 900;
-    margin-left: 8px;
-}
-.hero-stat-badge.green { background: rgba(0,230,118,0.14); color: #00e676; }
-.hero-stat-badge.red   { background: rgba(239,68,68,0.16);  color: #ef4444; }
-.hero-stat-badge.blue  { background: rgba(0,212,255,0.14); color: #00d4ff; }
-
-.dominance-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 14px;
-    border-radius: 999px;
-    margin-bottom: 14px;
-    font-size: 12px;
-    font-weight: 900;
-    letter-spacing: 0.04em;
-    border: 1px solid rgba(255,255,255,0.10);
-}
-.dominance-pill.green {
-    color: #ffffff;
-    background: linear-gradient(90deg,rgba(0,40,20,0.5),rgba(0,230,118,0.10));
-    box-shadow: 0 0 20px rgba(0,230,118,0.20);
-}
-.dominance-pill.red {
-    color: #ffffff;
-    background: linear-gradient(90deg,rgba(80,0,20,0.5),rgba(255,45,85,0.10));
-    box-shadow: 0 0 20px rgba(255,45,85,0.20);
-}
-
-/* ── SCOREBOARD ────────────────────────────────────────────── */
-.score-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 10px 12px;
-    border-radius: 10px;
-    margin-bottom: 4px;
-    background: rgba(0,212,255,0.03);
-    border: 1px solid rgba(0,212,255,0.08);
-}
-.score-left  { color: #ffffff; font-size: 12px; font-weight: 800; }
-.score-right { color: #cbd5e1; font-size: 12px; font-weight: 700; text-align: right; }
-
-/* ── SIGNAL CARDS ──────────────────────────────────────────── */
-.signal-card {
-    background: rgba(0,212,255,0.04);
-    border: 1px solid rgba(0,212,255,0.18);
-    border-radius: 14px;
-    padding: 12px;
-    margin-bottom: 6px;
-}
-.signal-symbol   { color: #ffffff; font-size: 14px; font-weight: 900; }
-.signal-score    { color: #00e676; text-shadow: 0 0 8px rgba(0,230,118,0.5); font-size: 13px; font-weight: 900; }
-.signal-details  { color: #94a3b8; font-size: 11px; margin-top: 4px; }
-
-/* ── OVERALL WIN/LOSS BAR — permanent bovenaan ─────────────── */
-.winloss-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 10px 14px;
-    border-radius: 14px;
-    border: 1px solid rgba(0,212,255,0.10);
-    background: rgba(0,212,255,0.02);
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-}
-.winloss-source {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border-radius: 10px;
-    background: rgba(255,255,255,0.04);
-    border: 1px solid rgba(255,255,255,0.06);
-    min-width: 180px;
-}
-.winloss-label  { color: #94a3b8; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-.winloss-pct-w  { color: #00e676; text-shadow: 0 0 8px rgba(0,230,118,0.4); font-size: 15px; font-weight: 900; }
-.winloss-pct-l  { color: #ff2d55; text-shadow: 0 0 8px rgba(255,45,85,0.4); font-size: 15px; font-weight: 900; }
-.winloss-count  { color: #94a3b8; font-size: 11px; }
-.winloss-divider{ width: 1px; height: 28px; background: rgba(255,255,255,0.08); }
-
-/* ── FLOATING PNL CARDS ────────────────────────────────────── */
-.float-card {
-    background: linear-gradient(180deg,rgba(14,22,40,0.98),rgba(10,16,30,0.98));
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 12px;
-    margin-bottom: 6px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.float-left  { color: #ffffff; font-size: 13px; font-weight: 800; }
-.float-right { font-size: 13px; font-weight: 900; text-align: right; }
-.float-green { color: #34d399; }
-.float-red   { color: #fb7185; }
-.float-sub   { color: #94a3b8; font-size: 11px; margin-top: 2px; }
-
-/* ── SCANNER STATUS ────────────────────────────────────────── */
-.scanner-card {
-    background: rgba(0,212,255,0.04);
-    border: 1px solid rgba(0,212,255,0.15);
-    border-radius: 14px;
-    padding: 14px;
-    margin-bottom: 8px;
-}
-.scanner-title { color: #ffffff; font-size: 13px; font-weight: 900; margin-bottom: 6px; }
-.scanner-row   { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
-.scanner-key   { color: #94a3b8; font-size: 12px; }
-.scanner-val   { color: #ffffff; font-size: 12px; font-weight: 700; }
-
-/* ── DAGBUDGET BAR ─────────────────────────────────────────── */
-.budget-bar {
-    height: 8px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.08);
-    overflow: hidden;
-    margin: 6px 0;
-}
-.budget-fill-safe { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#00e676,#00d4ff); box-shadow: 0 0 8px rgba(0,212,255,0.4); }
-.budget-fill-warn { height: 100%; border-radius: 999px; background: linear-gradient(90deg,#ffe600,#ff2d55); box-shadow: 0 0 8px rgba(255,45,85,0.4); }
-
-/* ── KALENDER HEATMAP ──────────────────────────────────────── */
-.cal-grid {
-    display: grid;
-    grid-template-columns: repeat(7, 1fr);
-    gap: 3px;
-    margin-top: 8px;
-}
-.cal-day {
-    aspect-ratio: 1;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-    font-weight: 700;
-    cursor: default;
-    min-height: 28px;
-}
-.cal-win   { background: rgba(0,230,118,0.25); color: #00e676; box-shadow: inset 0 0 6px rgba(0,230,118,0.2); }
-.cal-loss  { background: rgba(255,45,85,0.20);  color: #ff2d55; box-shadow: inset 0 0 6px rgba(255,45,85,0.2); }
-.cal-flat  { background: rgba(255,255,255,0.05);color: #94a3b8; }
-.cal-empty { background: transparent; }
-.cal-header{ color: #94a3b8; font-size: 10px; font-weight: 700; text-align: center; padding: 2px 0; }
-
-/* ── CORRELATIE BARS ───────────────────────────────────────── */
-.corr-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-.corr-label { color: #ffffff; font-size: 12px; font-weight: 800; width: 80px; flex-shrink: 0; }
-.corr-bar-wrap { flex: 1; height: 8px; background: rgba(255,255,255,0.08); border-radius: 999px; overflow: hidden; }
-.corr-bar-fill { height: 100%; border-radius: 999px; }
-.corr-pct   { color: #ffffff; font-size: 12px; font-weight: 900; width: 48px; text-align: right; flex-shrink: 0; }
-.corr-count { color: #94a3b8; font-size: 11px; width: 60px; text-align: right; flex-shrink: 0; }
-
-/* ── STREAK HISTORY ────────────────────────────────────────── */
-.streak-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-bottom: 6px;
-    flex-wrap: wrap;
-}
-.streak-dot-w { width: 14px; height: 14px; border-radius: 3px; background: #00e676; box-shadow: 0 0 6px rgba(0,230,118,0.6); display: inline-block; }
-.streak-dot-l { width: 14px; height: 14px; border-radius: 3px; background: #ff2d55; box-shadow: 0 0 6px rgba(255,45,85,0.6); display: inline-block; }
-
-/* ── BESTE/SLECHTSTE TRADES ────────────────────────────────── */
-.top-trade-card {
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 12px;
-    padding: 10px 12px;
-    margin-bottom: 5px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.top-trade-left  { color: #ffffff; font-size: 12px; font-weight: 800; }
-.top-trade-right { font-size: 13px; font-weight: 900; }
-.top-trade-sub   { color: #94a3b8; font-size: 10px; margin-top: 2px; }
-
-/* ── FEE TRACKING ──────────────────────────────────────────── */
-.fee-card {
-    background: rgba(255,230,0,0.04);
-    border: 1px solid rgba(255,230,0,0.14);
-    border-radius: 14px;
-    padding: 14px;
-    margin-bottom: 8px;
-}
-
-/* ── COIN STATUS RIJEN ─────────────────────────────────────── */
-.coin-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 8px 10px;
-    border-radius: 10px;
-    margin-bottom: 4px;
-    background: rgba(255,255,255,0.03);
-    border: 1px solid rgba(255,255,255,0.06);
-}
-.coin-row-black { border-left: 3px solid #ff2d55; box-shadow: inset 3px 0 12px rgba(255,45,85,0.08); }
-.coin-row-cool  { border-left: 3px solid #ffe600; box-shadow: inset 3px 0 12px rgba(255,230,0,0.08); }
-.coin-row-white { border-left: 3px solid #00e676; box-shadow: inset 3px 0 12px rgba(0,230,118,0.08); }
-.coin-name      { color: #ffffff; font-size: 12px; font-weight: 800; }
-.coin-stats     { color: #94a3b8; font-size: 11px; }
-
-/* ── AI COACH CHAT ─────────────────────────────────────────── */
-.chat-container {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    max-height: 520px;
-    overflow-y: auto;
-    padding: 14px;
-    background: rgba(5,9,20,0.80);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 16px;
-    margin-bottom: 12px;
-    scroll-behavior: smooth;
-}
-
-.chat-msg-user {
-    display: flex;
-    justify-content: flex-end;
-}
-
-.chat-msg-coach {
-    display: flex;
-    justify-content: flex-start;
-    align-items: flex-start;
-    gap: 8px;
-}
-
-.chat-bubble-user {
-    background: linear-gradient(135deg, rgba(0,212,255,0.18), rgba(0,255,136,0.14));
-    border: 1px solid rgba(0,212,255,0.35);
-    border-radius: 18px 18px 4px 18px;
-    padding: 10px 14px;
-    color: #ffffff;
-    font-size: 13px;
-    line-height: 1.55;
-    max-width: 75%;
-    word-wrap: break-word;
-}
-
-.chat-bubble-coach {
-    background: linear-gradient(135deg, rgba(10,10,20,0.99), rgba(8,8,16,0.99));
-    border: 1px solid rgba(191,95,255,0.22);
-    border-radius: 4px 18px 18px 18px;
-    padding: 12px 14px;
-    color: #e2e8f0;
-    font-size: 13px;
-    line-height: 1.65;
-    max-width: 82%;
-    word-wrap: break-word;
-    white-space: pre-wrap;
-}
-
-.chat-avatar-coach {
-    width: 32px;
-    height: 32px;
-    border-radius: 999px;
-    background: linear-gradient(135deg, #00d4ff, #bf5fff);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
-    box-shadow: 0 0 12px rgba(0,212,255,0.40);
-}
-
-.chat-time {
-    color: #555;
-    font-size: 10px;
-    margin-top: 4px;
-    text-align: right;
-}
-
-.chat-context-card {
-    background: rgba(0,212,255,0.04);
-    border: 1px solid rgba(0,212,255,0.14);
-    border-radius: 12px;
-    padding: 10px 12px;
-    margin-bottom: 10px;
-    font-size: 11px;
-    color: #94a3b8;
-}
-
-.chat-context-title {
-    color: #00d4ff;
-    font-size: 11px;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 6px;
-}
-
-.chat-suggestion {
-    display: inline-block;
-    padding: 5px 10px;
-    border-radius: 999px;
-    background: rgba(0,212,255,0.08);
-    border: 1px solid rgba(0,212,255,0.25);
-    color: #00d4ff;
-    font-size: 11px;
-    font-weight: 700;
-    cursor: pointer;
-    margin: 3px;
-}
-
-.chat-action-card {
-    background: rgba(0,230,118,0.06);
-    border: 1px solid rgba(0,230,118,0.22);
-    border-radius: 12px;
-    padding: 10px 12px;
-    margin-top: 8px;
-    font-size: 12px;
-    color: #00e676;
-}
-
-.chat-empty {
-    text-align: center;
-    padding: 40px 20px;
-    color: #555;
-    font-size: 13px;
-}
-
-/* ── TINY BUTTON ───────────────────────────────────────────── */
-.tiny-button div.stButton > button {
-    min-height: 36px !important;
-    border-radius: 10px !important;
-    font-size: 11px !important;
-}
-
-/* ── TRADE BUTTON ──────────────────────────────────────────── */
-.trade-button div.stButton > button {
-    text-align: left !important;
-    min-height: 46px !important;
-    font-size: 11px !important;
-    border-radius: 10px !important;
-}
-
-/* ── BOT STATUS BAR ────────────────────────────────────────── */
-.bot-status-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 12px;
-    border-radius: 12px;
-    border: 1px solid rgba(0,212,255,0.12);
-    background: rgba(0,212,255,0.03);
-    margin-bottom: 12px;
-    box-shadow: 0 0 20px rgba(0,212,255,0.05);
-}
-
-/* ── PROFIT FACTOR BAR ─────────────────────────────────────── */
-.pf-bar {
-    height: 6px;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.08);
-    overflow: hidden;
-    margin-top: 4px;
-}
-.pf-fill {
-    height: 100%;
-    border-radius: 999px;
-    background: linear-gradient(90deg,#00e676,#00d4ff);
-    box-shadow: 0 0 6px rgba(0,212,255,0.4);
-}
-
-/* ── NEON GLOW HELPERS ─────────────────────────────────────── */
-.neon-text-cyan   { color: #00d4ff !important; text-shadow: 0 0 12px rgba(0,212,255,0.7), 0 0 24px rgba(0,212,255,0.3); }
-.neon-text-green  { color: #00e676 !important; text-shadow: 0 0 12px rgba(0,230,118,0.7), 0 0 24px rgba(0,230,118,0.3); }
-.neon-text-purple { color: #bf5fff !important; text-shadow: 0 0 12px rgba(191,95,255,0.7), 0 0 24px rgba(191,95,255,0.3); }
-.neon-text-red    { color: #ff2d55 !important; text-shadow: 0 0 12px rgba(255,45,85,0.7), 0 0 24px rgba(255,45,85,0.3); }
-.neon-text-yellow { color: #ffe600 !important; text-shadow: 0 0 10px rgba(255,230,0,0.6), 0 0 20px rgba(255,230,0,0.3); }
-
-/* ── NEON PANEL BORDERS ─────────────────────────────────────── */
-.neon-panel-cyan {
-    border: 1px solid rgba(0,212,255,0.25) !important;
-    box-shadow: 0 0 20px rgba(0,212,255,0.08), inset 0 0 20px rgba(0,212,255,0.03) !important;
-}
-.neon-panel-green {
-    border: 1px solid rgba(0,230,118,0.25) !important;
-    box-shadow: 0 0 20px rgba(0,230,118,0.08), inset 0 0 20px rgba(0,230,118,0.03) !important;
-}
-.neon-panel-purple {
-    border: 1px solid rgba(191,95,255,0.25) !important;
-    box-shadow: 0 0 20px rgba(191,95,255,0.08), inset 0 0 20px rgba(191,95,255,0.03) !important;
-}
-
-/* ── CYBER GRID LINES (achtergrond textuur) ─────────────────── */
-.cyber-grid {
-    position: relative;
-    overflow: hidden;
-}
-.cyber-grid::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image:
-        linear-gradient(rgba(0,212,255,0.025) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,212,255,0.025) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    border-radius: inherit;
-}
-
-/* ── SCANLINE EFFECT ────────────────────────────────────────── */
-.scanline-panel {
-    position: relative;
-    overflow: hidden;
-}
-.scanline-panel::before {
-    content: "";
-    position: absolute;
-    top: -100%;
-    left: 0;
-    right: 0;
-    height: 200%;
-    background: repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0,212,255,0.012) 2px,
-        rgba(0,212,255,0.012) 4px
-    );
-    pointer-events: none;
-    animation: scanline 8s linear infinite;
-}
-@keyframes scanline {
-    0% { transform: translateY(0); }
-    100% { transform: translateY(50%); }
-}
-
-/* ── PULSING ACTIVE DOT ─────────────────────────────────────── */
-.pulse-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #00e676;
-    box-shadow: 0 0 0 0 rgba(0,230,118,0.5);
-    animation: pulse-green 2s infinite;
-    display: inline-block;
-}
-@keyframes pulse-green {
-    0%   { box-shadow: 0 0 0 0 rgba(0,230,118,0.5); }
-    70%  { box-shadow: 0 0 0 8px rgba(0,230,118,0); }
-    100% { box-shadow: 0 0 0 0 rgba(0,230,118,0); }
-}
-
-/* ── REGIME BADGE ──────────────────────────────────────────── */
-.regime-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 900;
-    letter-spacing: 0.04em;
-}
-.regime-bull   { background: rgba(0,230,118,0.15); color: #00e676; border: 1px solid rgba(0,230,118,0.35); box-shadow: 0 0 12px rgba(0,230,118,0.12); }
-.regime-bear   { background: rgba(255,45,85,0.15);  color: #ff2d55; border: 1px solid rgba(255,45,85,0.35); box-shadow: 0 0 12px rgba(255,45,85,0.12); }
-.regime-range  { background: rgba(255,230,0,0.12);  color: #ffe600; border: 1px solid rgba(255,230,0,0.30);  box-shadow: 0 0 12px rgba(255,230,0,0.10); }
-.regime-unkown { background: rgba(255,255,255,0.05);color: #94a3b8; border: 1px solid rgba(255,255,255,0.10);}
-</style>
-""", unsafe_allow_html=True)
-
-
-# ============================================================
-# HELPERS — basis functies
-# ============================================================
-def now_utc() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def log_debug(msg: str) -> None:
@@ -1253,26 +528,31 @@ def subtle_divider() -> None:
 
 
 def metric_card(label: str, value: str, delta: str = "", accent: str = "blue", delta_color: str = "") -> str:
-    acc_class = {
-        "blue": "blue-accent", "green": "green-accent",
-        "red": "red-accent", "orange": "orange-accent",
-        "purple": "purple-accent",
-    }.get(accent, "blue-accent")
-
-    val_class = {
-        "blue": "accent-blue", "green": "accent-green",
-        "red": "accent-red", "orange": "accent-orange",
-        "purple": "accent-purple",
-    }.get(accent, "")
+    """Metric card component. Kleuren via centraal Cyber Neon palet."""
+    acc_map = {
+        "blue":   "blue-accent",   "cyan":   "blue-accent",
+        "green":  "green-accent",  "red":    "red-accent",
+        "orange": "orange-accent", "purple": "purple-accent",
+        "yellow": "purple-accent",
+    }
+    val_map = {
+        "blue":   "accent-blue",   "cyan":   "accent-blue",
+        "green":  "accent-green",  "red":    "accent-red",
+        "orange": "accent-purple", "purple": "accent-purple",
+        "yellow": "accent-yellow",
+    }
+    acc_class = acc_map.get(accent, "blue-accent")
+    val_class = val_map.get(accent, "")
 
     delta_html = ""
     if delta:
-        d_color = delta_color or ("#34d399" if not delta.startswith("-") else "#fb7185")
-        delta_html = f'<div class="metric-delta" style="color:{d_color}">{delta}</div>'
+        is_neg = delta.strip().startswith("-")
+        d_color = delta_color or (C_RED if is_neg else C_GREEN)
+        delta_html = f'<div class="metric-delta" style="color:{d_color};font-family:Courier New,monospace;">{delta}</div>'
 
     return f"""
     <div class="metric-card {acc_class}">
-        <div class="metric-value {val_class}">{value}</div>
+        <div class="metric-value {val_class}" style="font-family:Courier New,monospace;">{value}</div>
         {delta_html}
         <div class="metric-label">{label}</div>
     </div>
@@ -1761,14 +1041,17 @@ def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
 
 def _demo_trades() -> pd.DataFrame:
     """Fallback demo data — alleen als DB leeg is."""
+    # Demo data — realistisch voor Fase 1 (€0.50 per trade, max 2.5R)
+    # Win = +€0.88 (+1.75R), Loss = -€0.50 (-1.0R)
     rows = [
-        {"trade_id":"r1","symbol":"BTCUSDT","setup_type":"BREAKOUT","timeframe":"1H","regime":"BULL","label":"A","score":84,"chance":77,"confidence":82,"entry":67200,"stop":66500,"target":68800,"pnl_r":2.0,"pnl_eur":48.0,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-15T09:10:00Z","closed_at":"2026-03-15T13:40:00Z"},
-        {"trade_id":"r2","symbol":"ETHUSDT","setup_type":"TREND_PULLBACK","timeframe":"4H","regime":"BULL","label":"B","score":73,"chance":69,"confidence":70,"entry":3550,"stop":3488,"target":3660,"pnl_r":-1.0,"pnl_eur":-24.0,"outcome":"LOSS","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-16T08:20:00Z","closed_at":"2026-03-16T11:15:00Z"},
-        {"trade_id":"r3","symbol":"DOGEUSDT","setup_type":"TREND_PULLBACK","timeframe":"1H","regime":"BULL","label":"A","score":79,"chance":75,"confidence":78,"entry":0.212,"stop":0.207,"target":0.225,"pnl_r":2.0,"pnl_eur":48.0,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-17T13:10:00Z","closed_at":"2026-03-17T18:20:00Z"},
-        {"trade_id":"s1","symbol":"SOLUSDT","setup_type":"BREAKOUT","timeframe":"4H","regime":"BULL","label":"A","score":88,"chance":82,"confidence":86,"entry":168,"stop":162,"target":182,"pnl_r":2.0,"pnl_eur":48.0,"outcome":"WIN","source":"SIM","trade_type":"SIM","is_shadow":False,"created_at":"2026-03-15T10:00:00Z","closed_at":"2026-03-15T22:20:00Z"},
-        {"trade_id":"s2","symbol":"AVAXUSDT","setup_type":"RANGE_RECLAIM","timeframe":"1H","regime":"RANGE","label":"B","score":62,"chance":58,"confidence":61,"entry":39.1,"stop":37.9,"target":41.8,"pnl_r":-1.0,"pnl_eur":-24.0,"outcome":"LOSS","source":"SIM","trade_type":"SIM","is_shadow":False,"created_at":"2026-03-16T11:45:00Z","closed_at":"2026-03-16T15:05:00Z"},
-        {"trade_id":"sh1","symbol":"STORJUSDT","setup_type":"TREND_PULLBACK","timeframe":"1H","regime":"BULL","label":"C","score":57,"chance":55,"confidence":58,"entry":0.79,"stop":0.76,"target":0.86,"pnl_r":2.0,"pnl_eur":48.0,"outcome":"WIN","source":"SHADOW","trade_type":"SHADOW","is_shadow":True,"created_at":"2026-03-18T08:10:00Z","closed_at":"2026-03-18T16:25:00Z"},
-        {"trade_id":"sh2","symbol":"DOGEUSDT","setup_type":"BREAKOUT","timeframe":"15M","regime":"CHOPPY","label":"C","score":49,"chance":46,"confidence":50,"entry":0.204,"stop":0.199,"target":0.214,"pnl_r":-1.0,"pnl_eur":-24.0,"outcome":"LOSS","source":"SHADOW","trade_type":"SHADOW","is_shadow":True,"created_at":"2026-03-19T09:10:00Z","closed_at":"2026-03-19T11:15:00Z"},
+        {"trade_id":"r1","symbol":"ETHUSDT","setup_type":"BREAKOUT","timeframe":"4H","regime":"BULL","label":"A","score":91,"chance":78,"confidence":83,"entry":3412.0,"stop":3374.0,"target":3509.0,"pnl_r":1.75,"pnl_eur":0.88,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-15T09:10:00Z","closed_at":"2026-03-15T13:40:00Z"},
+        {"trade_id":"r2","symbol":"SOLUSDT","setup_type":"TREND_PULLBACK","timeframe":"4H","regime":"BULL","label":"B","score":84,"chance":71,"confidence":72,"entry":142.50,"stop":139.20,"target":150.80,"pnl_r":-1.0,"pnl_eur":-0.50,"outcome":"LOSS","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-16T08:20:00Z","closed_at":"2026-03-16T11:15:00Z"},
+        {"trade_id":"r3","symbol":"LINKUSDT","setup_type":"SQUEEZE_BREAK","timeframe":"4H","regime":"BULL","label":"A","score":95,"chance":82,"confidence":80,"entry":14.22,"stop":13.95,"target":14.90,"pnl_r":2.5,"pnl_eur":1.25,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-17T13:10:00Z","closed_at":"2026-03-17T18:20:00Z"},
+        {"trade_id":"r4","symbol":"AAVEUSDT","setup_type":"VWAP_BOUNCE","timeframe":"4H","regime":"RANGE","label":"A","score":88,"chance":74,"confidence":76,"entry":95.40,"stop":93.10,"target":100.80,"pnl_r":1.5,"pnl_eur":0.75,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-18T10:00:00Z","closed_at":"2026-03-18T16:30:00Z"},
+        {"trade_id":"s1","symbol":"AVAXUSDT","setup_type":"BREAKOUT","timeframe":"4H","regime":"BULL","label":"A","score":93,"chance":85,"confidence":87,"entry":38.80,"stop":37.60,"target":41.80,"pnl_r":2.5,"pnl_eur":1.25,"outcome":"WIN","source":"SIM","trade_type":"SIM","is_shadow":False,"created_at":"2026-03-15T10:00:00Z","closed_at":"2026-03-15T22:20:00Z"},
+        {"trade_id":"s2","symbol":"DOTUSDT","setup_type":"TREND_PULLBACK","timeframe":"4H","regime":"RANGE","label":"B","score":79,"chance":61,"confidence":63,"entry":7.42,"stop":7.18,"target":8.02,"pnl_r":-1.0,"pnl_eur":-0.50,"outcome":"LOSS","source":"SIM","trade_type":"SIM","is_shadow":False,"created_at":"2026-03-16T11:45:00Z","closed_at":"2026-03-16T15:05:00Z"},
+        {"trade_id":"sh1","symbol":"ATOMUSDT","setup_type":"BULLISH_DIVERGENCE","timeframe":"4H","regime":"BULL","label":"C","score":86,"chance":68,"confidence":65,"entry":8.91,"stop":8.68,"target":9.48,"pnl_r":1.75,"pnl_eur":0.88,"outcome":"WIN","source":"SHADOW","trade_type":"SHADOW","is_shadow":True,"created_at":"2026-03-18T08:10:00Z","closed_at":"2026-03-18T16:25:00Z"},
+        {"trade_id":"sh2","symbol":"NEARUSDT","setup_type":"MOMENTUM","timeframe":"4H","regime":"BULL","label":"C","score":82,"chance":65,"confidence":62,"entry":5.21,"stop":5.08,"target":5.54,"pnl_r":-1.0,"pnl_eur":-0.50,"outcome":"LOSS","source":"SHADOW","trade_type":"SHADOW","is_shadow":True,"created_at":"2026-03-19T09:10:00Z","closed_at":"2026-03-19T11:15:00Z"},
     ]
     return normalize_trade_df(pd.DataFrame(rows))
 
@@ -2328,10 +1611,10 @@ def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float
 def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
     """Drawdown grafiek — toont wanneer en hoe diep de drawdowns waren."""
     if df.empty:
-        return empty_fig("Geen data voor drawdown grafiek")
+        return empty_fig("Drawdown — wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Geen WIN/LOSS data")
+        return empty_fig("Drawdown — wacht op WIN/LOSS data")
     if "_datetime_raw" in work.columns:
         work = work.sort_values("_datetime_raw")
     pnl  = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
@@ -2347,11 +1630,11 @@ def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
         mode="lines",
         fill="tozeroy",
         name="Drawdown",
-        line=dict(color="#fb7185", width=1.5),
-        fillcolor="rgba(239,68,68,0.15)",
-        hovertemplate="DD: %{y:.2f} R<extra></extra>",
+        line=dict(color=C_RED, width=1.5),
+        fillcolor="rgba(255,45,85,0.12)",
+        hovertemplate="Drawdown: <b>%{y:.2f}R</b><extra></extra>",
     ))
-    fig.add_hline(y=0, line_color="rgba(255,255,255,0.15)", line_width=1)
+    fig.add_hline(y=0, line_color=ZERO_COLOR, line_width=1)
     return style_fig(fig, 280, title)
 
 
@@ -2359,20 +1642,28 @@ def chart_rolling_winrate(df: pd.DataFrame, window: int = 20) -> go.Figure:
     """Rolling win rate trend grafiek."""
     rwr = get_rolling_winrate(df, window)
     if rwr.empty:
-        return empty_fig(f"Min {window} trades nodig voor rolling win rate")
+        return empty_fig(f"Rolling Win Rate — min {window} trades nodig")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=rwr["_datetime_raw"],
         y=rwr["rolling_wr"],
         mode="lines",
         name=f"Rolling WR ({window})",
-        line=dict(color="#c084fc", width=2.5),
-        hovertemplate="WR: %{y:.1f}%<extra></extra>",
+        line=dict(color=C_PURPLE, width=2.5),
+        hovertemplate="Rolling WR: <b>%{y:.1f}%%</b><extra></extra>",
     ))
-    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)",
-                  annotation_text="50%", annotation_font_color="#94a3b8")
-    fig.add_hline(y=60, line_dash="dot", line_color="rgba(52,211,153,0.3)",
-                  annotation_text="60% doel", annotation_font_color="#34d399")
+    fig.add_hline(
+        y=50, line_dash="dash",
+        line_color=ZERO_COLOR,
+        annotation_text="50%",
+        annotation_font_color=MUTED_COLOR,
+    )
+    fig.add_hline(
+        y=60, line_dash="dot",
+        line_color="rgba(0,230,118,0.30)",
+        annotation_text="60% doel",
+        annotation_font_color=C_GREEN,
+    )
     return style_fig(fig, 280, f"Rolling Win Rate ({window} trades)")
 
 
@@ -2380,21 +1671,29 @@ def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
     """Trade frequentie per dag."""
     freq = get_trade_frequency(df)
     if freq.empty:
-        return empty_fig("Geen frequentie data")
+        return empty_fig("Frequentie — wacht op eerste trade")
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=freq["day"],
         y=freq["wins"],
         name="Wins",
-        marker=dict(color="#34d399"),
+        marker=dict(
+            color=C_GREEN,
+            line=dict(width=0),
+        ),
+        hovertemplate="Dag: %{x}<br>Wins: <b>%{y}</b><extra></extra>",
     ))
     fig.add_trace(go.Bar(
         x=freq["day"],
         y=freq["losses"],
         name="Losses",
-        marker=dict(color="#fb7185"),
+        marker=dict(
+            color=C_RED,
+            line=dict(width=0),
+        ),
+        hovertemplate="Dag: %{x}<br>Losses: <b>%{y}</b><extra></extra>",
     ))
-    fig.update_layout(barmode="stack")
+    fig.update_layout(barmode="stack", bargap=0.3)
     return style_fig(fig, 260, "Trade Frequentie (30 dagen)")
 
 
@@ -2403,8 +1702,8 @@ def chart_btc_correlation_bar(df: pd.DataFrame) -> go.Figure:
     corr = get_btc_correlation(df)
     if corr.empty:
         return empty_fig("Geen regime data")
-    color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
-    colors = [color_map.get(safe_str(r).upper(), "#60a5fa") for r in corr["regime"]]
+    color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
+    colors = [color_map.get(safe_str(r).upper(), "#00d4ff") for r in corr["regime"]]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=corr["regime"],
@@ -2428,7 +1727,7 @@ def chart_hold_time_bar(df: pd.DataFrame) -> go.Figure:
         y=hold["avg_hold"],
         text=[f"{v:.0f}m ({int(n)})" for v, n in zip(hold["avg_hold"], hold["n"])],
         textposition="outside",
-        marker=dict(color="#60a5fa"),
+        marker=dict(color="#00d4ff"),
         hovertemplate="Setup: %{x}<br>Gem. houdtijd: %{y:.0f} min<extra></extra>",
     ))
     return style_fig(fig, 260, "Gemiddelde Houdtijd per Setup (minuten)")
@@ -2448,7 +1747,7 @@ def chart_pnl_histogram(df: pd.DataFrame) -> go.Figure:
         x=euros,
         nbinsx=20,
         marker=dict(
-            color=["#34d399" if v >= 0 else "#fb7185" for v in euros],
+            color=["#00e676" if v >= 0 else "#ff2d55" for v in euros],
             line=dict(width=0),
         ),
         opacity=0.8,
@@ -2696,85 +1995,131 @@ def prepare_assets_df(snapshot: dict) -> pd.DataFrame:
 # GRAFIEKEN
 # ============================================================
 def empty_fig(msg: str = "Geen data", height: int = 300) -> go.Figure:
+    """
+    Lege grafiek — GEEN kleur, GEEN glow, puur neutraal.
+    Kleur verschijnt pas zodra echte trade data beschikbaar is.
+    """
     fig = go.Figure()
     fig.update_layout(
-        template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         height=height,
-        margin=dict(l=16,r=16,t=30,b=16),
-        annotations=[dict(text=msg, x=0.5, y=0.5, xref="paper", yref="paper",
-                          showarrow=False, font=dict(color="#94a3b8",size=13))],
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
+        margin=dict(l=16, r=16, t=30, b=16),
+        annotations=[dict(
+            text=msg,
+            x=0.5, y=0.5,
+            xref="paper", yref="paper",
+            showarrow=False,
+            font=dict(color=MUTED_COLOR, size=12, family="Courier New, monospace"),
+        )],
+        xaxis=dict(visible=False, showgrid=False),
+        yaxis=dict(visible=False, showgrid=False),
+        showlegend=False,
     )
     return fig
 
 
 def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
+    """Toepassing van Cyber Neon stijl op alle Plotly grafieken."""
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e2e8f0"),
+        plot_bgcolor="rgba(3,3,12,0.60)",
+        font=dict(color=TEXT_COLOR, family="Courier New, monospace", size=11),
         height=height,
-        margin=dict(l=22,r=18,t=42,b=22),
-        title=dict(text=title, font=dict(size=13,color="#ffffff")),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.0, font=dict(size=11)),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.06)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.06)", zerolinecolor="rgba(255,255,255,0.10)"),
+        margin=dict(l=22, r=18, t=42, b=22),
+        title=dict(
+            text=title,
+            font=dict(size=13, color="#ffffff", family="Courier New, monospace"),
+        ),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.02, x=0.0,
+            font=dict(size=11, color=TEXT_COLOR),
+            bgcolor="rgba(0,0,0,0)",
+        ),
+        xaxis=dict(
+            gridcolor=GRID_COLOR,
+            zerolinecolor=ZERO_COLOR,
+            linecolor="rgba(0,212,255,0.10)",
+            tickfont=dict(color=MUTED_COLOR, size=10),
+        ),
+        yaxis=dict(
+            gridcolor=GRID_COLOR,
+            zerolinecolor=ZERO_COLOR,
+            linecolor="rgba(0,212,255,0.10)",
+            tickfont=dict(color=MUTED_COLOR, size=10),
+        ),
     )
     return fig
 
 
 def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figure:
     if df.empty:
-        return empty_fig("Geen trade data voor equity curve")
+        return empty_fig("Equity Curve — wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Geen WIN/LOSS trades voor equity curve")
+        return empty_fig("Equity Curve — wacht op WIN/LOSS data")
     if "_datetime_raw" in work.columns:
         work = work.sort_values("_datetime_raw")
-    work["cum_r"]   = pd.to_numeric(work["pnl_r"],   errors="coerce").fillna(0.0).cumsum()
-    work["cum_eur"] = pd.to_numeric(work["pnl_eur"], errors="coerce").fillna(0.0).cumsum()
-    work = downsample(work, 800)
+    cum_r   = pd.to_numeric(work["pnl_r"],   errors="coerce").fillna(0.0).cumsum()
+    cum_eur = pd.to_numeric(work["pnl_eur"], errors="coerce").fillna(0.0).cumsum()
+    work = downsample(work.assign(cum_r=cum_r.values, cum_eur=cum_eur.values), 800)
+
+    # Kleur op basis van eindstand: groen als positief, rood als negatief
+    eindstand = float(cum_r.iloc[-1]) if len(cum_r) else 0.0
+    lijn_kleur = C_GREEN if eindstand >= 0 else C_RED
+    fill_alpha  = "rgba(0,230,118,0.10)" if eindstand >= 0 else "rgba(255,45,85,0.10)"
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=work.get("_datetime_raw", work.index),
         y=work["cum_r"],
         mode="lines",
+        fill="tozeroy",
         name="Cumulatief R",
-        line=dict(color="#34d399", width=2.5),
-        hovertemplate="R: %{y:.2f}<extra></extra>",
+        line=dict(color=lijn_kleur, width=2.5),
+        fillcolor=fill_alpha,
+        hovertemplate="Cumulatief R: <b>%{y:.2f}R</b><extra></extra>",
     ))
-    fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.15)", line_width=1)
+    fig.add_hline(
+        y=0,
+        line_dash="dash",
+        line_color=ZERO_COLOR,
+        line_width=1,
+    )
     return style_fig(fig, 320, title)
 
 
 def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure:
     if df.empty:
-        return empty_fig("Geen trade data")
+        return empty_fig("Win/Loss — wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Geen WIN/LOSS data")
+        return empty_fig("Win/Loss — wacht op WIN/LOSS data")
     counts = work["outcome"].value_counts()
+    w = safe_int(counts.get("WIN", 0))
+    l = safe_int(counts.get("LOSS", 0))
     fig = go.Figure(go.Bar(
-        x=["WIN","LOSS"],
-        y=[safe_int(counts.get("WIN",0)), safe_int(counts.get("LOSS",0))],
-        marker=dict(color=["#34d399","#fb7185"]),
-        text=[safe_int(counts.get("WIN",0)), safe_int(counts.get("LOSS",0))],
+        x=["WIN", "LOSS"],
+        y=[w, l],
+        marker=dict(
+            color=[C_GREEN, C_RED],
+            line=dict(width=0),
+        ),
+        text=[f"{w}", f"{l}"],
         textposition="outside",
+        textfont=dict(color=TEXT_COLOR, size=13),
+        hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 280, title)
 
 
 def chart_setup_perf(df: pd.DataFrame, title: str = "Setup Performance") -> go.Figure:
     if df.empty:
-        return empty_fig("Geen setup data")
+        return empty_fig("Setup Performance — wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Geen setup data")
+        return empty_fig("Setup Performance — wacht op WIN/LOSS data")
     grouped = (
         work.groupby("setup_type", dropna=False)
         .agg(n=("trade_id","count"), avg_r=("pnl_r","mean"))
@@ -2782,74 +2127,100 @@ def chart_setup_perf(df: pd.DataFrame, title: str = "Setup Performance") -> go.F
         .sort_values("n", ascending=False)
         .head(10)
     )
-    colors = ["#34d399" if v >= 0 else "#fb7185" for v in grouped["avg_r"]]
+    colors = [C_GREEN if v >= 0 else C_RED for v in grouped["avg_r"]]
     fig = go.Figure(go.Bar(
         x=grouped["setup_type"],
         y=grouped["avg_r"],
         text=grouped["n"].astype(int),
         textposition="outside",
-        marker=dict(color=colors),
-        hovertemplate="Setup: %{x}<br>Gem. R: %{y:.2f}<br>N: %{text}<extra></extra>",
+        marker=dict(color=colors, line=dict(width=0)),
+        hovertemplate="Setup: <b>%{x}</b><br>Gem. R: <b>%{y:.2f}R</b><br>N: %{text}<extra></extra>",
     ))
     return style_fig(fig, 300, title)
 
 
 def chart_daily_r(df: pd.DataFrame, title: str = "Dagresultaten") -> go.Figure:
     if df.empty:
-        return empty_fig("Geen data voor dagresultaten")
+        return empty_fig("Dagresultaten — wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Geen WIN/LOSS data")
+        return empty_fig("Dagresultaten — wacht op WIN/LOSS data")
     grouped = work.groupby("day", dropna=False)["pnl_r"].sum().reset_index()
-    colors  = ["#34d399" if v >= 0 else "#fb7185" for v in grouped["pnl_r"]]
+    colors  = [C_GREEN if v >= 0 else C_RED for v in grouped["pnl_r"]]
     fig = go.Figure(go.Bar(
         x=grouped["day"],
         y=grouped["pnl_r"],
-        marker=dict(color=colors),
-        hovertemplate="Dag: %{x}<br>R: %{y:.2f}<extra></extra>",
+        marker=dict(color=colors, line=dict(width=0)),
+        hovertemplate="Dag: <b>%{x}</b><br>R: <b>%{y:.2f}R</b><extra></extra>",
     ))
     return style_fig(fig, 280, title)
 
 
 def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.Figure:
     if df.empty:
-        return empty_fig("Geen data")
+        return empty_fig("Regime Verdeling — wacht op markt data")
     counts = df["regime"].value_counts().reset_index()
     counts.columns = ["regime","n"]
-    color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
-    colors = [color_map.get(r,"#60a5fa") for r in counts["regime"]]
+    colors = [COLORS_BY_REGIME.get(str(r).upper(), C_CYAN) for r in counts["regime"]]
     fig = go.Figure(go.Bar(
-        x=counts["regime"], y=counts["n"],
-        marker=dict(color=colors),
-        text=counts["n"], textposition="outside",
+        x=counts["regime"],
+        y=counts["n"],
+        marker=dict(color=colors, line=dict(width=0)),
+        text=counts["n"],
+        textposition="outside",
+        textfont=dict(color=TEXT_COLOR, size=12),
+        hovertemplate="Regime: <b>%{x}</b><br>Coins: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 260, title)
 
 
 def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.Figure:
-    win = max(0.0, min(100.0, safe_float(win_pct)))
+    """Donut chart. Neutraal grijs als geen data, kleur pas bij echte trades."""
+    win  = max(0.0, min(100.0, safe_float(win_pct)))
     loss = 100.0 - win
+    # Kleur: groen als >50%, rood als <50%, neutraal grijs als geen data
+    has_data = (win + loss) > 0.01
+    kleur_win  = C_GREEN  if has_data and win  >= 50 else (C_GREEN  if has_data else MUTED_COLOR)
+    kleur_loss = C_RED    if has_data and loss > 0   else MUTED_COLOR
+    track_color = "rgba(0,212,255,0.04)"
+
     fig = go.Figure(go.Pie(
-        values=[max(win,0.001), max(loss,0.001)],
-        labels=["Win","Loss"],
+        values=[max(win, 0.001), max(loss, 0.001)],
+        labels=["Win", "Loss"],
         hole=0.78,
         sort=False,
         direction="clockwise",
         rotation=270,
         textinfo="none",
-        marker=dict(colors=["#34d399","#ef4444"], line=dict(width=0)),
+        marker=dict(
+            colors=[kleur_win, kleur_loss] if has_data else [MUTED_COLOR, "rgba(0,212,255,0.03)"],
+            line=dict(width=0),
+        ),
         showlegend=False,
     ))
+    win_kleur_html = C_GREEN if has_data and win >= 50 else (C_RED if has_data else MUTED_COLOR)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         height=200,
-        margin=dict(l=0,r=0,t=0,b=0),
+        margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
         annotations=[
-            dict(text=f"<b>{win:.1f}%</b>", x=0.5, y=0.58, showarrow=False, font=dict(color="#ffffff",size=22)),
-            dict(text=f"<span style='color:#dbe4f0;font-size:13px'><b>{title}</b></span>", x=0.5, y=0.42, showarrow=False, font=dict(color="#dbe4f0",size=13)),
-            dict(text=f"<span style='color:#94a3b8;font-size:11px'>{format_money(net_eur)}</span>", x=0.5, y=0.27, showarrow=False, font=dict(color="#94a3b8",size=11)),
+            dict(
+                text=f"<b>{win:.1f}%</b>" if has_data else "<b>–</b>",
+                x=0.5, y=0.58, showarrow=False,
+                font=dict(color=win_kleur_html, size=22, family="Courier New, monospace"),
+            ),
+            dict(
+                text=f"<b>{title}</b>",
+                x=0.5, y=0.42, showarrow=False,
+                font=dict(color=TEXT_COLOR, size=13, family="Courier New, monospace"),
+            ),
+            dict(
+                text=format_money(net_eur) if has_data else "geen data",
+                x=0.5, y=0.27, showarrow=False,
+                font=dict(color=MUTED_COLOR, size=11, family="Courier New, monospace"),
+            ),
         ],
     )
     return fig
@@ -2857,62 +2228,85 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.F
 
 def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
     if assets_df.empty:
-        return empty_fig("Geen portfolio data")
+        return empty_fig("Portfolio — wacht op Bitvavo data")
     work = assets_df[assets_df["eur_value"] > 0].copy().head(9)
     if work.empty:
-        return empty_fig("Geen portfolio waarden")
+        return empty_fig("Portfolio — geen assets met waarde")
+    PORTFOLIO_COLORS = [C_CYAN, C_GREEN, C_PURPLE, C_YELLOW, C_ORANGE, C_BLUE,
+                        "#00d4ff", "#ff00aa", "#a78bfa"]
     fig = go.Figure(go.Pie(
         labels=work["symbol"],
         values=work["eur_value"],
         hole=0.55,
         textinfo="label+percent",
-        marker=dict(line=dict(width=0)),
+        marker=dict(
+            colors=PORTFOLIO_COLORS[:len(work)],
+            line=dict(width=0),
+        ),
+        textfont=dict(color=TEXT_COLOR, family="Courier New, monospace", size=11),
+        hovertemplate="<b>%{label}</b><br>€%{value:.2f}<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e2e8f0"),
-        margin=dict(l=16,r=16,t=40,b=16),
+        font=dict(color=TEXT_COLOR, family="Courier New, monospace"),
+        margin=dict(l=16, r=16, t=40, b=16),
         height=320,
         showlegend=True,
-        legend=dict(orientation="h", y=-0.08, x=0.5, xanchor="center"),
+        legend=dict(
+            orientation="h", y=-0.08, x=0.5, xanchor="center",
+            font=dict(color=MUTED_COLOR, size=10),
+            bgcolor="rgba(0,0,0,0)",
+        ),
     )
     return fig
 
 
 def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
     if df.empty:
-        return empty_fig("Geen scoreboard data")
+        return empty_fig("Scoreboard — wacht op first trades")
     top = df.head(12).copy()
     top["label"] = top["setup_type"].astype(str) + " / " + top["market_regime"].astype(str)
-    colors = ["#34d399" if v >= 60 else "#fbbf24" if v >= 45 else "#fb7185" for v in top["win_rate"]]
+    colors = [C_GREEN if v >= 60 else C_YELLOW if v >= 45 else C_RED for v in top["win_rate"]]
     fig = go.Figure(go.Bar(
         x=top["label"],
         y=top["win_rate"],
-        marker=dict(color=colors),
+        marker=dict(color=colors, line=dict(width=0)),
         text=top["n"].astype(int),
         textposition="outside",
-        hovertemplate="Setup/Regime: %{x}<br>Win rate: %{y:.1f}%<br>N: %{text}<extra></extra>",
+        textfont=dict(color=TEXT_COLOR, size=11),
+        hovertemplate="Setup/Regime: <b>%{x}</b><br>Win rate: <b>%{y:.1f}%%</b><br>N: %{text}<extra></extra>",
     ))
-    fig.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.2)")
+    fig.add_hline(
+        y=50, line_dash="dash",
+        line_color=ZERO_COLOR,
+        annotation_text="50% drempel",
+        annotation_font_color=MUTED_COLOR,
+    )
     return style_fig(fig, 300, "Scoreboard Win Rate")
 
 
 def chart_pending_scores(df: pd.DataFrame) -> go.Figure:
     if df.empty:
-        return empty_fig("Geen signals")
+        return empty_fig("Signal Scores — geen actieve signalen")
     fig = go.Figure()
-    colors = ["#34d399" if s >= 85 else "#fbbf24" if s >= 75 else "#fb7185" for s in df["score"]]
+    min_s = MIN_SCORE_TO_TRADE
+    colors = [C_GREEN if s >= min_s else C_YELLOW if s >= min_s - 10 else C_RED for s in df["score"]]
     fig.add_trace(go.Bar(
         x=df["symbol"].astype(str) + " | " + df["setup_type"].astype(str),
         y=df["score"],
-        marker=dict(color=colors),
+        marker=dict(color=colors, line=dict(width=0)),
         text=df["score"],
         textposition="outside",
-        hovertemplate="Coin: %{x}<br>Score: %{y}<extra></extra>",
+        textfont=dict(color=TEXT_COLOR, size=12),
+        hovertemplate="Coin: <b>%{x}</b><br>Score: <b>%{y}</b><extra></extra>",
     ))
-    fig.add_hline(y=85, line_dash="dot", line_color="rgba(52,211,153,0.5)",
-                  annotation_text="Min score (85)", annotation_font_color="#34d399")
+    fig.add_hline(
+        y=min_s, line_dash="dot",
+        line_color="rgba(0,230,118,0.50)",
+        annotation_text=f"Min score ({min_s})",
+        annotation_font_color=C_GREEN,
+    )
     return style_fig(fig, 300, "Pre-BUY Signal Scores")
 
 
@@ -2937,17 +2331,32 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=x, open=opens, high=highs, low=lows, close=closes,
-        increasing_line_color="#34d399", decreasing_line_color="#fb7185",
+        increasing_line_color=C_GREEN,
+        decreasing_line_color=C_RED,
         showlegend=False, name="Prijs",
+        increasing_fillcolor="rgba(0,230,118,0.30)",
+        decreasing_fillcolor="rgba(255,45,85,0.30)",
     ))
-    fig.add_hline(y=entry, line_width=2, line_color="#60a5fa",
-                  annotation_text=f"ENTRY {format_price(entry)}", annotation_position="right")
+    fig.add_hline(
+        y=entry, line_width=2, line_color=C_CYAN,
+        annotation_text=f"ENTRY  {format_price(entry)}",
+        annotation_position="right",
+        annotation_font_color=C_CYAN,
+    )
     if stop > 0:
-        fig.add_hline(y=stop, line_width=2, line_color="#fb7185",
-                      annotation_text=f"STOP {format_price(stop)}", annotation_position="right")
+        fig.add_hline(
+            y=stop, line_width=2, line_color=C_RED,
+            annotation_text=f"STOP  {format_price(stop)}",
+            annotation_position="right",
+            annotation_font_color=C_RED,
+        )
     if target > 0:
-        fig.add_hline(y=target, line_width=2, line_color="#34d399",
-                      annotation_text=f"TARGET {format_price(target)}", annotation_position="right")
+        fig.add_hline(
+            y=target, line_width=2, line_color=C_GREEN,
+            annotation_text=f"TARGET  {format_price(target)}",
+            annotation_position="right",
+            annotation_font_color=C_GREEN,
+        )
 
     fig.update_layout(
         template="plotly_dark",
@@ -2957,7 +2366,7 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
         margin=dict(l=8,r=8,t=36,b=8),
         title=dict(text=f"{safe_str(row.get('symbol'))} Trade Detail", font=dict(size=13,color="#fff")),
         xaxis=dict(showgrid=False, showticklabels=False),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.06)"),
+        yaxis=dict(gridcolor="rgba(0,212,255,0.06)"),
     )
     return fig
 
@@ -3037,15 +2446,15 @@ def render_alarm_banner() -> None:
     hoog    = [a for a in alarmen if a.get("ernst") == "HOOG"]
 
     if kritiek:
-        kleur = "#c0392b"
+        kleur = "#ff2d55"
         label = f"🔴 {len(kritiek)} KRITIEK ALARM{'EN' if len(kritiek)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in kritiek[:3])
     elif hoog:
-        kleur = "#e67e22"
+        kleur = "#ffe600"
         label = f"🟡 {len(hoog)} HOOG ALARM{'EN' if len(hoog)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in hoog[:3])
     else:
-        kleur = "#2c3e50"
+        kleur = "#0a1020"
         label = f"⚪ {len(alarmen)} melding(en)"
         tekst = alarmen[0].get("omschrijving","")
 
@@ -3208,14 +2617,14 @@ def chart_r_distributie(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=loss, name="Verlies", nbinsx=20,
-        marker_color="#e74c3c", opacity=0.8,
+        marker_color="#ff2d55", opacity=0.8,
     ))
     fig.add_trace(go.Histogram(
         x=wins, name="Winst", nbinsx=20,
-        marker_color="#2ecc71", opacity=0.8,
+        marker_color="#00e676", opacity=0.8,
     ))
-    fig.add_vline(x=0, line_dash="dash", line_color="#f39c12", line_width=1)
-    fig.add_vline(x=float(vals.mean()), line_dash="dot", line_color="#3498db",
+    fig.add_vline(x=0, line_dash="dash", line_color="#ffe600", line_width=1)
+    fig.add_vline(x=float(vals.mean()), line_dash="dot", line_color="#00d4ff",
                   annotation_text=f"Gem {vals.mean():.2f}R", line_width=1)
     return style_fig(fig, height=300, title="R-Multiple Verdeling")
 
@@ -3242,7 +2651,7 @@ def chart_score_winrate_correlatie(df: pd.DataFrame) -> go.Figure:
     if grp.empty:
         return empty_fig("Te weinig data per bucket")
 
-    kleuren = ["#e74c3c" if w < 45 else "#f39c12" if w < 55 else "#2ecc71"
+    kleuren = ["#ff2d55" if w < 45 else "#ffe600" if w < 55 else "#00e676"
                for w in grp["wr"]]
     fig = go.Figure(go.Bar(
         x=grp["bucket"].astype(str),
@@ -3283,11 +2692,11 @@ def chart_fee_impact(df: pd.DataFrame) -> go.Figure:
     grp["netto"] = grp["bruto_winst"] - grp["bruto_verlies"] - grp["fees"]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Bruto Winst",  x=grp["maand"], y=grp["bruto_winst"],  marker_color="#2ecc71"))
-    fig.add_trace(go.Bar(name="Bruto Verlies",x=grp["maand"], y=-grp["bruto_verlies"],marker_color="#e74c3c"))
-    fig.add_trace(go.Bar(name="Fees",         x=grp["maand"], y=-grp["fees"],         marker_color="#e67e22"))
+    fig.add_trace(go.Bar(name="Bruto Winst",  x=grp["maand"], y=grp["bruto_winst"],  marker_color="#00e676"))
+    fig.add_trace(go.Bar(name="Bruto Verlies",x=grp["maand"], y=-grp["bruto_verlies"],marker_color="#ff2d55"))
+    fig.add_trace(go.Bar(name="Fees",         x=grp["maand"], y=-grp["fees"],         marker_color="#ffe600"))
     fig.add_trace(go.Scatter(name="Netto",    x=grp["maand"], y=grp["netto"],
-                             mode="lines+markers", marker_color="#3498db", line_width=2))
+                             mode="lines+markers", marker_color="#00d4ff", line_width=2))
     fig.update_layout(barmode="relative")
     return style_fig(fig, height=320, title="Fee Impact per Maand")
 
@@ -3299,7 +2708,7 @@ def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
 
     fig = go.Figure()
     kleuren_map: Dict[str, str] = {}
-    palette = ["#3498db","#e74c3c","#2ecc71","#f39c12","#9b59b6","#1abc9c","#e67e22"]
+    palette = ["#00d4ff","#ff2d55","#00e676","#ffe600","#bf5fff","#00e676","#ffe600"]
 
     params = config_df["parameter"].unique() if "parameter" in config_df.columns else []
     for i, param in enumerate(params[:7]):
@@ -3339,22 +2748,22 @@ def chart_trade_flow_funnel(flow: Dict) -> go.Figure:
     fig = go.Figure(go.Funnel(
         y=labels, x=values,
         textinfo="value+percent initial",
-        marker_color=["#3498db","#f39c12","#2ecc71","#27ae60"],
+        marker_color=["#00d4ff","#ffe600","#00e676","#00e676"],
     ))
     return style_fig(fig, height=280, title="Trade Flow Funnel (7 dagen)")
 
 
 def chart_audit_gauge(score: int) -> go.Figure:
     """Gauge chart voor systeem audit score 0-100."""
-    kleur = "#2ecc71" if score >= 90 else "#f39c12" if score >= 70 else "#e74c3c"
+    kleur = "#00e676" if score >= 90 else "#ffe600" if score >= 70 else "#ff2d55"
     fig = go.Figure(go.Indicator(
         mode="gauge+number+delta",
         value=score,
         domain={"x":[0,1],"y":[0,1]},
-        title={"text":"Systeem Gezondheid","font":{"size":14,"color":"#aaa"}},
-        delta={"reference":90,"increasing":{"color":"#2ecc71"},"decreasing":{"color":"#e74c3c"}},
+        title={"text":"Systeem Gezondheid","font":{"size":14,"color":"#6e7a9a"}},
+        delta={"reference":90,"increasing":{"color":"#00e676"},"decreasing":{"color":"#ff2d55"}},
         gauge={
-            "axis":{"range":[0,100],"tickcolor":"#555","tickfont":{"color":"#aaa"}},
+            "axis":{"range":[0,100],"tickcolor":"#555","tickfont":{"color":"#6e7a9a"}},
             "bar":{"color":kleur},
             "steps":[
                 {"range":[0,60],"color":"#2c0a0a"},
@@ -3442,8 +2851,8 @@ def render_coach_monitor_page() -> None:
                 st.markdown(
                     f'<div style="font-size:12px;padding:4px 8px;border-left:3px solid #333;margin:2px 0;">'
                     f'{emoji} <b style="color:#aaa;">{ts}</b> '
-                    f'<span style="color:#f39c12;">[{cat}]</span> '
-                    f'<span style="color:#3498db;">{etype}</span> '
+                    f'<span style="color:#ffe600;">[{cat}]</span> '
+                    f'<span style="color:#00d4ff;">{etype}</span> '
                     f'<span style="color:#ccc;">{omschr[:120]}</span>'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -3507,7 +2916,7 @@ def render_coach_monitor_page() -> None:
 
                 st.markdown(
                     f'<div style="background:#1a1a2e;border-left:4px solid '
-                    f'{"#e74c3c" if ernst=="KRITIEK" else "#e67e22" if ernst=="HOOG" else "#555"}'
+                    f'{"#ff2d55" if ernst=="KRITIEK" else "#ffe600" if ernst=="HOOG" else "#555"}'
                     f';padding:8px 12px;border-radius:4px;margin:4px 0;">'
                     f'<b>{emoji} {type_}</b> <span style="color:#aaa;font-size:11px;">{ts} | {status}</span><br>'
                     f'<span style="font-size:12px;color:#ccc;">{omschr}</span>'
@@ -3528,8 +2937,8 @@ def render_coach_monitor_page() -> None:
                 oud  = str(row.get("oud_regime","?"))
                 nieuw= str(row.get("nieuw_regime","?"))
                 btc  = float(row.get("btc_prijs",0) or 0)
-                kleur_oud  = "#e74c3c" if "BEAR" in oud  else "#2ecc71" if "BULL" in oud  else "#f39c12"
-                kleur_nieuw= "#e74c3c" if "BEAR" in nieuw else "#2ecc71" if "BULL" in nieuw else "#f39c12"
+                kleur_oud  = "#ff2d55" if "BEAR" in oud  else "#00e676" if "BULL" in oud  else "#ffe600"
+                kleur_nieuw= "#ff2d55" if "BEAR" in nieuw else "#00e676" if "BULL" in nieuw else "#ffe600"
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:10px;padding:6px;'
                     f'border-bottom:1px solid #222;font-size:13px;">'
@@ -3559,7 +2968,7 @@ def render_coach_monitor_page() -> None:
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:12px;padding:6px 0;'
                     f'border-bottom:1px solid #222;font-size:13px;">'
-                    f'<code style="color:#3498db;width:220px;">{naam}</code>'
+                    f'<code style="color:#00d4ff;width:220px;">{naam}</code>'
                     f'<span style="color:#888;">{regels:,} regels</span>'
                     f'<span style="color:#555;font-family:monospace;">{checksum}</span>'
                     f'<span style="color:#888;font-size:11px;">{bijgew}</span>'
@@ -3633,12 +3042,12 @@ def render_health_page() -> None:
                 f'<div style="display:flex;justify-content:space-between;'
                 f'padding:5px 0;border-bottom:1px solid #1e1e1e;font-size:13px;">'
                 f'<span style="color:#aaa;">{label}</span>'
-                f'<b style="color:#f39c12;">{val}</b>'
+                f'<b style="color:#ffe600;">{val}</b>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         conv = flow.get("conversie_pct",0)
-        kleur = "#2ecc71" if conv >= 5 else "#e74c3c" if conv < 2 else "#f39c12"
+        kleur = "#00e676" if conv >= 5 else "#ff2d55" if conv < 2 else "#ffe600"
         st.markdown(
             f'<div style="margin-top:8px;font-size:12px;color:{kleur};">'
             f'Conversie: {conv:.1f}% signalen → live</div>',
@@ -3695,7 +3104,7 @@ def render_health_page() -> None:
                     ts = datetime.fromisoformat(ts.replace("Z","+00:00"))
                 uren = (now - ts).total_seconds() / 3600
                 ok   = uren < check["max_uren"]
-                kleur= "#2ecc71" if ok else "#e74c3c"
+                kleur= "#00e676" if ok else "#ff2d55"
                 label= f"{uren:.1f}u" if uren < 48 else f"{uren/24:.1f}d"
                 st.markdown(
                     f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
@@ -3738,7 +3147,7 @@ def render_health_page() -> None:
     else:
         for a in alarmen:
             ernst = str(a.get("ernst","MEDIUM"))
-            kleur = "#e74c3c" if ernst=="KRITIEK" else "#e67e22" if ernst=="HOOG" else "#555"
+            kleur = "#ff2d55" if ernst=="KRITIEK" else "#ffe600" if ernst=="HOOG" else "#555"
             emoji = "🔴" if ernst=="KRITIEK" else "🟡"
             st.markdown(
                 f'<div style="background:#111;border-left:4px solid {kleur};'
@@ -3806,13 +3215,13 @@ def render_controls_page() -> None:
 
     if bot_actief and not bot_gepauz:
         status_label = "🟢 BOT ACTIEF"
-        status_kleur = "#2ecc71"
+        status_kleur = "#00e676"
     elif bot_gepauz:
         status_label = "🟡 BOT GEPAUZEERD"
-        status_kleur = "#f39c12"
+        status_kleur = "#ffe600"
     else:
         status_label = "🔴 BOT GESTOPT"
-        status_kleur = "#e74c3c"
+        status_kleur = "#ff2d55"
 
     st.markdown(
         f'<div style="text-align:center;background:#111;border:2px solid {status_kleur};'
@@ -3961,9 +3370,9 @@ def render_controls_page() -> None:
             st.markdown(
                 f'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #1e1e1e;">'
                 f'<span style="color:#888;">{ts}</span> '
-                f'<b style="color:#f39c12;">{param}</b>: '
-                f'<span style="color:#e74c3c;">{oud}</span> → '
-                f'<span style="color:#2ecc71;">{nieuw}</span> '
+                f'<b style="color:#ffe600;">{param}</b>: '
+                f'<span style="color:#ff2d55;">{oud}</span> → '
+                f'<span style="color:#00e676;">{nieuw}</span> '
                 f'<span style="color:#555;">[{bron}]</span>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -4028,29 +3437,491 @@ def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             st.caption(f"{len(cfg_df)} wijzigingen in 90 dagen — elk punt = een parameter aanpassing.")
 
 
+
+
+# ============================================================
+# LIVE TRADE MONITOR — Realtime pagina
+# ============================================================
+
+
+def render_live_monitor() -> None:
+    """
+    Realtime live trade monitor.
+    Open live trades met floating PnL, R-progressie, houdtijd en niveaus.
+    Auto-refresh via timer in session_state.
+    """
+    st.markdown(
+        '<div class="page-chip">🔴 LIVE MONITOR — Realtime</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Refresh controls ────────────────────────────────────
+    col_r1, col_r2, col_r3 = st.columns([2, 2, 4], gap="small")
+    with col_r1:
+        refresh_interval = st.selectbox(
+            "⏱ Interval",
+            [10, 15, 30, 60],
+            index=1,
+            format_func=lambda x: f"Elke {x}s",
+            key="live_monitor_refresh_sel",
+        )
+    with col_r2:
+        st.markdown('<div class="tiny-button" style="margin-top:24px;">', unsafe_allow_html=True)
+        if st.button("🔄 Nu verversen", key="live_monitor_btn", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+    with col_r3:
+        st.markdown(
+            f'<div style="color:var(--muted);font-size:11px;padding-top:28px;">'
+            f'⏰ Nu: {now_utc().strftime("%H:%M:%S")} UTC</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Auto-refresh via time check
+    import time as _t
+    if "lm_last" not in st.session_state:
+        st.session_state.lm_last = _t.time()
+    sec_ago = int(_t.time() - st.session_state.lm_last)
+    if sec_ago >= refresh_interval:
+        st.session_state.lm_last = _t.time()
+        st.cache_data.clear()
+        st.rerun()
+    st.markdown(
+        f'<div style="font-size:10px;color:var(--muted);margin-bottom:8px;">'
+        f'Auto-refresh in {max(0, refresh_interval - sec_ago)}s</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+
+    # ── Data ophalen ─────────────────────────────────────────
+    prices       = fetch_bitvavo_prices()
+    btc          = get_btc_regime()
+    btc_regime_v = safe_str(btc.get("regime"), "UNKNOWN")
+    btc_sterkte  = safe_float(btc.get("strength"), 0.0)
+    bot_lbl, bot_emoji, bot_type = get_bot_status()
+    bot_chip = {"active": "chip-green", "paused": "chip-yellow", "stopped": "chip-red"}.get(bot_type, "chip-gray")
+    btc_chip = {"BULL": "chip-green", "BEAR": "chip-red", "RANGE": "chip-yellow"}.get(btc_regime_v, "chip-gray")
+
+    live_state, _ = safe_json(LIVE_STATE_PATH)
+    posities_json: dict = {}
+    if live_state:
+        posities_json = live_state.get("positions", {}) or {}
+
+    open_db_df = pd.DataFrame()
+    if table_exists("experience_trades"):
+        cols_et = get_table_cols("experience_trades")
+        def ec(n: str, cast: str = "text") -> str:
+            return sql_col(cols_et, n, cast)
+        open_db_df = run_query(
+            f"""
+            SELECT
+                COALESCE({ec("coin")}, {ec("symbol")})           AS symbol,
+                {ec("setup_type")}                               AS setup_type,
+                {ec("regime")}                                   AS regime,
+                COALESCE({ec("score","double precision")},  0)   AS score,
+                COALESCE({ec("entry","double precision")},  0)   AS entry,
+                COALESCE({ec("stop_loss","double precision")},
+                         {ec("stop","double precision")},   0)   AS stop,
+                COALESCE({ec("target","double precision")}, 0)   AS target,
+                COALESCE({ec("amount_eur","double precision")},0) AS amount_eur,
+                COALESCE({ec("qty","double precision")},    0)   AS qty,
+                COALESCE({ec("entry_time")},{ec("timestamp")},{ec("created_at")}) AS entry_time
+            FROM public.experience_trades
+            WHERE UPPER(COALESCE({ec("source")}, '')) IN ('REAL', 'LIVE')
+              AND UPPER(COALESCE({ec("outcome")}, 'OPEN')) NOT IN ('WIN', 'LOSS', 'CANCELLED')
+            ORDER BY COALESCE({ec("entry_time")}, {ec("created_at")}) DESC
+            LIMIT 20
+            """
+        )
+
+    n_open = max(len(posities_json), len(open_db_df))
+
+    # ── Status balk ──────────────────────────────────────────
+    st.markdown(
+        f'<div class="bot-status-bar">'
+        f'<span class="top-status-chip {bot_chip}">{bot_emoji} BOT: {bot_lbl}</span>'
+        f'<span class="top-status-chip {btc_chip}">₿ BTC: {btc_regime_v} {btc_sterkte:.0f}%</span>'
+        f'<span class="top-status-chip chip-gray">📍 {n_open} open trade{"s" if n_open != 1 else ""}</span>'
+        f'<span class="top-status-chip chip-gray">💰 Prijzen: {"✅ live" if prices else "❌ geen"}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Dag statistieken ─────────────────────────────────────
+    real_df = load_real_trades()
+    dag     = get_dagbudget_status(real_df)
+    pnl_t   = dag["pnl_today"]
+    bpct    = dag["budget_pct"]
+    bfill   = "budget-fill-safe" if bpct < 70 else "budget-fill-warn"
+
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5, gap="small")
+    with mc1:
+        st.markdown(metric_card("OPEN TRADES",   str(n_open), accent="cyan"),  unsafe_allow_html=True)
+    with mc2:
+        st.markdown(metric_card("WINS VANDAAG",  str(dag["wins_today"]),   accent="green"), unsafe_allow_html=True)
+    with mc3:
+        st.markdown(metric_card("LOSSES VANDAAG",str(dag["losses_today"]), accent="red"),   unsafe_allow_html=True)
+    with mc4:
+        st.markdown(metric_card("PNL VANDAAG", format_money(pnl_t), accent="green" if pnl_t >= 0 else "red"), unsafe_allow_html=True)
+    with mc5:
+        st.markdown(
+            metric_card("BUDGET VRIJ", f"€{dag['ruimte']:.2f}", f"{bpct:.0f}% gebruikt",
+                        accent="green" if bpct < 50 else "red"),
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        f'<div class="budget-bar" style="margin-bottom:14px;">'
+        f'<div class="{bfill}" style="width:{min(bpct,100):.0f}%"></div></div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Open posities ────────────────────────────────────────
+    st.markdown('<div class="section-title">📍 Open Live Trades</div>', unsafe_allow_html=True)
+
+    alle: dict = {}
+
+    if not open_db_df.empty:
+        for _, dbr in open_db_df.iterrows():
+            sym = safe_str(dbr.get("symbol"))
+            if sym:
+                alle[sym] = {
+                    "symbol":     sym,
+                    "setup":      safe_str(dbr.get("setup_type"), "-"),
+                    "regime":     safe_str(dbr.get("regime"), "-"),
+                    "score":      safe_float(dbr.get("score")),
+                    "entry":      safe_float(dbr.get("entry")),
+                    "stop":       safe_float(dbr.get("stop")),
+                    "target":     safe_float(dbr.get("target")),
+                    "amount_eur": safe_float(dbr.get("amount_eur")),
+                    "qty":        safe_float(dbr.get("qty")),
+                    "entry_time": dbr.get("entry_time"),
+                    "bron":       "DB",
+                }
+
+    for sym, pos in posities_json.items():
+        et = pos.get("opened_at") or (alle.get(sym, {}).get("entry_time"))
+        if sym not in alle:
+            alle[sym] = {"symbol": sym}
+        alle[sym].update({
+            "entry":      safe_float(pos.get("entry")),
+            "stop":       safe_float(pos.get("stop_loss") or pos.get("stop")),
+            "target":     safe_float(pos.get("target")),
+            "amount_eur": safe_float(pos.get("amount_eur")),
+            "qty":        safe_float(pos.get("qty")),
+            "setup":      safe_str(pos.get("setup_type"), alle[sym].get("setup", "-")),
+            "entry_time": et,
+            "bron":       "live_state",
+        })
+
+    if not alle:
+        st.markdown(
+            '<div class="tc tc-open" style="text-align:center;padding:32px 20px;">'
+            '<div style="font-size:32px;margin-bottom:10px;">📭</div>'
+            '<div style="color:var(--txt-hi);font-size:14px;font-weight:900;margin-bottom:6px;">'
+            'Geen open live trades</div>'
+            '<div style="color:var(--muted);font-size:12px;line-height:1.6;">'
+            'De scanner is actief en zoekt signalen.<br>'
+            'Zodra de bot een trade opent, verschijnt die hier.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        for sym, pos in sorted(alle.items()):
+            entry      = pos.get("entry", 0.0)
+            stop_l     = pos.get("stop", 0.0)
+            target     = pos.get("target", 0.0)
+            qty        = pos.get("qty", 0.0)
+            setup_v    = pos.get("setup", "-")
+            score_v    = pos.get("score", 0.0)
+            regime_v   = pos.get("regime", "-")
+            entry_time = pos.get("entry_time")
+            bron       = pos.get("bron", "-")
+            eur_in     = pos.get("amount_eur", 0.0)
+
+            base   = sym[:-4] if sym.upper().endswith("USDT") else sym
+            huidig = prices.get(f"{base}-EUR") or prices.get(f"{base}-USDT", 0.0)
+
+            risico    = abs(entry - stop_l) if (entry > 0 and stop_l > 0) else 0.0
+            float_pnl = (huidig - entry) * qty if (huidig > 0 and entry > 0 and qty > 0) else 0.0
+            float_r   = float_pnl / (risico * qty) if (risico > 0 and qty > 0) else 0.0
+            target_r  = abs(target - entry) / risico if (risico > 0 and target > 0) else 0.0
+            pct_chg   = (huidig - entry) / entry * 100 if (entry > 0 and huidig > 0) else 0.0
+            eur_val   = huidig * qty if (huidig > 0 and qty > 0) else eur_in
+            stop_dist = abs(huidig - stop_l) / huidig * 100 if (huidig > 0 and stop_l > 0) else 99.0
+            stop_alarm = stop_dist < 2.0 and huidig > 0
+
+            # Houdtijd
+            houd_str = "-"
+            if entry_time is not None:
+                try:
+                    if isinstance(entry_time, (int, float)) and float(entry_time) > 1e9:
+                        et2 = datetime.fromtimestamp(float(entry_time), tz=timezone.utc)
+                    elif hasattr(entry_time, "tzinfo"):
+                        et2 = entry_time
+                        if et2.tzinfo is None:
+                            et2 = et2.replace(tzinfo=timezone.utc)
+                    else:
+                        et2 = pd.to_datetime(str(entry_time), utc=True, errors="coerce")
+                        if not pd.isna(et2):
+                            et2 = et2.to_pydatetime()
+                        else:
+                            et2 = None
+                    if et2 is not None:
+                        hm = max(0, int((now_utc() - et2).total_seconds() / 60))
+                        houd_str = (f"{hm}m" if hm < 60
+                                    else f"{hm//60}u {hm%60}m" if hm < 1440
+                                    else f"{hm//1440}d {(hm%1440)//60}u")
+                except Exception:
+                    pass
+
+            # Kleuren & R-balk
+            pnl_pos   = float_pnl >= 0
+            pnl_css   = "var(--win)"  if pnl_pos  else "var(--loss)"
+            pct_css   = "var(--win)"  if pct_chg >= 0 else "var(--loss)"
+            tc_cls    = "tc-win"      if pnl_pos  else "tc-loss"
+            r_pct     = 50.0
+            if risico > 0 and target > 0 and stop_l > 0:
+                span  = abs(target - stop_l)
+                r_pct = max(0.0, min(100.0, (huidig - stop_l) / span * 100 if (huidig > 0 and span > 0) else 50.0))
+            balk_css  = ("var(--win)" if r_pct >= 50 else "var(--warn)" if r_pct >= 25 else "var(--loss)")
+
+            # Score chip
+            s_css   = C_WIN if score_v >= 90 else C_WARN if score_v >= 75 else MUTED_COLOR
+            score_chip = (f'<span style="background:rgba(0,0,0,0.35);border-radius:999px;padding:2px 7px;'
+                          f'font-size:10px;font-weight:900;color:{s_css};border:1px solid {s_css}44;">'
+                          f'SCORE {score_v:.0f}</span>' if score_v > 0 else "")
+
+            r_css   = {"BULL": C_WIN, "BEAR": C_LOSS, "RANGE": C_WARN}.get(regime_v.upper(), MUTED_COLOR)
+            reg_chip = (f'<span style="background:rgba(0,0,0,0.35);border-radius:999px;padding:2px 7px;'
+                        f'font-size:10px;font-weight:700;color:{r_css};border:1px solid {r_css}44;margin-left:4px;">'
+                        f'{regime_v}</span>' if regime_v not in ("-", "UNKNOWN", "") else "")
+
+            alarm_html = ""
+            if stop_alarm:
+                alarm_html = (
+                    f'<div style="background:rgba(255,45,85,0.15);border:1px solid var(--loss);'
+                    f'border-radius:8px;padding:6px 10px;margin-bottom:8px;'
+                    f'font-size:11px;color:var(--loss);font-weight:900;">'
+                    f'⚠️ STOP ALARM — prijs is {stop_dist:.2f}% boven stop ({format_price(stop_l)})'
+                    f'</div>'
+                )
+
+            st.markdown(
+                f'<div class="tc {tc_cls}" style="margin-bottom:12px;">'
+                f'{alarm_html}'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
+                f'  <div>'
+                f'    <div style="margin-bottom:4px;">'
+                f'      <span style="color:var(--txt-hi);font-size:16px;font-weight:900;">{sym}</span>'
+                f'      <span style="color:var(--muted);font-size:12px;margin-left:10px;">{setup_v}</span>'
+                f'    </div>'
+                f'    <div>{score_chip}{reg_chip}</div>'
+                f'  </div>'
+                f'  <div style="text-align:right;">'
+                f'    <div style="color:{pnl_css};font-size:18px;font-weight:900;line-height:1.1;">{format_money(float_pnl)}</div>'
+                f'    <div style="color:{pnl_css};font-size:12px;margin-top:2px;">'
+                f'      {format_r(float_r)} &nbsp;&nbsp;'
+                f'      <span style="color:{pct_css};">{pct_chg:+.2f}%</span>'
+                f'    </div>'
+                f'    <div style="color:var(--muted);font-size:10px;margin-top:3px;">{houd_str} open</div>'
+                f'  </div>'
+                f'</div>'
+                # Prijs niveaus grid
+                f'<div style="display:grid;grid-template-columns:repeat(4,1fr) 1fr 1fr 1fr;gap:10px;margin-bottom:12px;">'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Entry</div>'
+                f'    <div style="color:var(--live);font-size:13px;font-weight:900;">{format_price(entry)}</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Huidig</div>'
+                f'    <div style="color:var(--txt-hi);font-size:14px;font-weight:900;">{format_price(huidig) if huidig > 0 else "–"}</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Stop ▼</div>'
+                f'    <div style="color:var(--loss);font-size:13px;font-weight:900;">{format_price(stop_l)}</div>'
+                f'    <div style="color:var(--muted);font-size:9px;">{stop_dist:.1f}% weg</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Target ▲</div>'
+                f'    <div style="color:var(--win);font-size:13px;font-weight:900;">{format_price(target)}</div>'
+                f'    <div style="color:var(--muted);font-size:9px;">{target_r:.1f}R doel</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Waarde</div>'
+                f'    <div style="color:var(--txt);font-size:12px;font-weight:900;">€{eur_val:.2f}</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Qty</div>'
+                f'    <div style="color:var(--txt);font-size:12px;font-weight:900;">{qty:.6f}</div>'
+                f'  </div>'
+                f'  <div style="text-align:center;">'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Bron</div>'
+                f'    <div style="color:var(--muted);font-size:11px;">{bron}</div>'
+                f'  </div>'
+                f'</div>'
+                # R-progressie balk
+                f'<div>'
+                f'  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:3px;">'
+                f'    <span style="color:var(--loss);">◄ STOP  {format_price(stop_l)}</span>'
+                f'    <span style="color:{balk_css};font-weight:900;font-size:10px;">{r_pct:.0f}% richting target</span>'
+                f'    <span style="color:var(--win);">TARGET  {format_price(target)} ►</span>'
+                f'  </div>'
+                f'  <div style="height:12px;background:rgba(255,255,255,0.05);border-radius:999px;'
+                f'      overflow:hidden;position:relative;border:1px solid rgba(0,212,255,0.08);">'
+                f'    <div style="position:absolute;left:calc(50% - 1px);top:0;width:2px;height:100%;'
+                f'        background:var(--live);opacity:0.5;"></div>'
+                f'    <div style="height:100%;width:{r_pct:.1f}%;'
+                f'        background:linear-gradient(90deg,{balk_css}88,{balk_css});'
+                f'        border-radius:999px;box-shadow:0 0 8px {balk_css}66;"></div>'
+                f'  </div>'
+                f'  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:2px;">'
+                f'    <span>-1R verlies</span>'
+                f'    <span style="color:var(--live);">▲ entry</span>'
+                f'    <span>+{target_r:.1f}R winst</span>'
+                f'  </div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # ── Scanner ───────────────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:15px;">⚡ Scanner Status</div>', unsafe_allow_html=True)
+
+    laatste_scan = get_bot_state_val("laatste_scan_tijd", "–")
+    sessie_raw   = get_bot_state_val("laatste_scan_sessie", "{}")
+    markt_txt    = get_bot_state_val("markt_beoordeling", "")
+    scanner_ver  = get_bot_state_val("scanner_versie", "–")
+    try:
+        ls = json.loads(sessie_raw)
+    except Exception:
+        ls = {}
+
+    scan_data = get_scanner_status()
+    sc1, sc2, sc3, sc4 = st.columns(4, gap="small")
+    with sc1:
+        st.markdown(metric_card("SIGNALEN VANDAAG", str(scan_data["signals_today"]),  accent="cyan"),   unsafe_allow_html=True)
+    with sc2:
+        st.markdown(metric_card("PENDING",           str(scan_data["signals_pending"]), accent="purple"), unsafe_allow_html=True)
+    with sc3:
+        st.markdown(metric_card("COINS GESCAND",     str(ls.get("gescand", "–")),       accent="blue"),   unsafe_allow_html=True)
+    with sc4:
+        fouten = ls.get("fouten", 0)
+        st.markdown(metric_card("SCAN FOUTEN", str(fouten), accent="red" if fouten > 0 else "green"), unsafe_allow_html=True)
+
+    st.markdown(
+        f'<div class="scanner-card" style="margin-top:8px;">'
+        f'<div class="scanner-title">Laatste scan — {laatste_scan} (v{scanner_ver})</div>'
+        f'<div class="scanner-row"><span class="scanner-key">Score drempel</span>'
+        f'<span class="scanner-val">{ls.get("score_drempel","–")} (BTC={ls.get("btc_regime","–")})</span></div>'
+        f'<div class="scanner-row"><span class="scanner-key">Duur</span>'
+        f'<span class="scanner-val">{ls.get("duur_sec",0):.0f}s</span></div>'
+        f'<div class="scanner-row"><span class="scanner-key">Live / Shadow</span>'
+        f'<span class="scanner-val">{ls.get("live_trades",0)} / {ls.get("shadow_trades",0)}</span></div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    top5 = ls.get("top5", [])
+    if top5:
+        st.markdown(
+            '<div style="color:var(--muted);font-size:11px;font-weight:700;'
+            'text-transform:uppercase;letter-spacing:0.05em;margin:8px 0 5px;">'
+            'Top 5 scores laatste scan</div>',
+            unsafe_allow_html=True,
+        )
+        for cd in top5[:5]:
+            sc_v = safe_int(cd.get("score"))
+            sc_c = C_WIN if sc_v >= 90 else C_WARN if sc_v >= 75 else MUTED_COLOR
+            st.markdown(
+                f'<div class="score-row">'
+                f'<div class="score-left">{safe_str(cd.get("symbol"))}</div>'
+                f'<div class="score-right" style="color:{sc_c};font-weight:900;">{sc_v}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    if markt_txt:
+        st.markdown(
+            f'<div style="background:rgba(0,212,255,0.04);border:1px solid var(--border);'
+            f'border-radius:12px;padding:10px 12px;margin-top:8px;font-size:12px;color:var(--txt);">'
+            f'<div style="color:var(--live);font-size:10px;font-weight:900;text-transform:uppercase;'
+            f'letter-spacing:0.05em;margin-bottom:5px;">Claude Marktbeoordeling</div>'
+            f'{markt_txt}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    # ── Gesloten vandaag ─────────────────────────────────────
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:15px;">📋 Gesloten vandaag</div>', unsafe_allow_html=True)
+
+    today_str  = now_utc().strftime("%Y-%m-%d")
+    today_df   = real_df[real_df["day"] == today_str].copy() if not real_df.empty else pd.DataFrame()
+    closed_tdy = today_df[today_df["outcome"].isin(["WIN", "LOSS"])].copy() if not today_df.empty else pd.DataFrame()
+
+    if closed_tdy.empty:
+        st.markdown(
+            '<div style="color:var(--muted);font-size:12px;padding:10px 0;">Nog geen gesloten trades vandaag.</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        if "_datetime_raw" in closed_tdy.columns:
+            closed_tdy = closed_tdy.sort_values("_datetime_raw", ascending=False)
+        for _, row in closed_tdy.iterrows():
+            out_v   = safe_str(row.get("outcome"))
+            sym_v   = safe_str(row.get("symbol"))
+            stp_v   = safe_str(row.get("setup_type"))
+            pnl_r_v = safe_float(row.get("pnl_r"))
+            pnl_e_v = safe_float(row.get("pnl_eur"))
+            tc_v    = "tc-win"   if out_v == "WIN" else "tc-loss"
+            pk_v    = "var(--win)" if out_v == "WIN" else "var(--loss)"
+            em_v    = "✅" if out_v == "WIN" else "❌"
+            tijd_v  = format_dt(row.get("closed_at") or row.get("_datetime_raw"))
+            st.markdown(
+                f'<div class="tc {tc_v}" style="margin-bottom:6px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                f'  <div>'
+                f'    <span style="font-size:13px;">{em_v}</span>'
+                f'    <span style="color:var(--txt-hi);font-size:13px;font-weight:900;margin-left:6px;">{sym_v}</span>'
+                f'    <span style="color:var(--muted);font-size:11px;margin-left:8px;">{stp_v}</span>'
+                f'  </div>'
+                f'  <div style="text-align:right;">'
+                f'    <span style="color:{pk_v};font-size:14px;font-weight:900;">{format_r(pnl_r_v)}</span>'
+                f'    <span style="color:{pk_v};font-size:12px;margin-left:8px;">{format_money(pnl_e_v)}</span>'
+                f'    <div style="color:var(--muted);font-size:10px;margin-top:2px;">{tijd_v}</div>'
+                f'  </div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+
 # ============================================================
 # NAVIGATIE HELPERS
 # ============================================================
 PAGE_NAMES = {
-    "dashboard":   "◉ Dashboard",
-    "coach":       "◉ 🤖 AI Coach Chat",
-    "positions":   "◉ Open Posities (P&L)",
-    "monitor":     "◉ 📋 Coach Monitor",
-    "health":      "◉ 🏥 Systeem Gezondheid",
-    "controls":    "◉ 🎮 Bot Controls",
-    "live":        "◉ Live Performance",
-    "sim":         "◉ Simulator",
-    "shadow":      "◉ Shadow Review",
-    "analyse":     "◉ Analyse & Drawdown",
-    "coins":       "◉ Coin Analyse",
-    "kalender":    "◉ P&L Kalender",
-    "correlatie":  "◉ BTC Correlatie",
-    "portfolio":   "◉ Portfolio",
-    "signals":     "◉ Pre-BUY Signals",
-    "scoreboard":  "◉ Scoreboard",
-    "regime":      "◉ BTC Regime",
-    "settings":    "◉ Instellingen",
-    "help":        "◉ Help & Debug",
+    "live_monitor": "🔴 Live Monitor",
+    "dashboard":   "▸ Dashboard",
+    "coach":       "🤖 AI Coach",
+    "positions":   "📍 Open Posities",
+    "monitor":     "📋 Coach Monitor",
+    "health":      "🏥 Systeem Health",
+    "controls":    "🎮 Bot Controls",
+    "live":        "💶 Live Performance",
+    "sim":         "🔮 Simulator",
+    "shadow":      "🎭 Shadow Review",
+    "analyse":     "📐 Analyse",
+    "coins":       "🪙 Coin Analyse",
+    "kalender":    "🗓️ P&L Kalender",
+    "correlatie":  "🔗 BTC Correlatie",
+    "portfolio":   "💼 Portfolio",
+    "signals":     "⚡ Pre-BUY Signals",
+    "scoreboard":  "🏆 Scoreboard",
+    "regime":      "₿ BTC Regime",
+    "settings":    "⚙️ Instellingen",
+    "help":        "🔧 Help & Debug",
 }
 
 
@@ -4071,7 +3942,7 @@ def render_sidebar() -> None:
     current_name = PAGE_NAMES.get(st.session_state.page, st.session_state.page)
     st.markdown(f'<div class="page-chip">📍 {current_name}</div>', unsafe_allow_html=True)
     st.markdown('<div class="nav-header">Navigatie</div>', unsafe_allow_html=True)
-    st.markdown('<div class="nav-caption">Actieve pagina heeft oranje highlight.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="nav-caption">Actieve pagina heeft cyan highlight.</div>', unsafe_allow_html=True)
 
     # Snelknoppen
     hk1, hk2 = st.columns(2, gap="small")
@@ -4089,33 +3960,34 @@ def render_sidebar() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="nav-header">📊 Overzicht</div>', unsafe_allow_html=True)
-    nav_btn("◉ Dashboard",           "dashboard")
-    nav_btn("◉ 🤖 AI Coach Chat",    "coach")
-    nav_btn("◉ Open Posities (P&L)", "positions")
+    nav_btn("🔴 Live Monitor", "live_monitor")
+    nav_btn("▸ Dashboard", "dashboard")
+    nav_btn("🤖 AI Coach", "coach")
+    nav_btn("📍 Open Posities", "positions")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">🤖 Bot Beheer</div>', unsafe_allow_html=True)
-    nav_btn("◉ 🎮 Bot Controls",     "controls")
-    nav_btn("◉ 🏥 Systeem Gezondheid","health")
-    nav_btn("◉ 📋 Coach Monitor",    "monitor")
+    nav_btn("🎮 Bot Controls", "controls")
+    nav_btn("🏥 Systeem Health", "health")
+    nav_btn("📋 Coach Monitor", "monitor")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">📈 Trade Analyse</div>', unsafe_allow_html=True)
-    nav_btn("◉ Live Performance",    "live")
-    nav_btn("◉ Simulator",           "sim")
-    nav_btn("◉ Shadow Review",       "shadow")
-    nav_btn("◉ Analyse & Drawdown",  "analyse")
-    nav_btn("◉ Coin Analyse",        "coins")
+    nav_btn("💶 Live Performance", "live")
+    nav_btn("🔮 Simulator", "sim")
+    nav_btn("🎭 Shadow Review", "shadow")
+    nav_btn("📐 Analyse & Drawdown", "analyse")
+    nav_btn("🪙 Coin Analyse", "coins")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">🗓️ Kalender & Correlatie</div>', unsafe_allow_html=True)
-    nav_btn("◉ P&L Kalender",        "kalender")
-    nav_btn("◉ BTC Correlatie",      "correlatie")
+    nav_btn("🗓️ P&L Kalender", "kalender")
+    nav_btn("🔗 BTC Correlatie", "correlatie")
 
     st.markdown('<div class="nav-header" style="margin-top:8px;">💼 Systeem</div>', unsafe_allow_html=True)
-    nav_btn("◉ Portfolio",            "portfolio")
-    nav_btn("◉ Pre-BUY Signals",      "signals")
-    nav_btn("◉ Scoreboard",           "scoreboard")
-    nav_btn("◉ BTC Regime",           "regime")
-    nav_btn("◉ Instellingen",         "settings")
-    nav_btn("◉ Help & Debug",         "help")
+    nav_btn("💼 Portfolio", "portfolio")
+    nav_btn("⚡ Pre-BUY Signals", "signals")
+    nav_btn("🏆 Scoreboard", "scoreboard")
+    nav_btn("₿ BTC Regime", "regime")
+    nav_btn("⚙️ Instellingen", "settings")
+    nav_btn("🔧 Help & Debug", "help")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -4168,7 +4040,7 @@ def render_trade_list(df: pd.DataFrame, title: str = "Trades") -> None:
         trade_id = safe_str(row.get("trade_id"))
         outcome  = safe_str(row.get("outcome"))
         pnl      = safe_float(row.get("pnl_r"))
-        color    = "#34d399" if outcome == "WIN" else "#fb7185" if outcome == "LOSS" else "#94a3b8"
+        color    = "#00e676" if outcome == "WIN" else "#ff2d55" if outcome == "LOSS" else "#6e7a9a"
         label    = (
             f"[{outcome}] {safe_str(row.get('symbol'))} | "
             f"{safe_str(row.get('setup_type'))} | "
@@ -4202,7 +4074,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     is_real   = trade_type in ("REAL","LIVE")
     rr        = abs(target - entry) / max(abs(entry - stop), 0.0001) if entry > 0 and stop > 0 and target > 0 else 0.0
 
-    outcome_color = "#34d399" if outcome == "WIN" else "#fb7185" if outcome == "LOSS" else "#94a3b8"
+    outcome_color = "#00e676" if outcome == "WIN" else "#ff2d55" if outcome == "LOSS" else "#6e7a9a"
 
     st.markdown(f"""
     <div class="trade-chip-row">
@@ -4315,7 +4187,7 @@ def render_top_bar(
             <div class="brand-mark"></div>
             <div>
                 <div class="brand-title">Crypto AI Terminal</div>
-                <div class="brand-sub">Bloomberg Terminal Stijl v3.0</div>
+                <div class="brand-sub">Cyber Neon Command Center v3.0</div>
             </div>
         </div>
         <div class="top-status-row">
@@ -4345,6 +4217,37 @@ def render_dashboard(
 ) -> None:
     """Dashboard pagina — hero metrics + grafieken + trade tape."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
+
+    # ── SYSTEEM STATUS BAR — live indicators ─────────────────
+    scanner = get_scanner_status()
+    mins    = scanner.get("mins_since_scan", -1)
+    scan_ok = mins >= 0 and mins < 20
+    scan_cls = "status-ok" if scan_ok else "status-warn" if mins < 60 else "status-bad"
+    scan_txt = f"{mins}m geleden" if mins >= 0 else "onbekend"
+    sig_pend = scanner.get("signals_pending", 0)
+    sig_tot  = scanner.get("signals_today", 0)
+
+    btc_d     = get_btc_regime()
+    btc_r     = safe_str(btc_d.get("regime"), "?")
+    btc_s     = safe_float(btc_d.get("strength"))
+    btc_cls   = {"BULL":"status-ok","BEAR":"status-bad","RANGE":"status-warn"}.get(btc_r, "status-warn")
+
+    open_live = get_open_live_count_direct()
+    db_cls    = "status-ok" if db_ready() else "status-bad"
+
+    st.markdown(f"""
+    <div class="bot-status-bar">
+        <span class="small-muted">⬡ SYSTEEM</span>
+        <span class="{db_cls}">DB {"✓" if db_ready() else "✗"}</span>
+        <span class="{scan_cls}">SCANNER {scan_txt}</span>
+        <span class="{btc_cls}">BTC {btc_r} {btc_s:.0f}%</span>
+        <span class="status-ok">⚡ {sig_pend} signals actief</span>
+        <span class="status-ok">📂 {open_live} open trades</span>
+        <span style="color:var(--muted);font-size:11px;margin-left:auto;">
+            vandaag: {sig_tot} signalen gegenereerd
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── PERMANENTE WIN/LOSS BAR ──────────────────────────────
     render_overall_winloss_bar(history_df)
@@ -4593,9 +4496,9 @@ def render_trade_page(
         # Kleur uitkomst kolom
         def kleur_uitkomst(val):
             if str(val).upper() == "WIN":
-                return "color: #2ecc71"
+                return "color: #00e676"
             elif str(val).upper() == "LOSS":
-                return "color: #e74c3c"
+                return "color: #ff2d55"
             return ""
 
         styled = weergave.style.applymap(kleur_uitkomst, subset=["Uitkomst"]) if "Uitkomst" in weergave.columns else weergave
@@ -4968,7 +4871,7 @@ def render_settings_page() -> None:
             ("history_fetcher",     "Cron Job",          "history_fetcher.py"),
         ]
         for name, stype, file in services:
-            st.markdown(f'<div class="list-row"><div class="list-left"><b>{name}</b><br><span style="color:#555;font-size:10px">{file}</span></div><div class="list-right" style="color:#94a3b8">{stype}</div></div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="list-row"><div class="list-left"><b>{name}</b><br><span style="color:#555;font-size:10px">{file}</span></div><div class="list-right" style="color:#6e7a9a">{stype}</div></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("#### 🔗 Bot Architectuur")
@@ -5090,7 +4993,7 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
 
     with col_titel:
         st.markdown(
-            '<div style="padding-top:10px;color:#94a3b8;font-size:10px;'
+            '<div style="padding-top:10px;color:#6e7a9a;font-size:10px;'
             'font-weight:900;text-transform:uppercase;letter-spacing:0.06em;">'
             'WIN %<br>LOSS %</div>',
             unsafe_allow_html=True,
@@ -5111,17 +5014,17 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
 
         with col:
             st.markdown(
-                f'<div style="background:rgba(255,255,255,0.04);'
-                f'border:1px solid rgba(255,255,255,0.08);'
+                f'<div style="background:rgba(0,212,255,0.04);'
+                f'border:1px solid rgba(0,212,255,0.07);'
                 f'border-radius:12px;padding:8px 10px;">' 
-                f'<div style="color:#94a3b8;font-size:10px;font-weight:700;'
+                f'<div style="color:#6e7a9a;font-size:10px;font-weight:700;'
                 f'text-transform:uppercase;">{emoji} {label}</div>'
                 f'<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">'
-                f'<span style="color:#34d399;font-size:15px;font-weight:900;">{win_pct:.1f}%</span>'
+                f'<span style="color:#00e676;font-size:15px;font-weight:900;">{win_pct:.1f}%</span>'
                 f'<span style="color:#555;font-size:12px;">|</span>'
-                f'<span style="color:#fb7185;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
+                f'<span style="color:#ff2d55;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
                 f'</div>'
-                f'<div style="color:#94a3b8;font-size:10px;margin-top:3px;">'
+                f'<div style="color:#6e7a9a;font-size:10px;margin-top:3px;">'
                 f'{wins}W / {losses}L — {total} trades</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -5188,17 +5091,17 @@ def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
     st.markdown(f"""
     <div class="metric-card orange-accent">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div style="color:#94a3b8;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
+            <div style="color:#6e7a9a;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
             <span class="top-status-chip {pnl_cls}">{pnl_sign}€{abs(pnl):.2f} vandaag</span>
         </div>
         <div style="color:#ffffff;font-size:18px;font-weight:900;margin-bottom:2px;">
             {budget['trades_today']}/{budget['max_trades']} trades
         </div>
-        <div style="color:#94a3b8;font-size:11px;margin-bottom:6px;">
+        <div style="color:#6e7a9a;font-size:11px;margin-bottom:6px;">
             Verliesruimte: €{budget['verlies_abs']:.2f} / €{budget['budget_max']:.2f} gebruikt
         </div>
         <div class="budget-bar">
-            <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#ff8c00,#fbbf24);"></div>
+            <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#00d4ff,#ffe600);"></div>
         </div>
         <div style="color:#555;font-size:10px;margin-top:3px;">{trades_pct:.0f}% daglimiet gebruikt</div>
         <div class="budget-bar" style="margin-top:4px;">
@@ -5265,8 +5168,8 @@ def render_open_positions_page() -> None:
         is_profit = float_pnl >= 0
         card_cls  = "tc-win" if is_profit else "tc-loss"
         pnl_sign  = "+" if is_profit else ""
-        pnl_color = "#34d399" if is_profit else "#fb7185"
-        r_color   = "#34d399" if float_r >= 0 else "#fb7185"
+        pnl_color = "#00e676" if is_profit else "#ff2d55"
+        r_color   = "#00e676" if float_r >= 0 else "#ff2d55"
         hold_str  = f"{int(hold_min//60)}h {int(hold_min%60)}m" if hold_min > 60 else f"{int(hold_min)}m"
 
         pnl_pct = (float_pnl / max(amount, 0.001)) * 100
@@ -5286,11 +5189,11 @@ def render_open_positions_page() -> None:
             <div style="display:flex;gap:16px;flex-wrap:wrap;">
                 <div><span style="color:#555;font-size:10px;">ENTRY</span><br><span style="color:#fff;font-size:12px;font-weight:700;">{format_price(entry)}</span></div>
                 <div><span style="color:#555;font-size:10px;">NU</span><br><span style="color:{pnl_color};font-size:12px;font-weight:700;">{format_price(current) if current > 0 else '?'}</span></div>
-                <div><span style="color:#555;font-size:10px;">STOP</span><br><span style="color:#fb7185;font-size:12px;font-weight:700;">{format_price(stop)}</span></div>
-                <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#34d399;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
-                <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#60a5fa;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
-                <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#94a3b8;font-size:12px;font-weight:700;">{hold_str}</span></div>
-                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#94a3b8;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
+                <div><span style="color:#555;font-size:10px;">STOP</span><br><span style="color:#ff2d55;font-size:12px;font-weight:700;">{format_price(stop)}</span></div>
+                <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#00e676;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
+                <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#00d4ff;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
+                <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#6e7a9a;font-size:12px;font-weight:700;">{hold_str}</span></div>
+                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#6e7a9a;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -5614,14 +5517,14 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             st.plotly_chart(chart_btc_correlation_bar(history_df), use_container_width=True, config={"displayModeBar":False}, key="corr_chart")
         with cc2:
             if not corr_df.empty:
-                color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
+                color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
                 for _, row in corr_df.iterrows():
                     regime  = safe_str(row.get("regime")).upper()
                     wr      = safe_float(row.get("win_rate"))
                     n       = safe_int(row.get("n"))
                     avg_r   = safe_float(row.get("avg_r"))
                     bar_w   = min(wr, 100)
-                    bar_col = color_map.get(regime, "#60a5fa")
+                    bar_col = color_map.get(regime, "#00d4ff")
                     st.markdown(f"""
                     <div class="corr-row">
                         <div class="corr-label">{regime}</div>
@@ -5726,7 +5629,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         n_trades  = int(count_per_dag.get(dag_str, 0))
         n_wins    = int(wins_per_dag.get(dag_str, 0))
         is_vandaag = dag_str == now.strftime("%Y-%m-%d")
-        vandaag_border = "border:2px solid #f39c12;" if is_vandaag else ""
+        vandaag_border = "border:2px solid #ffe600;" if is_vandaag else ""
 
         if pnl_val is None or n_trades == 0:
             cells.append(f'<div class="cal-day cal-flat" style="{vandaag_border}">{day_num}</div>')
@@ -5735,10 +5638,10 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
             tooltip   = f"+{pnl_val:.2f}R | {n_wins}/{n_trades} wins"
             cells.append(
                 f'<div class="cal-day cal-win" '
-                f'style="background:rgba(52,211,153,0.{intensity:02d});{vandaag_border}" '
+                f'style="background:rgba(0,230,118,0.{intensity:02d});{vandaag_border}" '
                 f'title="{tooltip}">'
                 f'{day_num}'
-                f'<div style="font-size:9px;color:rgba(52,211,153,0.9);">+{pnl_val:.1f}R</div>'
+                f'<div style="font-size:9px;color:rgba(0,230,118,0.9);">+{pnl_val:.1f}R</div>'
                 f'</div>'
             )
             month_wins += 1
@@ -5750,10 +5653,10 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
             tooltip   = f"{pnl_val:.2f}R | {n_wins}/{n_trades} wins"
             cells.append(
                 f'<div class="cal-day cal-loss" '
-                f'style="background:rgba(239,68,68,0.{intensity:02d});{vandaag_border}" '
+                f'style="background:rgba(255,45,85,0.{intensity:02d});{vandaag_border}" '
                 f'title="{tooltip}">'
                 f'{day_num}'
-                f'<div style="font-size:9px;color:rgba(239,68,68,0.9);">{pnl_val:.1f}R</div>'
+                f'<div style="font-size:9px;color:rgba(255,45,85,0.9);">{pnl_val:.1f}R</div>'
                 f'</div>'
             )
             month_losses += 1
@@ -5813,8 +5716,8 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#2ecc71;">{dag}</b> — '
-                        f'<span style="color:#f39c12;">+{r:.2f}R</span> | {n} trades'
+                        f'<b style="color:#00e676;">{dag}</b> — '
+                        f'<span style="color:#ffe600;">+{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -5824,8 +5727,8 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#e74c3c;">{dag}</b> — '
-                        f'<span style="color:#e74c3c;">{r:.2f}R</span> | {n} trades'
+                        f'<b style="color:#ff2d55;">{dag}</b> — '
+                        f'<span style="color:#ff2d55;">{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -5887,7 +5790,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     with cc2:
         corr_df = get_btc_correlation(history_df)
         if not corr_df.empty:
-            color_map = {"BULL":"#34d399","BEAR":"#fb7185","RANGE":"#fbbf24"}
+            color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
             st.markdown('<div class="section-title" style="font-size:15px;">Win Rate per Regime</div>', unsafe_allow_html=True)
             for _, row in corr_df.iterrows():
                 regime = safe_str(row.get("regime")).upper()
@@ -5895,7 +5798,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                 n      = safe_int(row.get("n"))
                 avg_r  = safe_float(row.get("avg_r"))
                 bar_w  = min(wr, 100)
-                bar_c  = color_map.get(regime, "#60a5fa")
+                bar_c  = color_map.get(regime, "#00d4ff")
                 emoji  = {"BULL":"🟢","BEAR":"🔴","RANGE":"🟡"}.get(regime,"⚪")
                 st.markdown(f"""
                 <div class="corr-row">
@@ -6101,10 +6004,10 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     st.session_state.coach_context = context
 
     # Context samenvatting bovenaan
-    pnl_kleur  = "#34d399" if context.get("pnl_vandaag", 0) >= 0 else "#fb7185"
+    pnl_kleur  = "#00e676" if context.get("pnl_vandaag", 0) >= 0 else "#ff2d55"
     pnl_sign   = "+" if context.get("pnl_vandaag", 0) >= 0 else ""
-    pf_kleur   = "#34d399" if context.get("profit_factor_30", 0) >= 1.5 else "#fb7185"
-    str_kleur  = "#fb7185" if context.get("cons_losses", 0) >= 3 else "#ffffff"
+    pf_kleur   = "#00e676" if context.get("profit_factor_30", 0) >= 1.5 else "#ff2d55"
+    str_kleur  = "#ff2d55" if context.get("cons_losses", 0) >= 3 else "#ffffff"
 
     st.markdown(f"""
     <div class="chat-context-card">
@@ -6112,7 +6015,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
         <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;">
             <span>Bot: <b style="color:#fff">{context.get('bot_status','?')}</b></span>
             <span>BTC: <b style="color:#fff">{context.get('btc_regime','?')}</b></span>
-            <span>Win rate: <b style="color:#34d399">{context.get('real_winrate',0):.1f}%</b> live</span>
+            <span>Win rate: <b style="color:#00e676">{context.get('real_winrate',0):.1f}%</b> live</span>
             <span>PnL vandaag: <b style="color:{pnl_kleur}">{pnl_sign}€{abs(context.get('pnl_vandaag',0)):.4f}</b></span>
             <span>PF 30d: <b style="color:{pf_kleur}">{context.get('profit_factor_30',0):.2f}</b></span>
             <span>Streak: <b style="color:{str_kleur}">{context.get('cons_losses',0)}x verlies</b></span>
@@ -6301,6 +6204,19 @@ btc_regime_data = get_btc_regime()
 source_mode     = "DB" if db_ready() else "DEMO"
 
 # Dagelijks PnL via lichte query — beperkt tot vandaag
+@st.cache_data(ttl=20, show_spinner=False)
+def get_open_live_count_direct() -> int:
+    """Realtime open live trades voor dashboard status bar."""
+    if not db_ready():
+        return 0
+    result = run_scalar("""
+        SELECT COUNT(*) FROM public.experience_trades
+        WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+          AND UPPER(COALESCE(outcome,'OPEN')) NOT IN ('WIN','LOSS','CANCELLED')
+    """, default=0)
+    return safe_int(result)
+
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_pnl_today_light() -> float:
     if not db_ready():
@@ -6420,6 +6336,9 @@ else:
 
         elif page == "controls":
             render_controls_page()
+
+        elif page == "live_monitor":
+            render_live_monitor()
 
         elif page == "live":
             with st.spinner("Live trades laden..."):
