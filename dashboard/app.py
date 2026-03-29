@@ -267,6 +267,39 @@ p,li,span{color:#8090b0!important;} .stCaption{color:#4a5568!important;font-size
 
 
 # ============================================================
+# SESSION STATE — alle keys geïnitialiseerd bij opstarten
+# Streamlit crasht als je een key gebruikt die niet bestaat.
+# Elke st.session_state.xxx die in de code gebruikt wordt
+# MOET hier gedefinieerd staan met een default waarde.
+# ============================================================
+SESSION_DEFAULTS: dict = {
+    "page":                      "dashboard",
+    "selected_page_trade_id":    None,
+    "status_notice":             "",
+    "show_debug":                False,
+    "search_text":               "",
+    "global_days_filter":        "ALLES",
+    "global_trade_type_filter":  "ALLES",
+    "global_setup_filter":       "ALLES",
+    "global_regime_filter":      "ALLES",
+    "global_outcome_filter":     "ALLES",
+    "global_symbol_filter":      "ALLES",
+    "debug_events":              [],
+    "last_error_text":           "",
+    "auto_refresh":              False,
+    "refresh_interval":          30,
+    "portfolio_search":          "",
+    "coach_messages":            [],
+    "coach_context":             {},
+    "lm_last":                   0.0,
+}
+# Initialiseer alle keys die nog niet bestaan
+for _k, _v in SESSION_DEFAULTS.items():
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
+
+
+# ============================================================
 # CONFIGURATIE — via Render Environment Variables
 # ============================================================
 API_KEY              = (os.getenv("BITVAVO_API_KEY", "") or "").strip().strip('"\'')
@@ -1307,7 +1340,6 @@ def get_scanner_status() -> Dict[str, Any]:
     return result
 
 
-@st.cache_data(ttl=20, show_spinner=False)
 def get_dagbudget_status(real_df: pd.DataFrame) -> Dict[str, Any]:
     """
     Berekent hoeveel van het dagbudget gebruikt is.
@@ -1406,7 +1438,6 @@ def get_blacklist_cooldown_coins() -> Dict[str, List[Dict]]:
     }
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_fee_stats(real_df: pd.DataFrame) -> Dict[str, float]:
     """
     Schat totale fees betaald op basis van trades.
@@ -1438,7 +1469,6 @@ def get_fee_stats(real_df: pd.DataFrame) -> Dict[str, float]:
     }
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_best_worst_trades(df: pd.DataFrame, n: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Geeft de N beste en slechtste trades terug op basis van pnl_r."""
     if df.empty:
@@ -1452,7 +1482,6 @@ def get_best_worst_trades(df: pd.DataFrame, n: int = 5) -> Tuple[pd.DataFrame, p
     return best, worst
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_streak_history(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
     Berekent alle win/loss streaks in de trade geschiedenis.
@@ -1489,7 +1518,6 @@ def get_streak_history(df: pd.DataFrame) -> List[Dict[str, Any]]:
     return streaks
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_avg_hold_time(df: pd.DataFrame) -> pd.DataFrame:
     """Gemiddelde houdtijd per setup type in minuten."""
     if df.empty:
@@ -1511,7 +1539,6 @@ def get_avg_hold_time(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_rolling_winrate(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     """Rolling win rate over de laatste N trades."""
     if df.empty:
@@ -1526,7 +1553,6 @@ def get_rolling_winrate(df: pd.DataFrame, window: int = 20) -> pd.DataFrame:
     return work[["_datetime_raw","rolling_wr"]].dropna()
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_btc_correlation(df: pd.DataFrame) -> pd.DataFrame:
     """
     Berekent win rate per BTC regime.
@@ -1551,7 +1577,6 @@ def get_btc_correlation(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_trade_frequency(df: pd.DataFrame) -> pd.DataFrame:
     """Aantal trades per dag voor de laatste 30 dagen."""
     if df.empty:
@@ -1587,7 +1612,6 @@ def get_recovery_factor(df: pd.DataFrame) -> float:
     return round(total_r / max_dd, 2)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float]:
     """P&L per dag voor de kalender heatmap."""
     if df.empty:
@@ -1634,7 +1658,7 @@ def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
         fillcolor="rgba(255,45,85,0.12)",
         hovertemplate="Drawdown: <b>%{y:.2f}R</b><extra></extra>",
     ))
-    fig.add_hline(y=0, line_color=ZERO_COLOR, line_width=1)
+    fig.add_hline(y=0, line_color=ZEROLINE, line_width=1)
     return style_fig(fig, 280, title)
 
 
@@ -1654,9 +1678,9 @@ def chart_rolling_winrate(df: pd.DataFrame, window: int = 20) -> go.Figure:
     ))
     fig.add_hline(
         y=50, line_dash="dash",
-        line_color=ZERO_COLOR,
+        line_color=ZEROLINE,
         annotation_text="50%",
-        annotation_font_color=MUTED_COLOR,
+        annotation_font_color=TXT_DIM,
     )
     fig.add_hline(
         y=60, line_dash="dot",
@@ -1875,7 +1899,9 @@ def bitvavo_request(method: str, path: str, body: str = "") -> Any:
     ts  = str(int(time.time() * 1000))
     msg = f"{ts}{m}{path}{body}"
     sig = hmac.new(
-        API_SECRET.encode("utf-8"),
+        API_SECRET.encode("utf-8",
+        digestmod=hashlib.sha256,
+    ),
         msg.encode("utf-8"),
         digestmod=hashlib.sha256,  # FIX: digestmod vereist
     ).hexdigest()
@@ -2010,7 +2036,7 @@ def empty_fig(msg: str = "Geen data", height: int = 300) -> go.Figure:
             x=0.5, y=0.5,
             xref="paper", yref="paper",
             showarrow=False,
-            font=dict(color=MUTED_COLOR, size=12, family="Courier New, monospace"),
+            font=dict(color=TXT_DIM, size=12, family="Courier New, monospace"),
         )],
         xaxis=dict(visible=False, showgrid=False),
         yaxis=dict(visible=False, showgrid=False),
@@ -2025,7 +2051,7 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(3,3,12,0.60)",
-        font=dict(color=TEXT_COLOR, family="Courier New, monospace", size=11),
+        font=dict(color=TXT_MAIN, family="Courier New, monospace", size=11),
         height=height,
         margin=dict(l=22, r=18, t=42, b=22),
         title=dict(
@@ -2034,20 +2060,20 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
         ),
         legend=dict(
             orientation="h", yanchor="bottom", y=1.02, x=0.0,
-            font=dict(size=11, color=TEXT_COLOR),
+            font=dict(size=11, color=TXT_MAIN),
             bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(
-            gridcolor=GRID_COLOR,
-            zerolinecolor=ZERO_COLOR,
+            gridcolor=GRID,
+            zerolinecolor=ZEROLINE,
             linecolor="rgba(0,212,255,0.10)",
-            tickfont=dict(color=MUTED_COLOR, size=10),
+            tickfont=dict(color=TXT_DIM, size=10),
         ),
         yaxis=dict(
-            gridcolor=GRID_COLOR,
-            zerolinecolor=ZERO_COLOR,
+            gridcolor=GRID,
+            zerolinecolor=ZEROLINE,
             linecolor="rgba(0,212,255,0.10)",
-            tickfont=dict(color=MUTED_COLOR, size=10),
+            tickfont=dict(color=TXT_DIM, size=10),
         ),
     )
     return fig
@@ -2084,7 +2110,7 @@ def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figu
     fig.add_hline(
         y=0,
         line_dash="dash",
-        line_color=ZERO_COLOR,
+        line_color=ZEROLINE,
         line_width=1,
     )
     return style_fig(fig, 320, title)
@@ -2108,7 +2134,7 @@ def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure
         ),
         text=[f"{w}", f"{l}"],
         textposition="outside",
-        textfont=dict(color=TEXT_COLOR, size=13),
+        textfont=dict(color=TXT_MAIN, size=13),
         hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 280, title)
@@ -2168,7 +2194,7 @@ def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.F
         marker=dict(color=colors, line=dict(width=0)),
         text=counts["n"],
         textposition="outside",
-        textfont=dict(color=TEXT_COLOR, size=12),
+        textfont=dict(color=TXT_MAIN, size=12),
         hovertemplate="Regime: <b>%{x}</b><br>Coins: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 260, title)
@@ -2180,8 +2206,8 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.F
     loss = 100.0 - win
     # Kleur: groen als >50%, rood als <50%, neutraal grijs als geen data
     has_data = (win + loss) > 0.01
-    kleur_win  = C_GREEN  if has_data and win  >= 50 else (C_GREEN  if has_data else MUTED_COLOR)
-    kleur_loss = C_RED    if has_data and loss > 0   else MUTED_COLOR
+    kleur_win  = C_GREEN  if has_data and win  >= 50 else (C_GREEN  if has_data else TXT_DIM)
+    kleur_loss = C_RED    if has_data and loss > 0   else TXT_DIM
     track_color = "rgba(0,212,255,0.04)"
 
     fig = go.Figure(go.Pie(
@@ -2193,12 +2219,12 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.F
         rotation=270,
         textinfo="none",
         marker=dict(
-            colors=[kleur_win, kleur_loss] if has_data else [MUTED_COLOR, "rgba(0,212,255,0.03)"],
+            colors=[kleur_win, kleur_loss] if has_data else [TXT_DIM, "rgba(0,212,255,0.03)"],
             line=dict(width=0),
         ),
         showlegend=False,
     ))
-    win_kleur_html = C_GREEN if has_data and win >= 50 else (C_RED if has_data else MUTED_COLOR)
+    win_kleur_html = C_GREEN if has_data and win >= 50 else (C_RED if has_data else TXT_DIM)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -2214,12 +2240,12 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.F
             dict(
                 text=f"<b>{title}</b>",
                 x=0.5, y=0.42, showarrow=False,
-                font=dict(color=TEXT_COLOR, size=13, family="Courier New, monospace"),
+                font=dict(color=TXT_MAIN, size=13, family="Courier New, monospace"),
             ),
             dict(
                 text=format_money(net_eur) if has_data else "geen data",
                 x=0.5, y=0.27, showarrow=False,
-                font=dict(color=MUTED_COLOR, size=11, family="Courier New, monospace"),
+                font=dict(color=TXT_DIM, size=11, family="Courier New, monospace"),
             ),
         ],
     )
@@ -2243,19 +2269,19 @@ def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
             colors=PORTFOLIO_COLORS[:len(work)],
             line=dict(width=0),
         ),
-        textfont=dict(color=TEXT_COLOR, family="Courier New, monospace", size=11),
+        textfont=dict(color=TXT_MAIN, family="Courier New, monospace", size=11),
         hovertemplate="<b>%{label}</b><br>€%{value:.2f}<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT_COLOR, family="Courier New, monospace"),
+        font=dict(color=TXT_MAIN, family="Courier New, monospace"),
         margin=dict(l=16, r=16, t=40, b=16),
         height=320,
         showlegend=True,
         legend=dict(
             orientation="h", y=-0.08, x=0.5, xanchor="center",
-            font=dict(color=MUTED_COLOR, size=10),
+            font=dict(color=TXT_DIM, size=10),
             bgcolor="rgba(0,0,0,0)",
         ),
     )
@@ -2274,14 +2300,14 @@ def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         text=top["n"].astype(int),
         textposition="outside",
-        textfont=dict(color=TEXT_COLOR, size=11),
+        textfont=dict(color=TXT_MAIN, size=11),
         hovertemplate="Setup/Regime: <b>%{x}</b><br>Win rate: <b>%{y:.1f}%%</b><br>N: %{text}<extra></extra>",
     ))
     fig.add_hline(
         y=50, line_dash="dash",
-        line_color=ZERO_COLOR,
+        line_color=ZEROLINE,
         annotation_text="50% drempel",
-        annotation_font_color=MUTED_COLOR,
+        annotation_font_color=TXT_DIM,
     )
     return style_fig(fig, 300, "Scoreboard Win Rate")
 
@@ -2298,7 +2324,7 @@ def chart_pending_scores(df: pd.DataFrame) -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         text=df["score"],
         textposition="outside",
-        textfont=dict(color=TEXT_COLOR, size=12),
+        textfont=dict(color=TXT_MAIN, size=12),
         hovertemplate="Coin: <b>%{x}</b><br>Score: <b>%{y}</b><extra></extra>",
     ))
     fig.add_hline(
@@ -2563,12 +2589,12 @@ def load_trade_flow_7d() -> Dict:
         v = run_scalar(sql)
         return int(v) if v is not None else default
 
-    signalen    = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE aangemaakt >= NOW() - INTERVAL '7 days'")
-    goedgekeurd = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE UPPER(COALESCE(status,'')) = 'APPROVED' AND aangemaakt >= NOW() - INTERVAL '7 days'")
+    signalen    = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE created_at >= NOW() - INTERVAL '7 days'")
+    goedgekeurd = sc("SELECT COUNT(*) FROM public.pending_approvals WHERE UPPER(COALESCE(status,'')) = 'APPROVED' AND created_at >= NOW() - INTERVAL '7 days'")
     verlopen    = sc("""SELECT COUNT(*) FROM public.pending_approvals
-                        WHERE COALESCE(expires_at, aangemaakt + INTERVAL '4 hours') < NOW()
+                        WHERE COALESCE(expires_at, created_at + INTERVAL '4 hours') < NOW()
                           AND UPPER(COALESCE(status,'PENDING')) = 'PENDING'
-                          AND aangemaakt >= NOW() - INTERVAL '7 days'""")
+                          AND created_at >= NOW() - INTERVAL '7 days'""")
     live_trades = sc("SELECT COUNT(*) FROM public.experience_trades WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE') AND COALESCE(created_at, entry_time) >= NOW() - INTERVAL '7 days'")
     gesloten    = sc("SELECT COUNT(*) FROM public.experience_trades WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE') AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS') AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '7 days'")
 
@@ -3071,12 +3097,12 @@ def render_health_page() -> None:
         },
         {
             "naam": "BTC Regime 4H",
-            "sql": "SELECT MAX(created_at) FROM public.btc_regime_4h",
+            "sql": "SELECT MAX(open_time) FROM public.btc_regime_4h",
             "max_uren": 5,
         },
         {
             "naam": "Pending Signals",
-            "sql": "SELECT MAX(aangemaakt) FROM public.pending_approvals",
+            "sql": "SELECT MAX(created_at) FROM public.pending_approvals",
             "max_uren": 4,
         },
         {
@@ -3688,12 +3714,12 @@ def render_live_monitor() -> None:
             balk_css  = ("var(--win)" if r_pct >= 50 else "var(--warn)" if r_pct >= 25 else "var(--loss)")
 
             # Score chip
-            s_css   = C_WIN if score_v >= 90 else C_WARN if score_v >= 75 else MUTED_COLOR
+            s_css   = C_WIN if score_v >= 90 else C_WARN if score_v >= 75 else TXT_DIM
             score_chip = (f'<span style="background:rgba(0,0,0,0.35);border-radius:999px;padding:2px 7px;'
                           f'font-size:10px;font-weight:900;color:{s_css};border:1px solid {s_css}44;">'
                           f'SCORE {score_v:.0f}</span>' if score_v > 0 else "")
 
-            r_css   = {"BULL": C_WIN, "BEAR": C_LOSS, "RANGE": C_WARN}.get(regime_v.upper(), MUTED_COLOR)
+            r_css   = {"BULL": C_WIN, "BEAR": C_LOSS, "RANGE": C_WARN}.get(regime_v.upper(), TXT_DIM)
             reg_chip = (f'<span style="background:rgba(0,0,0,0.35);border-radius:999px;padding:2px 7px;'
                         f'font-size:10px;font-weight:700;color:{r_css};border:1px solid {r_css}44;margin-left:4px;">'
                         f'{regime_v}</span>' if regime_v not in ("-", "UNKNOWN", "") else "")
@@ -3834,7 +3860,7 @@ def render_live_monitor() -> None:
         )
         for cd in top5[:5]:
             sc_v = safe_int(cd.get("score"))
-            sc_c = C_WIN if sc_v >= 90 else C_WARN if sc_v >= 75 else MUTED_COLOR
+            sc_c = C_WIN if sc_v >= 90 else C_WARN if sc_v >= 75 else TXT_DIM
             st.markdown(
                 f'<div class="score-row">'
                 f'<div class="score-left">{safe_str(cd.get("symbol"))}</div>'
@@ -4216,6 +4242,7 @@ def render_dashboard(
     source_mode: str,
 ) -> None:
     """Dashboard pagina — hero metrics + grafieken + trade tape."""
+    render_alarm_banner()
     st.markdown('<div class="panel">', unsafe_allow_html=True)
 
     # ── SYSTEEM STATUS BAR — live indicators ─────────────────
@@ -4501,7 +4528,7 @@ def render_trade_page(
                 return "color: #ff2d55"
             return ""
 
-        styled = weergave.style.applymap(kleur_uitkomst, subset=["Uitkomst"]) if "Uitkomst" in weergave.columns else weergave
+        styled = weergave.style.map(kleur_uitkomst, subset=["Uitkomst"]) if "Uitkomst" in weergave.columns else weergave
         st.dataframe(styled, hide_index=True, use_container_width=True)
 
     csv = filtered.to_csv(index=False).encode("utf-8")
@@ -5207,6 +5234,7 @@ def render_open_positions_page() -> None:
 # ANALYSE PAGINA — drawdown, rolling WR, recovery, streaks
 # ============================================================
 def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
+    render_alarm_banner()
     """Diepgaande analyse pagina met alle geavanceerde metrics."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">📉 Diepgaande Analyse</div>', unsafe_allow_html=True)
