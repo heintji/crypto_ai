@@ -232,10 +232,13 @@ def safe_rollback(conn) -> None:
 def ensure_market_regime_table(conn) -> None:
     """
     Maakt market_regime tabel aan als die nog niet bestaat.
-    Inclusief indexes voor snelle opzoekacties.
+    Voegt ook ontbrekende kolommen toe via ALTER TABLE migratie.
+    Zo werkt het script ook als de tabel al bestaat maar nieuwere
+    kolommen mist (bijv. strength, slope50, slope200, score).
     """
     try:
         with conn.cursor() as cur:
+            # Stap 1: tabel aanmaken als die niet bestaat
             cur.execute("""
             CREATE TABLE IF NOT EXISTS public.market_regime (
                 symbol      TEXT             NOT NULL,
@@ -251,6 +254,32 @@ def ensure_market_regime_table(conn) -> None:
                 updated_at  TIMESTAMPTZ      DEFAULT NOW(),
                 PRIMARY KEY (symbol, timeframe)
             );
+            """)
+        conn.commit()
+
+        # Stap 2: migratie — voeg ontbrekende kolommen toe
+        # ALTER TABLE ADD COLUMN IF NOT EXISTS is veilig: doet niets
+        # als de kolom al bestaat. Zo werkt het altijd correct.
+        migraties = [
+            ("strength",   "DOUBLE PRECISION DEFAULT 0.0"),
+            ("sma50",      "DOUBLE PRECISION"),
+            ("sma200",     "DOUBLE PRECISION"),
+            ("slope50",    "DOUBLE PRECISION"),
+            ("slope200",   "DOUBLE PRECISION"),
+            ("score",      "INTEGER DEFAULT 0"),
+            ("updated_at", "TIMESTAMPTZ DEFAULT NOW()"),
+        ]
+        with conn.cursor() as cur:
+            for kolom, definitie in migraties:
+                cur.execute(f"""
+                ALTER TABLE public.market_regime
+                ADD COLUMN IF NOT EXISTS {kolom} {definitie};
+                """)
+        conn.commit()
+
+        # Stap 3: indexes aanmaken als die niet bestaan
+        with conn.cursor() as cur:
+            cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_market_regime_symbol_ts
                 ON public.market_regime (symbol, asof_ts DESC);
             CREATE INDEX IF NOT EXISTS idx_market_regime_regime
@@ -259,10 +288,12 @@ def ensure_market_regime_table(conn) -> None:
                 ON public.market_regime (updated_at DESC);
             """)
         conn.commit()
-        log("✅ market_regime tabel gecontroleerd/aangemaakt")
+
+        log("✅ market_regime tabel + migraties klaar")
+
     except Exception as e:
         safe_rollback(conn)
-        log(f"⚠️ Tabel aanmaken fout: {e}")
+        log(f"⚠️ Tabel/migratie fout: {e}")
         raise
 
 
