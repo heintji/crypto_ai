@@ -1635,7 +1635,19 @@ def cleanup_verlopen_pending(conn) -> int:
 # PRE-BUY AANMAKEN EN AUTO BUY
 # ============================================================
 def zorg_voor_pending_tabel(conn) -> None:
-    """Maakt pending_approvals tabel aan als die niet bestaat. v3.0: extra kolommen."""
+    """
+    Maakt pending_approvals tabel aan als die niet bestaat.
+    Statement timeout tijdelijk op 0 gezet — CREATE TABLE + ALTER TABLE
+    kunnen langer duren dan de standaard 8 seconden timeout.
+    """
+    # Tijdelijk timeout uitzetten voor tabel/migratie operaties
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SET statement_timeout = 0")
+        conn.commit()
+    except Exception:
+        safe_rollback(conn)
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
