@@ -383,12 +383,43 @@ def claude_dagrapport(n_live: int, n_shadow: int, dagpnl: float,
 # ============================================================
 # DATABASE
 # ============================================================
-def db_connect():
+def db_connect(retries: int = 3):
+    """
+    Verbindt met PostgreSQL. Retries bij fout. autocommit=False.
+    FIX: geen retries en geen autocommit=False in vorige versie.
+    """
     if not DATABASE_URL:
         raise RuntimeError("DATABASE_URL ontbreekt.")
-    return psycopg2.connect(DATABASE_URL, connect_timeout=8,
-                            options="-c statement_timeout=8000",
-                            sslmode="require")
+    for poging in range(1, retries + 1):
+        try:
+            conn = psycopg2.connect(
+                DATABASE_URL,
+                connect_timeout=8,
+                options="-c statement_timeout=8000",
+                sslmode="require",
+            )
+            conn.autocommit = False
+            return conn
+        except Exception as e:
+            log(f"DB verbinding poging {poging}/{retries} mislukt: {e}")
+            if poging < retries:
+                time.sleep(3)
+    raise RuntimeError(f"DB verbinding mislukt na {retries} pogingen.")
+
+def safe_rollback(conn) -> None:
+    """
+    Voert rollback uit zonder te crashen.
+    Altijd aanroepen na een DB fout voor je doorgaat.
+    Zonder rollback blijft de transactie in ABORTED state en
+    mislukken ALLE volgende queries.
+
+    FIX: safe_rollback bestond niet in vorige versie.
+    """
+    try:
+        conn.rollback()
+    except Exception as e:
+        log(f"Rollback fout (niet kritiek): {e}")
+
 
 def get_bot_state_value(conn, key: str, default: str = "") -> str:
     try:
@@ -696,6 +727,10 @@ def binance_get(endpoint: str, params: dict,
             resp = requests.get(f"{base}{endpoint}", params=params, timeout=BINANCE_TIMEOUT)
             if resp.ok:
                 return resp.json()
+            # 4xx = client error (ongeldige symbol etc.) → geen retry
+            if 400 <= resp.status_code < 500:
+                return None
+            # 5xx = server error → retry heeft zin
             log(f"Binance {resp.status_code} ({endpoint}) poging {attempt}/{retries}")
         except requests.exceptions.Timeout:
             log(f"Binance timeout poging {attempt}/{retries}")
@@ -1591,9 +1626,8 @@ def cleanup_verlopen_pending(conn) -> int:
         if n > 0: log(f"{n} verlopen pending signalen gemarkeerd als EXPIRED")
         return n
     except Exception as e:
+        safe_rollback(conn)
         log(f"Cleanup pending fout: {e}")
-        try: conn.rollback()
-        except Exception: pass
         return 0
 
 
@@ -1647,7 +1681,38 @@ def zorg_voor_pending_tabel(conn) -> None:
                 ON public.pending_approvals(expires_at) WHERE status='PENDING';
             """)
         conn.commit()
-    except Exception as e: log(f"Tabel check: {e}")
+    except Exception as e:
+        # KRITIEK: rollback zodat cleanup_verlopen_pending niet ook crasht
+        # met "current transaction is aborted"
+        safe_rollback(conn)
+        log(f"Tabel check fout: {e}")
+
+    # Migraties — voeg ontbrekende kolommen toe aan bestaande tabel
+    # ADD COLUMN IF NOT EXISTS is veilig: doet niets als kolom al bestaat.
+    # FIX: zonder migraties crasht insert_pending als tabel al bestond
+    # zonder de nieuwe v3.0 kolommen.
+    try:
+        migraties = [
+            ("score_details",   "JSONB"),
+            ("vwap_positie",    "TEXT"),
+            ("divergentie",     "TEXT"),
+            ("funding_rate",    "DOUBLE PRECISION DEFAULT 0.0"),
+            ("live_toegestaan", "BOOLEAN DEFAULT FALSE"),
+            ("updated_at",      "TIMESTAMPTZ DEFAULT NOW()"),
+            ("btc_regime",      "TEXT"),
+            ("rr_ratio",        "DOUBLE PRECISION"),
+            ("exp_bias",        "TEXT DEFAULT 'NEUTRAL'"),
+        ]
+        with conn.cursor() as cur:
+            for kolom, definitie in migraties:
+                cur.execute(f"""
+                ALTER TABLE public.pending_approvals
+                ADD COLUMN IF NOT EXISTS {kolom} {definitie};
+                """)
+        conn.commit()
+    except Exception as e:
+        safe_rollback(conn)
+        log(f"Pending migratie fout: {e}")
 
 
 def insert_pending(conn, prebuy: Dict) -> str:
@@ -2231,6 +2296,7 @@ if __name__ == "__main__":
         log("KRITIEK: DATABASE_URL ontbreekt — scanner kan niet starten")
         sys.exit(1)
 
+    conn = None  # FIX: conn=None voor try/finally zodat finally altijd werkt
     try:
         conn = db_connect()
         log("Database verbonden")
@@ -2328,3 +2394,12 @@ if __name__ == "__main__":
     except Exception as e:
         report_error(e, "__main__", severity="KRITIEK")
         sys.exit(1)
+
+    finally:
+        # ALTIJD sluiten — FIX: vorige versie had geen finally block
+        if conn:
+            try:
+                conn.close()
+                log("DB verbinding gesloten")
+            except Exception:
+                pass
