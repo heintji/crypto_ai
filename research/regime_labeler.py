@@ -46,7 +46,7 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
@@ -503,30 +503,63 @@ def get_symbols_with_enough_candles(conn, tf_col: str) -> List[str]:
         return []
 
 
+def detect_open_time_type(conn) -> str:
+    """
+    Detecteert het datatype van de open_time kolom in candles.
+    Geeft 'timestamp' terug als het al een TIMESTAMPTZ is,
+    of 'bigint' als het milliseconden zijn.
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT data_type
+            FROM information_schema.columns
+            WHERE table_name  = 'candles'
+              AND column_name = 'open_time'
+            LIMIT 1
+            """)
+            row = cur.fetchone()
+            if row:
+                dtype = str(row[0]).lower()
+                if "timestamp" in dtype:
+                    log(f"open_time kolom type: TIMESTAMP (direct bruikbaar)")
+                    return "timestamp"
+                else:
+                    log(f"open_time kolom type: {dtype} (converteren via /1000)")
+                    return "bigint"
+    except Exception as e:
+        safe_rollback(conn)
+        log(f"⚠️ open_time type detectie fout: {e} — aanname: timestamp")
+    return "timestamp"
+
+
 def fetch_closes_and_ts(
     conn,
-    symbol:  str,
-    tf_col:  str,
+    symbol:      str,
+    tf_col:      str,
+    ot_is_ts:    bool = True,
 ) -> Tuple[List[float], Optional[datetime]]:
     """
     Haalt closes en meest recente timestamp op voor een symbol.
 
-    FIX vs v2.0: bij een exception deed v2.0 geen rollback.
-    Daardoor bleef de transactie in ABORTED state en mislukten
-    ALLE volgende queries met "current transaction is aborted".
-    Nu: altijd rollback bij exception.
+    FIX: open_time kan TIMESTAMPTZ zijn (direct gebruiken)
+    OF bigint in milliseconden (converteren via to_timestamp(x/1000)).
+    ot_is_ts=True → open_time is al een timestamp
+    ot_is_ts=False → open_time is milliseconden (bigint)
 
-    RETURNS:
-    ─────────────
-    (closes_chronologisch, asof_ts)
-    closes = lijst van floats, oudste eerst
-    asof_ts = timestamp van meest recente candle
+    FIX vs v2.0: bij een exception deed v2.0 geen rollback.
     """
+    # Bouw de timestamp expressie op basis van het kolom type
+    if ot_is_ts:
+        ts_expr = "open_time"
+    else:
+        ts_expr = "to_timestamp(open_time::bigint / 1000.0)"
+
     try:
         with conn.cursor() as cur:
             cur.execute(f"""
             SELECT close,
-                   to_timestamp(open_time / 1000.0) AS asof_ts
+                   {ts_expr} AS asof_ts
             FROM public.candles
             WHERE symbol    = %s
               AND {tf_col}  = %s
@@ -826,13 +859,15 @@ if __name__ == "__main__":
         ensure_market_regime_table(conn)
 
         # ── Detecteer automatisch de juiste kolom naam ────────
-        # FIX: app.py gebruikt 'interval_' maar origineel script
-        # gebruikte 'timeframe' — nu automatisch gedetecteerd
         tf_col = detect_candles_timeframe_column(conn)
 
+        # ── Detecteer open_time kolom type ───────────────────
+        # FIX: open_time kan TIMESTAMPTZ zijn (direct gebruiken)
+        # OF bigint in milliseconden (to_timestamp(x/1000))
+        ot_type  = detect_open_time_type(conn)
+        ot_is_ts = (ot_type == "timestamp")
+
         # ── Haal alleen symbols op met VOLDOENDE candles ──────
-        # FIX: v2.0 haalde alle symbols op en loopte daarna door
-        # coins zonder data — dat veroorzaakte de cascade-fouten
         symbols = get_symbols_with_enough_candles(conn, tf_col)
 
         if not symbols:
@@ -863,7 +898,7 @@ if __name__ == "__main__":
             # KRITIEK: zonder dit crasht 1 fout de rest van de run
             try:
                 # Closes ophalen
-                closes, asof_ts = fetch_closes_and_ts(conn, symbol, tf_col)
+                closes, asof_ts = fetch_closes_and_ts(conn, symbol, tf_col, ot_is_ts)
 
                 if len(closes) < MIN_CANDLES:
                     # Pre-filter had dit al gefilterd, maar voor de zekerheid
@@ -950,6 +985,10 @@ if __name__ == "__main__":
         log(f"❌ Fatale fout: {type(e).__name__}: {e}")
         if conn:
             safe_rollback(conn)
+            try:
+                conn.close()
+            except Exception:
+                pass
         sys.exit(1)
 
     finally:
