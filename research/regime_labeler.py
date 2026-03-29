@@ -468,22 +468,9 @@ def get_symbols_with_enough_candles(conn, tf_col: str) -> List[str]:
     """
     try:
         with conn.cursor() as cur:
-            quote_filter = f"AND symbol LIKE %s" if ONLY_QUOTE else ""
-            params = [tf_col, TIMEFRAME, MIN_CANDLES]
-            if ONLY_QUOTE:
-                params.append(f"%{ONLY_QUOTE}")
-
-            cur.execute(f"""
-            SELECT symbol, COUNT(*) AS n
-            FROM public.candles
-            WHERE "{tf_col}" = %s
-              {quote_filter.replace('%s', '%s') if ONLY_QUOTE else ''}
-            GROUP BY symbol
-            HAVING COUNT(*) >= %s
-            ORDER BY symbol
-            """.replace('"{tf_col}"', f'"{tf_col}"'), params)
-
-            # Fix: bouw de query correct
+            # tf_col is een kolom naam — mag NIET als %s parameter,
+            # moet direct in de query string via f-string.
+            # ONLY_QUOTE filtert op bijv. 'USDT' aan het einde van symbol.
             if ONLY_QUOTE:
                 cur.execute(f"""
                 SELECT symbol, COUNT(*) AS n
@@ -506,7 +493,8 @@ def get_symbols_with_enough_candles(conn, tf_col: str) -> List[str]:
 
             rows = cur.fetchall()
             symbols = [row[0] for row in rows]
-            log(f"Pre-filter: {len(symbols)} symbols met >= {MIN_CANDLES} candles")
+            log(f"Pre-filter: {len(symbols)} symbols met >= {MIN_CANDLES} candles "
+                f"(timeframe={TIMEFRAME}, kolom={tf_col})")
             return symbols
 
     except Exception as e:
