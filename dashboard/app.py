@@ -588,13 +588,13 @@ def metric_card(label: str, value: str, delta: str = "", accent: str = "blue", d
         d_color = delta_color or (C_RED if is_neg else C_GREEN)
         delta_html = f'<div class="metric-delta" style="color:{d_color};font-family:Courier New,monospace;">{delta}</div>'
 
-    return f"""
-    <div class="metric-card {acc_class}">
-        <div class="metric-value {val_class}" style="font-family:Courier New,monospace;">{value}</div>
-        {delta_html}
-        <div class="metric-label">{label}</div>
-    </div>
-    """
+    return (
+        f'<div class="metric-card {acc_class}">'
+        f'<div class="metric-value {val_class}" style="font-family:Courier New,monospace;">{value}</div>'
+        f'{delta_html}'
+        f'<div class="metric-label">{label}</div>'
+        f'</div>'
+    )
 
 
 def downsample(df: pd.DataFrame, max_pts: int = 1000) -> pd.DataFrame:
@@ -2079,6 +2079,7 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
             zerolinecolor=ZEROLINE,
             linecolor="rgba(0,212,255,0.10)",
             tickfont=dict(color=TXT_DIM, size=10),
+            autorange=True,
         ),
     )
     return fig
@@ -2118,6 +2119,7 @@ def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figu
         line_color=ZEROLINE,
         line_width=1,
     )
+    fig.update_yaxes(rangemode="normal")
     return style_fig(fig, 320, title)
 
 
@@ -2184,6 +2186,8 @@ def chart_daily_r(df: pd.DataFrame, title: str = "Dagresultaten") -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         hovertemplate="Dag: <b>%{x}</b><br>R: <b>%{y:.2f}R</b><extra></extra>",
     ))
+    fig.update_layout(bargap=0.3)
+    fig.update_yaxes(rangemode="normal")
     return style_fig(fig, 280, title)
 
 
@@ -2205,17 +2209,78 @@ def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.F
     return style_fig(fig, 260, title)
 
 
-def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.Figure:
+def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trades: int = -1) -> go.Figure:
     """Donut chart. Neutraal grijs als geen data, kleur pas bij echte trades."""
     win  = max(0.0, min(100.0, safe_float(win_pct)))
     loss = 100.0 - win
     # Kleur: groen als >50%, rood als <50%, neutraal grijs als geen data
-    has_data = (win + loss) > 0.01
+    # Grijs als geen trades, kleur pas als er echte data is
+    has_data = (win + loss) > 0.01 and (n_trades != 0)
     kleur_win  = C_GREEN  if has_data and win  >= 50 else (C_GREEN  if has_data else TXT_DIM)
     kleur_loss = C_RED    if has_data and loss > 0   else TXT_DIM
     track_color = "rgba(0,212,255,0.04)"
 
-    fig = go.Figure(go.Pie(
+    # ── Kleur systeem — intensiteit schaalt met win rate ──────────
+    # 0%       → volledig grijs, geen kleur
+    # 0.1–5%   → zeer subtiele gedempte kleur (nauwelijks zichtbaar)
+    # 5–30%    → zwakke gedempte kleur
+    # 30–50%   → matige kleur (oranje/geel als waarschuwing)
+    # 50–60%   → groene kleur
+    # 60%+     → volle neon groene kleur
+    #
+    # Kleur alpha schaalt ook: bij lage win rate zijn kleuren transparant
+    if not has_data:
+        # Geen trades → volledig neutraal
+        kleur_win       = TXT_DIM
+        kleur_loss      = "rgba(0,212,255,0.04)"
+        win_kleur_html  = TXT_DIM
+    elif win < 0.5:
+        # Vrijwel 0% → bijna grijs, alleen een heel klein zwak signaal
+        kleur_win       = "rgba(255,45,85,0.15)"
+        kleur_loss      = "rgba(74,85,104,0.40)"
+        win_kleur_html  = TXT_DIM
+    elif win < 5:
+        # Heel laag → gedempte rode tint, tekst grijs
+        kleur_win       = "rgba(255,45,85,0.25)"
+        kleur_loss      = "rgba(74,85,104,0.50)"
+        win_kleur_html  = TXT_DIM
+    elif win < 30:
+        # Laag → zwakke rode tint
+        alpha = 0.25 + (win / 30) * 0.35   # 0.25 → 0.60
+        kleur_win       = f"rgba(255,45,85,{alpha:.2f})"
+        kleur_loss      = f"rgba(255,45,85,{min(alpha + 0.15, 0.75):.2f})"
+        win_kleur_html  = C_LOSS
+    elif win < 50:
+        # Matig → oranje/geel als waarschuwing
+        kleur_win       = C_WARN
+        kleur_loss      = "rgba(255,45,85,0.50)"
+        win_kleur_html  = C_WARN
+    elif win < 60:
+        # Boven 50% → groen maar nog niet vol
+        kleur_win       = "rgba(0,230,118,0.70)"
+        kleur_loss      = "rgba(255,45,85,0.25)"
+        win_kleur_html  = C_WIN
+    else:
+        # 60%+ → volle neon groene kleur
+        kleur_win       = C_WIN
+        kleur_loss      = "rgba(255,45,85,0.20)"
+        win_kleur_html  = C_WIN
+
+    fig = go.Figure()
+
+    # Track ring (achtergrond) — altijd zichtbaar
+    fig.add_trace(go.Pie(
+        values=[100],
+        hole=0.78,
+        sort=False,
+        textinfo="none",
+        marker=dict(colors=["rgba(0,212,255,0.05)"], line=dict(width=0)),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+
+    # Donut data ring
+    fig.add_trace(go.Pie(
         values=[max(win, 0.001), max(loss, 0.001)],
         labels=["Win", "Loss"],
         hole=0.78,
@@ -2224,12 +2289,11 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate") -> go.F
         rotation=270,
         textinfo="none",
         marker=dict(
-            colors=[kleur_win, kleur_loss] if has_data else [TXT_DIM, "rgba(0,212,255,0.03)"],
+            colors=[kleur_win, kleur_loss],
             line=dict(width=0),
         ),
         showlegend=False,
     ))
-    win_kleur_html = C_GREEN if has_data and win >= 50 else (C_RED if has_data else TXT_DIM)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
@@ -4331,13 +4395,13 @@ def render_dashboard(
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Trade Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_all["winrate"], summary_all["total_eur"], "Alle trades"),
+            chart_donut(summary_all["winrate"], summary_all["total_eur"], "Alle trades", int(summary_all["count"])),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_all"
         )
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Live Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_real["winrate"], summary_real["total_eur"], "REAL trades"),
+            chart_donut(summary_real["winrate"], summary_real["total_eur"], "REAL trades", int(summary_real["count"])),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_real"
         )
         st.markdown("</div>", unsafe_allow_html=True)
