@@ -439,6 +439,11 @@ GLOW_LIVE = f"0 0 10px {LIVE_A20}, 0 0 20px {LIVE_A10}"
 
 
 
+def now_utc() -> datetime:
+    """Geeft de huidige UTC tijd terug als timezone-aware datetime object."""
+    return datetime.now(timezone.utc)
+
+
 def log_debug(msg: str) -> None:
     stamp = datetime.now().strftime("%H:%M:%S")
     st.session_state.debug_events = [f"{stamp} | {msg}"] + st.session_state.debug_events[:49]
