@@ -75,7 +75,7 @@ import json
 import math
 import os
 import time
-import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -1624,7 +1624,7 @@ def get_trade_frequency(df: pd.DataFrame) -> pd.DataFrame:
 def get_recovery_factor(df: pd.DataFrame) -> float:
     """Recovery Factor = netto PnL / max drawdown. N/A als geen drawdown."""
     summary = perf_summary(df)
-    net_pnl = safe_float(summary.get("net_pnl"))
+    net_pnl = safe_float(summary.get("total_eur"))
     max_dd  = safe_float(summary.get("max_drawdown"))
     if max_dd <= 0:
         return float("nan")  # Geen drawdown = N/A
@@ -3127,7 +3127,7 @@ def render_coin_cluster_widget() -> None:
     """
     st.markdown("**🏷️ Coin Clusters (ai_coach)**")
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             st.caption("DB niet beschikbaar")
             return
@@ -3180,7 +3180,7 @@ def render_kelly_widget() -> None:
     """
     st.markdown("**📐 Kelly Criterion**")
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             st.caption("DB niet beschikbaar")
             return
@@ -3238,7 +3238,7 @@ def render_scan_efficiency_widget() -> None:
     """
     st.markdown("**🔍 Scan Efficiency (7d)**")
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             st.caption("DB niet beschikbaar")
             return
@@ -3319,7 +3319,7 @@ def render_shadow_live_brug_widget() -> None:
     """
     st.markdown("**🌉 Shadow ↔ Live Brug**")
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             st.caption("DB niet beschikbaar")
             return
@@ -3392,7 +3392,7 @@ def render_param_rollback_widget() -> None:
     """
     st.markdown("**🔄 Parameter Rollback History**")
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             st.caption("DB niet beschikbaar")
             return
@@ -5391,7 +5391,7 @@ def render_service_monitor_widget() -> None:
     # BTC regime laatste update
     btc_ts        = None
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -5408,7 +5408,7 @@ def render_service_monitor_widget() -> None:
     # Market regime laatste update
     regime_ts = None
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -6780,7 +6780,7 @@ def ping_render(url: str) -> Dict[str, Any]:
 def live_trader_status() -> Dict[str, Any]:
     """Leest live_trader status uit bot_state."""
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             return {}
         with conn.cursor() as cur:
@@ -6800,7 +6800,7 @@ def live_trader_status() -> Dict[str, Any]:
 def candles_status() -> Dict[str, Any]:
     """Controleert versheid van candle data."""
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             return {"ok": False, "reden": "Geen DB"}
         with conn.cursor() as cur:
@@ -6840,7 +6840,7 @@ def valideer_trade_params(entry: float, stop: float, target: float) -> List[str]
 def get_whatsapp_notificatie_log() -> List[Dict]:
     """Leest WhatsApp notificatie log uit bot_state."""
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             return []
         with conn.cursor() as cur:
@@ -6859,7 +6859,7 @@ def get_whatsapp_notificatie_log() -> List[Dict]:
 def get_trade_monitor_check() -> str:
     """Leest laatste trade_monitor check timestamp uit bot_state."""
     try:
-        conn = get_db_connection()
+        conn = get_db_conn()
         if conn is None:
             return "onbekend"
         with conn.cursor() as cur:
