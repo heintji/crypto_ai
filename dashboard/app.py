@@ -619,7 +619,6 @@ def db_ready() -> bool:
     return bool(DATABASE_URL)
 
 
-@st.cache_resource
 def get_db_conn():
     if not DATABASE_URL:
         return None
