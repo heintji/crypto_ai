@@ -1,3 +1,5 @@
+from __future__ import annotations
+import calendar
 # app.py
 # ============================================================
 # Crypto AI Terminal — Streamlit Dashboard v3.0
@@ -32,6 +34,8 @@
 # - public.btc_regime_4h        (BTC regime data)
 # - public.market_regime        (coin regime data)
 # - /data/live_state.json       (open live trades)
+
+
 # - /data/shadow_trades.json    (open shadow trades)
 # - /data/account_snapshot.json (Bitvavo portfolio)
 # - Bitvavo API (live portfolio als snapshot ontbreekt)
@@ -64,7 +68,6 @@
 # ✅ Auto-refresh optie
 # ─────────────────────────────────────────────────────────────
 
-from __future__ import annotations
 
 import hashlib
 import hmac
@@ -72,7 +75,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime, timezone, timedelta
+import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -81,6 +84,11 @@ import psycopg2
 import psycopg2.extras
 import requests
 import streamlit as st
+
+# Pad constanten
+LIVE_STATE_PATH   = os.path.join(os.getenv('DATA_DIR', '/data'), 'live_state.json')
+SHADOW_STATE_PATH = os.path.join(os.getenv('DATA_DIR', '/data'), 'shadow_trades.json')
+ATR_MULTIPLIER    = float(os.getenv('ATR_MULTIPLIER', '1.6'))
 
 
 # ============================================================
@@ -702,12 +710,21 @@ def get_bot_state_val(key: str, default: str = "") -> str:
 
 
 def get_bot_status() -> Tuple[str, str, str]:
-    """Geeft (label, emoji, status_type) terug voor de top balk."""
+    """
+    Geeft (label, emoji, status_type) terug voor de top balk.
+
+    ARCHITECTUUR:
+    - Bot systeem (scanner, coach, monitor) draait 24/7 op Render — ALTIJD aan.
+    - "bot_active" in DB = ALLEEN de live trading schakelaar:
+        false → bot draait, scanner scant, maar GEEN echte euro-trades
+        true  → bot koopt ook echt met echte euros op Bitvavo
+    """
     active = get_bot_state_val("bot_active", "false").lower() == "true"
     paused = get_bot_state_val("bot_paused", "false").lower() == "true"
 
     if not active:
-        return "GESTOPT", "🔴", "stopped"
+        # Bot systeem draait gewoon — alleen live trading UIT
+        return "LIVE TRADING UIT", "🟡", "stopped"
     if paused:
         reason = get_bot_state_val("bot_paused_reason", "onbekend")
         until  = get_bot_state_val("bot_paused_until", "")
@@ -721,7 +738,7 @@ def get_bot_status() -> Tuple[str, str, str]:
             except Exception:
                 pass
         return label, "⏸️", "paused"
-    return "ACTIEF", "🟢", "active"
+    return "LIVE TRADING AAN", "🟢", "active"
 
 
 # ============================================================
@@ -1234,7 +1251,7 @@ def get_overall_winloss(df: pd.DataFrame) -> Dict[str, Any]:
     return result
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def get_floating_pnl() -> List[Dict[str, Any]]:
     """
     Haalt open live trades op met huidige prijs van Bitvavo.
@@ -1605,18 +1622,13 @@ def get_trade_frequency(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_recovery_factor(df: pd.DataFrame) -> float:
-    """
-    Recovery Factor = Totale netto PnL / Max Drawdown (absoluut).
-    Doel: >2.0
-    """
+    """Recovery Factor = netto PnL / max drawdown. N/A als geen drawdown."""
     summary = perf_summary(df)
-    total_r = summary["total_r"]
-    max_dd  = abs(summary["max_dd"])
-    if max_dd == 0:
-        return 0.0
-    return round(total_r / max_dd, 2)
-
-
+    net_pnl = safe_float(summary.get("net_pnl"))
+    max_dd  = safe_float(summary.get("max_drawdown"))
+    if max_dd <= 0:
+        return float("nan")  # Geen drawdown = N/A
+    return round(net_pnl / max_dd, 2)
 def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float]:
     """P&L per dag voor de kalender heatmap."""
     if df.empty:
@@ -2469,7 +2481,7 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
 # ============================================================
 # CLAUDE AI — identiek aan alle andere bestanden
 # ============================================================
-def call_claude(prompt: str, max_tokens: int = 300) -> str:
+def call_claude(prompt: str, max_tokens: int = 400) -> str:
     if not ANTHROPIC_API_KEY:
         return ""
     try:
@@ -2481,7 +2493,7 @@ def call_claude(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-sonnet-4-6",
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -2496,7 +2508,7 @@ def call_claude(prompt: str, max_tokens: int = 300) -> str:
     return ""
 
 
-def claude_btn(label: str, prompt: str, max_tokens: int = 300, key: str = "") -> None:
+def claude_btn(label: str, prompt: str, max_tokens: int = 400, key: str = "") -> None:
     """Claude AI analyse knop in het dashboard."""
     if not ANTHROPIC_API_KEY:
         st.caption("⚠️ ANTHROPIC_API_KEY niet ingesteld")
@@ -3101,6 +3113,331 @@ def render_coach_monitor_page() -> None:
 # ============================================================
 # PAGINA: SYSTEEM GEZONDHEID
 # ============================================================
+
+# ============================================================
+# v3.0 — COIN CLUSTER WIDGET
+# ============================================================
+def render_coin_cluster_widget() -> None:
+    """
+    Toont de coin prestatie clusters uit ai_coach.py.
+    STAR → beste coins (prioriteer)
+    STABLE → solide performers
+    WEAK → underperformers
+    ZOMBIE → structureel verliesgevend (blacklist)
+    """
+    st.markdown("**🏷️ Coin Clusters (ai_coach)**")
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            st.caption("DB niet beschikbaar")
+            return
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value FROM public.bot_state WHERE key='coach_coin_clusters'"
+            )
+            row = cur.fetchone()
+        if not row or not row[0]:
+            st.caption("Nog geen cluster data — ai_coach nog niet gedraaid")
+            return
+
+        clusters = json.loads(row[0])
+        cluster_info = [
+            ("⭐ STAR",   clusters.get("STAR",   []), "#ffe600", "Prioriteer"),
+            ("✅ STABLE", clusters.get("STABLE", []), "#00e676", "Houd bij"),
+            ("⚠️ WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
+            ("💀 ZOMBIE", clusters.get("ZOMBIE", []), "#ff2d55", "Blacklist"),
+        ]
+        cols = st.columns(4)
+        for i, (label, coins, kleur, tip) in enumerate(cluster_info):
+            with cols[i]:
+                st.markdown(
+                    f'<div style="background:#12121a;border:1px solid {kleur}33;'
+                    f'border-radius:8px;padding:10px;min-height:100px;">'
+                    f'<div style="color:{kleur};font-size:12px;font-weight:700;'
+                    f'margin-bottom:6px;">{label} ({len(coins)})</div>'
+                    f'<div style="color:#6e7a9a;font-size:10px;margin-bottom:6px;">{tip}</div>'
+                    + "".join(
+                        f'<div style="color:#ddd;font-size:11px;padding:2px 0;">{c}</div>'
+                        for c in coins[:6]
+                    )
+                    + (f'<div style="color:#6e7a9a;font-size:10px;">+{len(coins)-6} meer</div>'
+                       if len(coins) > 6 else "")
+                    + "</div>",
+                    unsafe_allow_html=True,
+                )
+    except Exception as e:
+        st.caption(f"Cluster fout: {e}")
+
+
+# ============================================================
+# v3.0 — KELLY CRITERION WIDGET
+# ============================================================
+def render_kelly_widget() -> None:
+    """
+    Toont Kelly Criterion positiegrootte aanbeveling.
+    Berekend door ai_coach.py op basis van historische win rate en odds.
+    Groen = edge positief. Rood = edge negatief.
+    """
+    st.markdown("**📐 Kelly Criterion**")
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            st.caption("DB niet beschikbaar")
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT waarde FROM public.coach_memory
+            WHERE type='kelly' AND sleutel LIKE 'analyse_%'
+            ORDER BY bijgewerkt DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+        if not row or not row[0]:
+            st.caption("Nog geen Kelly data")
+            return
+
+        data  = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        kelly = safe_float(data.get("kelly_pct"))
+        half  = safe_float(data.get("half_kelly_pct"))
+        aanbv = safe_float(data.get("aanbevolen_eur"))
+        wr    = safe_float(data.get("win_rate_pct"))
+        edge  = data.get("edge_positief", True)
+        n     = safe_int(data.get("n"))
+
+        kleur_edge = "#00e676" if edge else "#ff2d55"
+        edge_txt   = "✅ POSITIEF" if edge else "❌ NEGATIEF"
+
+        st.markdown(
+            f'<div style="background:#12121a;border:1px solid #1e1e2e;'
+            f'border-radius:8px;padding:12px;">'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+            f'<div><div style="color:#6e7a9a;font-size:10px;">Kelly %</div>'
+            f'<div style="color:#ffe600;font-size:18px;font-weight:900;">{kelly:.1f}%</div></div>'
+            f'<div><div style="color:#6e7a9a;font-size:10px;">Half Kelly</div>'
+            f'<div style="color:#00d4ff;font-size:18px;font-weight:900;">{half:.1f}%</div></div>'
+            f'<div><div style="color:#6e7a9a;font-size:10px;">Aanbevolen/trade</div>'
+            f'<div style="color:#fff;font-size:16px;font-weight:700;">€{aanbv:.2f}</div></div>'
+            f'<div><div style="color:#6e7a9a;font-size:10px;">Win rate ({n} trades)</div>'
+            f'<div style="color:#fff;font-size:16px;font-weight:700;">{wr:.1f}%</div></div>'
+            f'</div>'
+            f'<div style="margin-top:8px;font-size:11px;color:{kleur_edge};">'
+            f'Edge: {edge_txt}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    except Exception as e:
+        st.caption(f"Kelly fout: {e}")
+
+
+# ============================================================
+# v3.0 — SCAN EFFICIENCY WIDGET
+# ============================================================
+def render_scan_efficiency_widget() -> None:
+    """
+    Toont de scan efficiency van de laatste 7 dagen.
+    Conversie ratio, aantal sessies, beste score, bottlenecks.
+    """
+    st.markdown("**🔍 Scan Efficiency (7d)**")
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            st.caption("DB niet beschikbaar")
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT waarde FROM public.coach_memory
+            WHERE type='scan_efficiency' AND sleutel='7d'
+            ORDER BY bijgewerkt DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+        if not row or not row[0]:
+            # Fallback: lees direct uit scanner_sessies tabel
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT COUNT(*) AS n, SUM(gescand) AS totaal,
+                       SUM(signalen) AS sig, AVG(duur_sec) AS gem_duur,
+                       AVG(beste_score) AS beste
+                FROM public.scanner_sessies
+                WHERE sessie_start >= NOW() - INTERVAL '7 days'
+                """)
+                r = cur.fetchone()
+                if not r or not r[0]:
+                    st.caption("Nog geen scan sessie data")
+                    return
+                data = {
+                    "n_sessies":       safe_int(r[0]),
+                    "totaal_gescand":  safe_int(r[1]),
+                    "totaal_signalen": safe_int(r[2]),
+                    "gem_duur_sec":    safe_float(r[3]),
+                    "gem_beste_score": safe_float(r[4]),
+                    "conversie_pct":   safe_float(r[2]) / max(safe_float(r[1]), 1) * 100,
+                    "beoordeling":     "ONBEKEND",
+                }
+        else:
+            data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+
+        conv  = safe_float(data.get("conversie_pct"))
+        beoor = safe_str(data.get("beoordeling", "?"))
+        beoor_kleur = (
+            "#00e676" if beoor == "OPTIMAAL" else
+            "#ff9100" if beoor == "DREMPEL_HOOG" else
+            "#ff2d55"
+        )
+
+        items = [
+            ("Sessies (7d)",     data.get("n_sessies", 0),   "#aaa"),
+            ("Gescand totaal",   f"{data.get('totaal_gescand',0):,}", "#aaa"),
+            ("Signalen",         data.get("totaal_signalen", 0), "#ffe600"),
+            ("Conversie %",      f"{conv:.2f}%", beoor_kleur),
+            ("Gem. duur",        f"{data.get('gem_duur_sec',0):.0f}s", "#aaa"),
+            ("Gem. beste score", f"{data.get('gem_beste_score',0):.1f}", "#00d4ff"),
+        ]
+        html = '<div style="background:#12121a;border:1px solid #1e1e2e;border-radius:8px;padding:10px;">'
+        for label, val, kleur in items:
+            html += (
+                f'<div style="display:flex;justify-content:space-between;'
+                f'padding:4px 0;border-bottom:1px solid #1a1a2a;font-size:12px;">'
+                f'<span style="color:#6e7a9a;">{label}</span>'
+                f'<b style="color:{kleur};">{val}</b></div>'
+            )
+        html += (
+            f'<div style="margin-top:6px;font-size:11px;color:{beoor_kleur};">'
+            f'Beoordeling: {beoor}</div></div>'
+        )
+        st.markdown(html, unsafe_allow_html=True)
+    except Exception as e:
+        st.caption(f"Scan efficiency fout: {e}")
+
+
+# ============================================================
+# v3.0 — SHADOW vs LIVE BRUG WIDGET
+# ============================================================
+def render_shadow_live_brug_widget() -> None:
+    """
+    Toont de shadow vs live performance vergelijking.
+    Detecteert discrepanties die wijzen op edge decay of executieproblemen.
+    Groen = gezond (verschil < 10%). Rood = discrepantie (> 10%).
+    """
+    st.markdown("**🌉 Shadow ↔ Live Brug**")
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            st.caption("DB niet beschikbaar")
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT waarde FROM public.coach_memory
+            WHERE type='shadow_live_brug'
+            ORDER BY bijgewerkt DESC LIMIT 1
+            """)
+            row = cur.fetchone()
+        if not row or not row[0]:
+            st.caption("Nog geen brug analyse — ai_coach nog niet gedraaid")
+            return
+
+        data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        overal = data.get("overal", {})
+        shadow = overal.get("SHADOW", {})
+        live   = overal.get("LIVE",   {})
+
+        gezond    = data.get("brug_gezond", True)
+        discr     = data.get("discrepanties", [])
+        status_kleur = "#00e676" if gezond else "#ff2d55"
+        status_txt   = "✅ GEZOND" if gezond else f"⚠️ {len(discr)} DISCREPANTIES"
+
+        s_wr = safe_float(shadow.get("wr"))
+        l_wr = safe_float(live.get("wr"))
+        diff = s_wr - l_wr
+        diff_kleur = "#00e676" if abs(diff) <= 10 else "#ff2d55"
+
+        html = (
+            f'<div style="background:#12121a;border:1px solid {status_kleur}33;'
+            f'border-radius:8px;padding:12px;">'
+            f'<div style="font-size:11px;color:{status_kleur};font-weight:700;'
+            f'margin-bottom:8px;">{status_txt}</div>'
+            f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
+            f'<div style="text-align:center;">'
+            f'<div style="color:#6e7a9a;font-size:10px;">🎭 Shadow WR</div>'
+            f'<div style="color:#00d4ff;font-size:20px;font-weight:900;">{s_wr:.1f}%</div>'
+            f'<div style="color:#6e7a9a;font-size:10px;">{safe_int(shadow.get("n"))} trades</div>'
+            f'</div>'
+            f'<div style="text-align:center;">'
+            f'<div style="color:#6e7a9a;font-size:10px;">🔴 Live WR</div>'
+            f'<div style="color:#ffe600;font-size:20px;font-weight:900;">{l_wr:.1f}%</div>'
+            f'<div style="color:#6e7a9a;font-size:10px;">{safe_int(live.get("n"))} trades</div>'
+            f'</div>'
+            f'</div>'
+            f'<div style="margin-top:8px;text-align:center;font-size:12px;color:{diff_kleur};">'
+            f'Verschil: {diff:+.1f}% '
+            f'{"✅ OK" if abs(diff) <= 10 else "⚠️ GROOT"}</div>'
+        )
+        if discr:
+            html += '<div style="margin-top:8px;font-size:11px;color:#ff9100;">'
+            for d in discr[:2]:
+                html += f'<div>⚠️ {d.get("setup","?")}: {d.get("reden","")}</div>'
+            html += '</div>'
+        html += '</div>'
+        st.markdown(html, unsafe_allow_html=True)
+    except Exception as e:
+        st.caption(f"Brug widget fout: {e}")
+
+
+# ============================================================
+# v3.0 — PARAMETER ROLLBACK LOG WIDGET
+# ============================================================
+def render_param_rollback_widget() -> None:
+    """
+    Toont de parameter rollback history.
+    Wanneer heeft ai_coach een parameter teruggedraaid?
+    Welke aanpassing werkte niet?
+    """
+    st.markdown("**🔄 Parameter Rollback History**")
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            st.caption("DB niet beschikbaar")
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT tijdstip, parameter, test_waarde, origineel,
+                   wr_voor, wr_na, gerollback, reden
+            FROM public.coach_param_rollback_log
+            ORDER BY tijdstip DESC LIMIT 10
+            """)
+            rows = cur.fetchall()
+        if not rows:
+            st.markdown(
+                '<div style="color:#6e7a9a;font-size:12px;padding:8px;">Geen rollbacks — alle aanpassingen presteren goed ✅</div>',
+                unsafe_allow_html=True,
+            )
+            return
+        for r in rows:
+            ts       = str(r[0])[:16] if r[0] else "?"
+            param    = str(r[1] or "?")
+            test_v   = str(r[2] or "?")
+            orig_v   = str(r[3] or "?")
+            wr_voor  = safe_float(r[4])
+            wr_na    = safe_float(r[5])
+            rolled   = bool(r[6])
+            wr_diff  = wr_na - wr_voor
+            kleur    = "#ff2d55" if rolled else "#00e676"
+            status   = "🔄 GERESET" if rolled else "✅ GEHOUDEN"
+            st.markdown(
+                f'<div style="background:#12121a;border-left:3px solid {kleur};'
+                f'border-radius:4px;padding:8px;margin-bottom:4px;font-size:11px;">'
+                f'<div style="display:flex;justify-content:space-between;">'
+                f'<b style="color:#ddd;">{param}</b>'
+                f'<span style="color:{kleur};">{status}</span></div>'
+                f'<div style="color:#6e7a9a;margin-top:2px;">'
+                f'{test_v} → terug naar {orig_v} | '
+                f'WR: {wr_voor:.1f}% → {wr_na:.1f}% ({wr_diff:+.1f}%)</div>'
+                f'<div style="color:#555;font-size:10px;">{ts} UTC</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    except Exception as e:
+        st.caption(f"Rollback widget fout: {e}")
+
+
 def render_health_page() -> None:
     render_alarm_banner()
     st.markdown('<div class="section-title">🏥 Systeem Gezondheid</div>', unsafe_allow_html=True)
@@ -3308,21 +3645,29 @@ def render_controls_page() -> None:
     bot_actief = bot_actief_raw == "true"
     bot_gepauz = get_bot_state_val("bot_paused", "false").lower() == "true"
 
+    # Bot SYSTEEM draait altijd — alleen live trading schakelaar verandert
     if bot_actief and not bot_gepauz:
-        status_label = "🟢 BOT ACTIEF"
-        status_kleur = "#00e676"
+        status_label  = "🟢 LIVE TRADING AAN"
+        status_sub    = "Bot koopt actief met echt geld op Bitvavo"
+        status_kleur  = "#00e676"
     elif bot_gepauz:
-        status_label = "🟡 BOT GEPAUZEERD"
-        status_kleur = "#ffe600"
+        status_label  = "⏸️ LIVE TRADING GEPAUZEERD"
+        status_sub    = "Bot systeem draait — live trades tijdelijk geblokkeerd"
+        status_kleur  = "#ffe600"
     else:
-        status_label = "🔴 BOT GESTOPT"
-        status_kleur = "#ff2d55"
+        status_label  = "🟡 LIVE TRADING UIT"
+        status_sub    = "Bot systeem draait 24/7 — scanner actief — GEEN echte euro-trades"
+        status_kleur  = "#ffe600"
 
     st.markdown(
-        f'<div style="text-align:center;background:#111;border:2px solid {status_kleur};'
-        f'border-radius:12px;padding:20px;margin-bottom:16px;">'
-        f'<div style="font-size:28px;font-weight:bold;color:{status_kleur};">{status_label}</div>'
-        f'<div style="font-size:12px;color:#888;margin-top:4px;">Laatste check: {datetime.now(timezone.utc).strftime("%H:%M:%S UTC")}</div>'
+        f'<div style="text-align:center;background:rgba(0,0,0,0.4);border:2px solid {status_kleur};'
+        f'border-radius:14px;padding:20px;margin-bottom:16px;">'
+        f'<div style="font-size:26px;font-weight:900;color:{status_kleur};font-family:Courier New,monospace;">{status_label}</div>'
+        f'<div style="font-size:12px;color:#8090b0;margin-top:6px;">{status_sub}</div>'
+        f'<div style="font-size:11px;color:#4a5568;margin-top:4px;">'
+        f'<span style="color:#00e676;">✅ Bot systeem</span> draait altijd 24/7 op Render — '
+        f'scanner · coach · monitor · dashboard</div>'
+        f'<div style="font-size:10px;color:#4a5568;margin-top:2px;">Laatste check: {datetime.now(timezone.utc).strftime("%H:%M:%S UTC")}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -3330,31 +3675,31 @@ def render_controls_page() -> None:
     btn_c1, btn_c2, btn_c3, btn_c4 = st.columns(4)
 
     with btn_c1:
-        if st.button("▶️ START", use_container_width=True, type="primary",
+        if st.button("🟢 LIVE AAN", use_container_width=True, type="primary",
                      disabled=bot_actief and not bot_gepauz):
             if _set_bot_state_key("bot_active", "true") and _set_bot_state_key("bot_paused","false"):
                 _send_whatsapp_command("START")
-                st.success("✅ Bot gestart")
+                st.success("✅ Live trading aangezet — bot koopt nu met echt geld")
                 st.rerun()
 
     with btn_c2:
         if st.button("⏸️ PAUZEER", use_container_width=True, disabled=not bot_actief or bot_gepauz):
             if _set_bot_state_key("bot_paused", "true"):
-                st.warning("⏸️ Bot gepauzeerd")
+                st.warning("⏸️ Live trading gepauzeerd — bot systeem draait door")
                 st.rerun()
 
     with btn_c3:
         if st.button("⏩ HERVAT", use_container_width=True, disabled=not bot_gepauz):
             if _set_bot_state_key("bot_paused", "false"):
-                st.success("▶️ Bot hervat")
+                st.success("▶️ Live trading hervat")
                 st.rerun()
 
     with btn_c4:
-        if st.button("⏹️ STOP", use_container_width=True,
+        if st.button("🟡 LIVE UIT", use_container_width=True,
                      disabled=not bot_actief, type="secondary"):
             if _set_bot_state_key("bot_active", "false"):
                 _send_whatsapp_command("STOP")
-                st.error("⏹️ Bot gestopt")
+                st.info("🟡 Live trading uitgezet — bot systeem draait door, geen echte trades")
                 st.rerun()
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
@@ -4954,20 +5299,7 @@ def render_settings_page() -> None:
             st.markdown(f'<div class="list-row"><div class="list-left"><code>{k}</code><br><span style="color:#555;font-size:10px">{desc}</span></div><div class="list-right">{v}</div></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("#### 📋 Render Services")
-        st.caption("Alle services die op Render draaien voor de bot.")
-        services = [
-            ("crypto-ai-webhook",   "Web Service",       "whatsapp_webhook.py"),
-            ("Background Worker",   "Background Worker", "trade_monitor.py"),
-            ("crypto-ai-scanner",   "Background Worker", "run_bot.py (scheduler)"),
-            ("crypto-ai-dashboard", "Web Service",       "app.py (dit dashboard)"),
-            ("history_simulator",   "Cron Job",          "history_simulator.py"),
-            ("regime_labeler",      "Cron Job",          "regime_labeler.py"),
-            ("build_btc_regime",    "Cron Job",          "build_btc_regime.py"),
-            ("history_fetcher",     "Cron Job",          "history_fetcher.py"),
-        ]
-        for name, stype, file in services:
-            st.markdown(f'<div class="list-row"><div class="list-left"><b>{name}</b><br><span style="color:#555;font-size:10px">{file}</span></div><div class="list-right" style="color:#6e7a9a">{stype}</div></div>', unsafe_allow_html=True)
+        render_service_monitor_widget()
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown("#### 🔗 Bot Architectuur")
@@ -4983,6 +5315,310 @@ def render_settings_page() -> None:
         """, unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+# ============================================================
+# v3.0 — RENDER SERVICES MONITOR WIDGET
+# ============================================================
+def render_service_monitor_widget() -> None:
+    """
+    Toont de live status van alle Render services.
+
+    Bot systeem draait ALTIJD — dit toont per service:
+    ─────────────────────────────────────────────────────────
+    ✅ ACTIEF    → laatste heartbeat < drempel
+    ⚠️ TRAAG    → heartbeat net buiten drempel
+    ❌ OFFLINE  → geen heartbeat / te oud
+    🕐 ONBEKEND → nooit gelopen of geen data
+
+    Services:
+    ─────────────────────────────────────────────────────────
+    🌐 whatsapp_webhook.py  → Web Service (24/7)
+    🔄 trade_monitor.py     → Background Worker (24/7)
+    📊 app.py               → Dashboard (dit, 24/7)
+    🔍 multi_coin_score.py  → Cron Job (*/30 * * * *)
+    📡 regime_labeler.py    → Cron Job (0 */6 * * *)
+    📈 build_btc_regime.py  → Cron Job (0 */4 * * *)
+    📥 history_fetcher.py   → Cron Job (0 */2 * * *)
+    🧠 ai_coach.py          → Cron Job (0 8 * * *)
+    """
+    st.markdown("#### 📋 Render Services Monitor")
+    st.caption(
+        "Bot systeem draait altijd. "
+        "Status afgeleid uit bot_state heartbeats en DB data."
+    )
+
+    # Ophalen van alle relevante timestamps uit bot_state
+    def _haal_ts(key: str) -> Optional[datetime]:
+        raw = get_bot_state_val(key, "")
+        if not raw:
+            return None
+        try:
+            ts = datetime.fromisoformat(raw.replace(" UTC", "").replace("Z", ""))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            return ts
+        except Exception:
+            return None
+
+    now = datetime.now(timezone.utc)
+
+    def _minuten_geleden(ts: Optional[datetime]) -> float:
+        if ts is None:
+            return float("inf")
+        return (now - ts).total_seconds() / 60
+
+    def _status_chip(min_geleden: float, drempel_ok: float,
+                     drempel_warn: float) -> Tuple[str, str, str]:
+        """Geeft (emoji, tekst, kleur) terug op basis van minuten geleden."""
+        if min_geleden == float("inf"):
+            return "🕐", "Onbekend", "#6e7a9a"
+        elif min_geleden <= drempel_ok:
+            return "✅", f"{min_geleden:.0f}m geleden", "#00e676"
+        elif min_geleden <= drempel_warn:
+            return "⚠️", f"{min_geleden:.0f}m geleden", "#ffe600"
+        else:
+            return "❌", f"{min_geleden:.0f}m geleden", "#ff2d55"
+
+    # ── Data ophalen ─────────────────────────────────────────
+    # Monitor laatste run
+    monitor_ts    = _haal_ts("monitor_laatste_run")
+    # Scanner laatste scan
+    scanner_ts    = _haal_ts("laatste_scan_tijd")
+    # ai_coach laatste run
+    coach_ts      = _haal_ts("laatste_coach_datum")
+    # BTC regime laatste update
+    btc_ts        = None
+    try:
+        conn = get_db_connection()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MAX(open_time) FROM public.btc_regime_4h"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    btc_ts = row[0]
+                    if btc_ts.tzinfo is None:
+                        btc_ts = btc_ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+
+    # Market regime laatste update
+    regime_ts = None
+    try:
+        conn = get_db_connection()
+        if conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT MAX(updated_at) FROM public.market_regime"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    regime_ts = row[0]
+                    if regime_ts.tzinfo is None:
+                        regime_ts = regime_ts.replace(tzinfo=timezone.utc)
+    except Exception:
+        pass
+
+    # Candles laatste update
+    candles_info = candles_status()
+
+    # Webhook — test via ping
+    webhook_url = os.getenv("RENDER_WEBHOOK_URL", "")
+    webhook_ok  = False
+    webhook_ms  = 0
+    if webhook_url:
+        result     = ping_render(webhook_url)
+        webhook_ok = result.get("ok", False)
+        webhook_ms = result.get("ms", 0)
+
+    # ── Services definiëren ──────────────────────────────────
+    # (naam, type, bestand, schedule, status_emoji, status_txt, kleur, extra_info)
+    services = []
+
+    # 1. whatsapp_webhook.py — Web Service
+    if webhook_url:
+        emoji_w = "✅" if webhook_ok else "❌"
+        kleur_w = "#00e676" if webhook_ok else "#ff2d55"
+        txt_w   = f"{webhook_ms}ms" if webhook_ok else "Geen response"
+    else:
+        emoji_w, kleur_w, txt_w = "🕐", "#6e7a9a", "URL niet ingesteld"
+    services.append({
+        "naam":     "whatsapp_webhook.py",
+        "type":     "🌐 Web Service",
+        "schedule": "24/7",
+        "emoji":    emoji_w,
+        "txt":      txt_w,
+        "kleur":    kleur_w,
+        "extra":    "WhatsApp commands + /auto_buy endpoint",
+    })
+
+    # 2. trade_monitor.py — Background Worker
+    m_min = _minuten_geleden(monitor_ts)
+    e2, t2, k2 = _status_chip(m_min, 2, 10)
+    open_live   = get_bot_state_val("monitor_open_live",   "0")
+    open_shadow = get_bot_state_val("monitor_open_shadow", "0")
+    services.append({
+        "naam":     "trade_monitor.py",
+        "type":     "🔄 Background Worker",
+        "schedule": "24/7 (elke 30s)",
+        "emoji":    e2,
+        "txt":      t2,
+        "kleur":    k2,
+        "extra":    f"Open: {open_live} live | {open_shadow} shadow",
+    })
+
+    # 3. app.py — Dashboard (dit zelf)
+    services.append({
+        "naam":     "app.py",
+        "type":     "📊 Web Service",
+        "schedule": "24/7",
+        "emoji":    "✅",
+        "txt":      "Nu actief",
+        "kleur":    "#00e676",
+        "extra":    "Dit dashboard — Bloomberg terminal stijl",
+    })
+
+    # 4. multi_coin_score.py — scanner sessies
+    s_min = _minuten_geleden(scanner_ts)
+    e4, t4, k4 = _status_chip(s_min, 35, 90)
+    sig_v  = get_bot_state_val("laatste_scan_signalen", "?")
+    coins_v = get_bot_state_val("laatste_scan_coins",   "?")
+    services.append({
+        "naam":     "multi_coin_score.py",
+        "type":     "🔍 Cron Job",
+        "schedule": "*/30 * * * *",
+        "emoji":    e4,
+        "txt":      t4,
+        "kleur":    k4,
+        "extra":    f"Laatste scan: {coins_v} coins | {sig_v} signalen",
+    })
+
+    # 5. build_btc_regime.py — btc_regime_4h data
+    btc_min = _minuten_geleden(btc_ts)
+    e5, t5, k5 = _status_chip(btc_min, 250, 360)  # 4u ok, 6u warn
+    services.append({
+        "naam":     "build_btc_regime.py",
+        "type":     "📈 Cron Job",
+        "schedule": "0 */4 * * *",
+        "emoji":    e5,
+        "txt":      t5,
+        "kleur":    k5,
+        "extra":    "BTC regime 4H → btc_regime_4h tabel",
+    })
+
+    # 6. regime_labeler.py — market_regime data
+    reg_min = _minuten_geleden(regime_ts)
+    e6, t6, k6 = _status_chip(reg_min, 370, 500)  # 6u ok, 8u warn
+    services.append({
+        "naam":     "regime_labeler.py",
+        "type":     "📡 Cron Job",
+        "schedule": "0 */6 * * *",
+        "emoji":    e6,
+        "txt":      t6,
+        "kleur":    k6,
+        "extra":    "Market regime per coin → market_regime tabel",
+    })
+
+    # 7. history_fetcher.py — candles
+    candles_ok  = candles_info.get("ok", False)
+    candles_n   = candles_info.get("n", 0)
+    candles_oud = candles_info.get("uren_oud", 0)
+    if candles_n == 0:
+        e7, t7, k7 = "❌", "Candles tabel leeg!", "#ff2d55"
+    elif not candles_ok:
+        e7, t7, k7 = "⚠️", f"{candles_oud:.1f}u oud", "#ffe600"
+    else:
+        e7, t7, k7 = "✅", f"{candles_oud:.1f}u oud", "#00e676"
+    services.append({
+        "naam":     "history_fetcher.py",
+        "type":     "📥 Cron Job",
+        "schedule": "0 */2 * * *",
+        "emoji":    e7,
+        "txt":      t7,
+        "kleur":    k7,
+        "extra":    f"{candles_n:,} candles in DB",
+    })
+
+    # 8. ai_coach.py — dagelijks
+    c_min = _minuten_geleden(coach_ts)
+    e8, t8, k8 = _status_chip(c_min, 1500, 2880)  # 25u ok, 48u warn
+    services.append({
+        "naam":     "ai_coach.py",
+        "type":     "🧠 Cron Job",
+        "schedule": "0 8 * * *",
+        "emoji":    e8,
+        "txt":      t8,
+        "kleur":    k8,
+        "extra":    "Dagelijkse analyse + parameter optimalisatie",
+    })
+
+    # ── Render ────────────────────────────────────────────────
+    # Toon als grid: 2 kolommen
+    n_ok   = sum(1 for s in services if s["kleur"] == "#00e676")
+    n_warn = sum(1 for s in services if s["kleur"] == "#ffe600")
+    n_err  = sum(1 for s in services if s["kleur"] == "#ff2d55")
+
+    # Overall status banner
+    if n_err > 0:
+        overall_kleur = "#ff2d55"
+        overall_txt   = f"⚠️ {n_err} SERVICE(S) OFFLINE"
+    elif n_warn > 0:
+        overall_kleur = "#ffe600"
+        overall_txt   = f"⚠️ {n_warn} SERVICE(S) TRAAG"
+    else:
+        overall_kleur = "#00e676"
+        overall_txt   = f"✅ ALLE {n_ok} SERVICES ACTIEF"
+
+    st.markdown(
+        f'<div style="text-align:center;background:rgba(0,0,0,0.3);'
+        f'border:1px solid {overall_kleur}55;border-radius:10px;'
+        f'padding:10px;margin-bottom:12px;font-size:13px;'
+        f'font-weight:700;color:{overall_kleur};">'
+        f'{overall_txt}'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Services in 2 kolommen
+    col_a, col_b = st.columns(2)
+    for i, svc in enumerate(services):
+        col = col_a if i % 2 == 0 else col_b
+        with col:
+            st.markdown(
+                f'<div style="background:#0d0d14;border:1px solid {svc["kleur"]}33;'
+                f'border-left:3px solid {svc["kleur"]};'
+                f'border-radius:6px;padding:10px;margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;align-items:flex-start;">'
+                f'<div>'
+                f'<div style="font-size:12px;font-weight:700;color:#ddd;">'
+                f'{svc["emoji"]} {svc["naam"]}</div>'
+                f'<div style="font-size:10px;color:#6e7a9a;margin-top:1px;">'
+                f'{svc["type"]} · {svc["schedule"]}</div>'
+                f'<div style="font-size:10px;color:#555;margin-top:3px;">'
+                f'{svc["extra"]}</div>'
+                f'</div>'
+                f'<div style="text-align:right;min-width:80px;">'
+                f'<div style="font-size:11px;color:{svc["kleur"]};font-weight:700;">'
+                f'{svc["txt"]}</div>'
+                f'</div>'
+                f'</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+    # Refresh knop
+    if st.button("🔄 Services verversen", key="refresh_services",
+                 use_container_width=False):
+        st.cache_data.clear()
+        st.rerun()
+
+    st.caption(
+        f"Bijgewerkt: {now.strftime('%H:%M:%S UTC')} · "
+        f"Groen ≤ drempel · Geel = traag · Rood = offline/leeg"
+    )
 
 
 def render_help_page(
@@ -5652,7 +6288,6 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         unsafe_allow_html=True,
     )
 
-    import calendar as cal_module
 
     # ── MAAND SELECTIE ────────────────────────────────────────
     mc1, mc2, mc3 = st.columns([1, 1, 2], gap="small")
@@ -5662,7 +6297,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
                                  index=now.year - 2024, key="cal_year")
     with mc2:
         sel_month = st.selectbox("Maand", list(range(1, 13)), index=now.month - 1,
-                                 format_func=lambda m: cal_module.month_name[m], key="cal_month")
+                                 format_func=lambda m: calendar.month_name[m], key="cal_month")
     with mc3:
         # Alleen REAL trades voor kalender (omdat alleen die echt geld zijn)
         cal_filter = st.radio(
@@ -5700,8 +6335,8 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
     pnl_data = pnl_data_r  # Kalender toont altijd R
 
     # ── KALENDER GRID ─────────────────────────────────────────
-    days_in_month = cal_module.monthrange(sel_year, sel_month)[1]
-    first_weekday = cal_module.monthrange(sel_year, sel_month)[0]
+    days_in_month = calendar.monthrange(sel_year, sel_month)[1]
+    first_weekday = calendar.monthrange(sel_year, sel_month)[0]
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -5965,27 +6600,36 @@ def get_live_context(history_df: pd.DataFrame, real_df: pd.DataFrame) -> Dict[st
                     f"({r.get('setup_type','?')} / {r.get('regime','?')})"
                 )
 
+        live_trading_aan = get_bot_state_val("bot_active", "false").lower() == "true"
         return {
-            "bot_status":       bl_status,
-            "btc_regime":       safe_str(btc.get("regime"), "UNKNOWN"),
-            "btc_strength":     safe_float(btc.get("strength")),
-            "btc_prijs":        safe_float(btc.get("close")),
-            "pnl_vandaag":      round(pnl_dag, 4),
-            "cons_losses":      cons,
-            "profit_factor_30": pf30,
-            "all_trades":       safe_int(s_all.get("count")),
-            "all_winrate":      round(safe_float(s_all.get("winrate")), 1),
-            "all_total_r":      round(safe_float(s_all.get("total_r")), 2),
-            "real_trades":      safe_int(s_real.get("count")),
-            "real_winrate":     round(safe_float(s_real.get("winrate")), 1),
-            "real_pnl_eur":     round(safe_float(s_real.get("total_eur")), 4),
-            "real_expectancy":  round(safe_float(s_real.get("expectancy")), 3),
-            "real_max_dd":      round(safe_float(s_real.get("max_dd")), 2),
-            "laatste_trades":   laatste_trades,
-            "min_score":        MIN_SCORE_TO_TRADE,
-            "max_per_trade":    MAX_PER_TRADE_EUR,
-            "trading_uren":     f"{TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC",
-            "atr_multiplier":   ATR_MULTIPLIER,
+            # ── Architectuur status (NOOIT verwarren) ────────────────
+            # bot_systeem_draait = ALTIJD True — scanner/coach/monitor draaien 24/7
+            # live_trading_aan   = de ENIGE aan/uit schakelaar
+            "bot_systeem_draait":  True,          # altijd True — Render service draait
+            "live_trading_aan":    live_trading_aan,
+            "live_trading_label":  bl_status,     # "LIVE TRADING AAN/UIT/GEPAUZEERD"
+            "scanner_draait":      True,           # scanner draait altijd
+            # ── Oud veld bewaard voor compat maar gebruik live_trading_label ──
+            "bot_status":          bl_status,
+            "btc_regime":         safe_str(btc.get("regime"), "UNKNOWN"),
+            "btc_strength":       safe_float(btc.get("strength")),
+            "btc_prijs":          safe_float(btc.get("close")),
+            "pnl_vandaag":        round(pnl_dag, 4),
+            "cons_losses":        cons,
+            "profit_factor_30":   pf30,
+            "all_trades":         safe_int(s_all.get("count")),
+            "all_winrate":        round(safe_float(s_all.get("winrate")), 1),
+            "all_total_r":        round(safe_float(s_all.get("total_r")), 2),
+            "real_trades":        safe_int(s_real.get("count")),
+            "real_winrate":       round(safe_float(s_real.get("winrate")), 1),
+            "real_pnl_eur":       round(safe_float(s_real.get("total_eur")), 4),
+            "real_expectancy":    round(safe_float(s_real.get("expectancy")), 3),
+            "real_max_dd":        round(safe_float(s_real.get("max_dd")), 2),
+            "laatste_trades":     laatste_trades,
+            "min_score":          MIN_SCORE_TO_TRADE,
+            "max_per_trade":      MAX_PER_TRADE_EUR,
+            "trading_uren":       f"{TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC",
+            "atr_multiplier":     ATR_MULTIPLIER,
         }
     except Exception as e:
         log_debug(f"get_live_context fout: {e}")
@@ -6001,42 +6645,82 @@ def coach_antwoord(vraag: str, context: Dict[str, Any], history: List[Dict]) -> 
         f"  • {t}" for t in context.get("laatste_trades", [])
     ) or "  Geen recente trades"
 
-    system_prompt = f"""Je bent de AI Coach van een automatische cryptocurrency trading bot.
-Je hebt LIVE toegang tot alle bot data en kan vragen beantwoorden en concrete adviezen geven.
+    live_trading_aan  = context.get("live_trading_aan", False)
+    live_trading_label = "AAN ✅ — koopt echt met €{:.2f} per trade".format(context.get("max_per_trade", 0.50)) if live_trading_aan else "UIT 🟡 — scanner draait, shadow/sim trades, GEEN echt geld"
+    btc_regime   = context.get("btc_regime", "ONBEKEND")
+    btc_strength = context.get("btc_strength", 0.0)
+    btc_prijs    = context.get("btc_prijs", 0.0)
+    btc_display  = f"{btc_regime} ({btc_strength:.0f}% sterkte, €{btc_prijs:,.0f})" if btc_prijs > 0 else f"{btc_regime} (prijs nog niet geladen)"
 
-ACTUELE BOT DATA (nu geladen):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Bot status:        {context.get('bot_status', '?')}
-BTC regime:        {context.get('btc_regime', '?')} ({context.get('btc_strength', 0):.0f}% sterkte)
-BTC prijs:         €{context.get('btc_prijs', 0):,.0f}
+    system_prompt = f"""Je bent de AI Coach van een automatische cryptocurrency trading bot genaamd "Heintji".
+Je spreekt ALTIJD Nederlands en geeft concrete, directe adviezen.
 
-PERFORMANCE:
-Win rate (live):   {context.get('real_winrate', 0):.1f}% ({context.get('real_trades', 0)} trades)
-Win rate (alles):  {context.get('all_winrate', 0):.1f}% ({context.get('all_trades', 0)} trades)
-PnL vandaag:       €{context.get('pnl_vandaag', 0):.4f}
-PnL totaal live:   €{context.get('real_pnl_eur', 0):.4f}
-Profit Factor 30d: {context.get('profit_factor_30', 0):.2f}
-Expectancy:        {context.get('real_expectancy', 0):.3f} R per trade
-Max drawdown:      {context.get('real_max_dd', 0):.2f} R
-Verlies streak:    {context.get('cons_losses', 0)}x op rij
+╔══════════════════════════════════════════════════════════════╗
+║  ARCHITECTUUR — NOOIT VERWARREN, ALTIJD ONTHOUDEN            ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                               ║
+║  ONDERDEEL 1: BOT SYSTEEM — DRAAIT 24/7, NOOIT UIT           ║
+║  ─────────────────────────────────────────────────────────── ║
+║  • scanner (multi_coin_score.py) — scant elke 30 min         ║
+║  • ai_coach (ai_coach.py) — leert van trades                  ║
+║  • trade_monitor — bewaakt open posities                      ║
+║  • dashboard (app.py) — dit dashboard                         ║
+║                                                               ║
+║  STATUS: ✅ ALTIJD AAN — Render service stopt nooit           ║
+║  → "Bot: ?" of lege DB = data nog niet geladen, NIET kapot    ║
+║  → Performance 0 = geen trades YET, NIET dat bot kapot is     ║
+║                                                               ║
+║  ONDERDEEL 2: LIVE TRADING SCHAKELAAR — KAN AAN/UIT           ║
+║  ─────────────────────────────────────────────────────────── ║
+║  • AAN  → bot koopt echt met euros op Bitvavo                 ║
+║  • UIT  → scanner draait normaal, signalen als shadow/sim     ║
+║           GEEN echt geld gebruikt                             ║
+║                                                               ║
+║  DIT IS DE ENIGE SCHAKELAAR DIE DE GEBRUIKER BEDIENT          ║
+╚══════════════════════════════════════════════════════════════╝
 
-LAATSTE 5 TRADES:
+KRITIEKE REGELS VOOR JOUW ANTWOORDEN:
+1. Zeg NOOIT "bot is gestopt", "verbindingsprobleem" of "bot status onduidelijk"
+   tenzij de Render service echt down is (wat jij NIET kunt weten)
+2. Als live trading UIT is: benoem dit als normale situatie, systeem draait gewoon
+3. Als data 0 of leeg is: zeg "nog geen trades" of "data laadt nog", NIET "kapot"
+4. "Bot: ?" in status = bot_state tabel nog leeg = normaal bij nieuwe installatie
+5. Geef ALTIJD een concrete aanbeveling wat de gebruiker nu kan doen
+
+HUIDIGE LIVE STATUS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Bot systeem:     ✅ DRAAIT (Render service = altijd aan)
+Live trading:    {live_trading_label}
+BTC regime:      {btc_display}
+PnL vandaag:     €{context.get("pnl_vandaag", 0):.4f}
+Verlies streak:  {context.get("cons_losses", 0)}x op rij
+Profit Factor:   {context.get("profit_factor_30", 0):.2f} (30d, doel: >1.5)
+
+TRADE PERFORMANCE:
+Live trades:     {context.get("real_trades", 0)} trades met echt geld
+Win rate live:   {context.get("real_winrate", 0):.1f}%
+PnL totaal:      €{context.get("real_pnl_eur", 0):.4f}
+Alle trades:     {context.get("all_trades", 0)} (incl. sim/shadow)
+Win rate alles:  {context.get("all_winrate", 0):.1f}%
+Expectancy:      {context.get("real_expectancy", 0):.3f} R per trade
+Max drawdown:    {context.get("real_max_dd", 0):.2f} R
+
+RECENTE TRADES:
 {laatste_trades_txt}
 
-HUIDIGE INSTELLINGEN:
-Min score:         {context.get('min_score', 85)}
-Max per trade:     €{context.get('max_per_trade', 0.50):.2f}
-Trading uren:      {context.get('trading_uren', '08:00-22:00 UTC')}
-ATR multiplier:    {context.get('atr_multiplier', 2.0)}
+INSTELLINGEN:
+Min score:       {context.get("min_score", 85)} (score drempel voor trades)
+Max per trade:   €{context.get("max_per_trade", 0.50):.2f}
+Trading uren:    {context.get("trading_uren", "08:00-22:00 UTC")}
+ATR multiplier:  {context.get("atr_multiplier", 2.0)}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-INSTRUCTIES:
-- Spreek altijd in het Nederlands
-- Wees direct en concreet
-- Geef altijd een concrete ACTIE aanbeveling
-- Als er een probleem is zeg PRECIES wat aanpassen inclusief de nieuwe waarde
-- Gebruik de live data hierboven bij elk antwoord
-- Schrijf parameter namen exact: MIN_SCORE_TO_TRADE, ATR_MULTIPLIER, etc.""".strip()
+CONTEXT INTERPRETATIE:
+- real_trades = 0: Bot heeft nog GEEN live trades uitgevoerd (normaal bij start)
+- all_trades > 0:  Sim/shadow data aanwezig, systeem werkt
+- btc_regime = UNKNOWN: BTC data nog niet geladen of fetcher nog niet gestart
+- performance = 0: Geen data YET, NIET dat iets kapot is
+
+Wees altijd positief en constructief. Leg exact uit wat de status betekent.""".strip()
 
     messages = [
         {"role": m["role"], "content": m["content"]}
@@ -6054,7 +6738,7 @@ INSTRUCTIES:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-sonnet-4-6",
                 "max_tokens": 600,
                 "system":     system_prompt,
                 "messages":   messages,
@@ -6071,6 +6755,121 @@ INSTRUCTIES:
     except Exception as e:
         return f"❌ Fout: {type(e).__name__}"
 
+
+
+
+# ============================================================
+# v3.0 HELPER FUNCTIES — Render ping, trader status, candles
+# ============================================================
+@st.cache_data(ttl=60, show_spinner=False)
+def ping_render(url: str) -> Dict[str, Any]:
+    """Ping een Render service en geef status terug."""
+    if not url:
+        return {"ok": False, "status": 0, "ms": 0}
+    try:
+        import time as _time
+        t0   = _time.time()
+        resp = requests.get(url + "/health", timeout=10)
+        ms   = round((_time.time() - t0) * 1000)
+        return {"ok": resp.ok, "status": resp.status_code, "ms": ms}
+    except Exception as e:
+        return {"ok": False, "status": 0, "ms": 0, "error": str(e)}
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def live_trader_status() -> Dict[str, Any]:
+    """Leest live_trader status uit bot_state."""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return {}
+        with conn.cursor() as cur:
+            cur.execute("""
+            SELECT key, value FROM public.bot_state
+            WHERE key IN (
+                'live_trader_busy', 'live_trader_last_action',
+                'live_trader_last_ts', 'live_trader_error'
+            )
+            """)
+            return {row[0]: row[1] for row in cur.fetchall()}
+    except Exception:
+        return {}
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def candles_status() -> Dict[str, Any]:
+    """Controleert versheid van candle data."""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return {"ok": False, "reden": "Geen DB"}
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*), MAX(updated_at) FROM public.candles")
+            row = cur.fetchone()
+            n       = row[0] if row else 0
+            laatste = row[1] if row else None
+            uren_oud = 0
+            if laatste:
+                from datetime import timezone as tz
+                ts = laatste.replace(tzinfo=tz.utc) if laatste.tzinfo is None else laatste
+                uren_oud = (datetime.now(tz.utc) - ts).total_seconds() / 3600
+            return {
+                "ok":       n > 0 and uren_oud < 3,
+                "n":        n,
+                "uren_oud": round(uren_oud, 1),
+            }
+    except Exception as e:
+        return {"ok": False, "reden": str(e)}
+
+
+def valideer_trade_params(entry: float, stop: float, target: float) -> List[str]:
+    """Valideert trade parameters en geeft lijst van fouten terug."""
+    fouten = []
+    if entry <= 0:      fouten.append("Entry prijs moet positief zijn")
+    if stop <= 0:       fouten.append("Stop loss moet positief zijn")
+    if target <= 0:     fouten.append("Target moet positief zijn")
+    if stop >= entry:   fouten.append("Stop loss moet onder entry liggen")
+    if target <= entry: fouten.append("Target moet boven entry liggen")
+    risico = entry - stop
+    winst  = target - entry
+    if risico > 0 and winst / risico < 1.0:
+        fouten.append(f"R/R ratio {winst/risico:.2f} te laag (min 1.0)")
+    return fouten
+
+
+def get_whatsapp_notificatie_log() -> List[Dict]:
+    """Leest WhatsApp notificatie log uit bot_state."""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return []
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value FROM public.bot_state WHERE key='whatsapp_notificatie_log'"
+            )
+            row = cur.fetchone()
+            if row and row[0]:
+                data = json.loads(row[0])
+                return data if isinstance(data, list) else []
+    except Exception:
+        pass
+    return []
+
+
+def get_trade_monitor_check() -> str:
+    """Leest laatste trade_monitor check timestamp uit bot_state."""
+    try:
+        conn = get_db_connection()
+        if conn is None:
+            return "onbekend"
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT value FROM public.bot_state WHERE key='trade_monitor_last_check'"
+            )
+            row = cur.fetchone()
+            return row[0] if row else "nooit"
+    except Exception:
+        return "fout"
 
 def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     """AI Coach Chat pagina — live conversatie met volledige bot context."""
@@ -6106,20 +6905,53 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     pf_kleur   = "#00e676" if context.get("profit_factor_30", 0) >= 1.5 else "#ff2d55"
     str_kleur  = "#ff2d55" if context.get("cons_losses", 0) >= 3 else "#ffffff"
 
-    st.markdown(f"""
-    <div class="chat-context-card">
+    # Context display card — visueel duidelijk gescheiden
+    live_aan_nu = context.get("live_trading_aan", False)
+    ltrade_kleur = C_WIN if live_aan_nu else C_WARN
+    ltrade_label = "AAN" if live_aan_nu else "UIT"
+
+    st.markdown(
+        f'''<div class="chat-context-card">
         <div class="chat-context-title">⚡ Live Bot Data — automatisch geladen</div>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;">
-            <span>Bot: <b style="color:#fff">{context.get('bot_status','?')}</b></span>
-            <span>BTC: <b style="color:#fff">{context.get('btc_regime','?')}</b></span>
-            <span>Win rate: <b style="color:#00e676">{context.get('real_winrate',0):.1f}%</b> live</span>
-            <span>PnL vandaag: <b style="color:{pnl_kleur}">{pnl_sign}€{abs(context.get('pnl_vandaag',0)):.4f}</b></span>
-            <span>PF 30d: <b style="color:{pf_kleur}">{context.get('profit_factor_30',0):.2f}</b></span>
-            <span>Streak: <b style="color:{str_kleur}">{context.get('cons_losses',0)}x verlies</b></span>
-            <span>Trades: <b style="color:#fff">{context.get('real_trades',0)}</b> live</span>
+        <div style="display:flex;gap:0;flex-wrap:wrap;align-items:center;font-size:12px;">
+
+            <!-- Bot systeem: ALTIJD groen, nooit veranderend -->
+            <span style="background:rgba(0,230,118,0.10);border:1px solid rgba(0,230,118,0.25);
+                border-radius:8px;padding:3px 8px;margin-right:8px;margin-bottom:4px;">
+                🤖 Bot systeem: <b style="color:{C_WIN};">✅ DRAAIT</b>
+            </span>
+
+            <!-- Live trading: de ENIGE schakelaar -->
+            <span style="background:{"rgba(0,230,118,0.10)" if live_aan_nu else "rgba(255,230,0,0.08)"};
+                border:1px solid {"rgba(0,230,118,0.25)" if live_aan_nu else "rgba(255,230,0,0.20)"};
+                border-radius:8px;padding:3px 8px;margin-right:16px;margin-bottom:4px;">
+                💶 Live trading: <b style="color:{ltrade_kleur};">{ltrade_label}</b>
+            </span>
+
+            <span style="color:var(--muted);font-size:10px;margin-right:16px;margin-bottom:4px;">│</span>
+
+            <span style="margin-right:12px;margin-bottom:4px;">
+                BTC: <b style="color:#fff;">{context.get("btc_regime","?")}</b>
+            </span>
+            <span style="margin-right:12px;margin-bottom:4px;">
+                Win rate: <b style="color:{C_WIN};">{context.get("real_winrate",0):.1f}%</b> live
+            </span>
+            <span style="margin-right:12px;margin-bottom:4px;">
+                PnL vandaag: <b style="color:{pnl_kleur};">{pnl_sign}€{abs(context.get("pnl_vandaag",0)):.4f}</b>
+            </span>
+            <span style="margin-right:12px;margin-bottom:4px;">
+                PF 30d: <b style="color:{pf_kleur};">{context.get("profit_factor_30",0):.2f}</b>
+            </span>
+            <span style="margin-right:12px;margin-bottom:4px;">
+                Streak: <b style="color:{str_kleur};">{context.get("cons_losses",0)}x</b>
+            </span>
+            <span style="margin-bottom:4px;">
+                Trades: <b style="color:#fff;">{context.get("real_trades",0)}</b> live
+            </span>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        </div>''',
+        unsafe_allow_html=True,
+    )
 
     # Suggesties bij leeg gesprek
     if not st.session_state.coach_messages:
@@ -6527,3 +7359,470 @@ st.caption(
     f"{now_utc().strftime('%Y-%m-%d %H:%M UTC')}"
 )
 st.markdown("</div>", unsafe_allow_html=True)
+
+
+# ============================================================
+# v3.0 UITBREIDINGEN — NIEUWE FUNCTIES EN PAGINA'S
+# ============================================================
+
+# ── TWILIO DAGMETER WIDGET ────────────────────────────────────
+@st.cache_data(ttl=60, show_spinner=False)
+def get_twilio_dagmeter() -> Dict[str, Any]:
+    """
+    Leest het aantal WhatsApp berichten van vandaag uit bot_state.
+    Twilio gratis account = max 50 berichten/dag.
+    Als dagmeter > 40 → waarschuwing op dashboard.
+    """
+    if not db_ready():
+        return {"count": 0, "max": 50, "pct": 0}
+    try:
+        waarde = get_bot_state_val("twilio_dagmeter", "0")
+        count  = safe_int(waarde)
+        max_b  = 50
+        return {
+            "count": count,
+            "max":   max_b,
+            "pct":   round(count / max_b * 100, 1),
+            "ok":    count < 40,
+        }
+    except Exception:
+        return {"count": 0, "max": 50, "pct": 0, "ok": True}
+
+
+def render_twilio_dagmeter_widget() -> None:
+    """
+    Toont de Twilio dagmeter als kleine progress bar.
+    Kleur: groen < 40, oranje 40-45, rood >= 45.
+    """
+    data  = get_twilio_dagmeter()
+    count = data.get("count", 0)
+    max_b = data.get("max", 50)
+    pct   = data.get("pct", 0)
+
+    if count == 0:
+        kleur = "#22c55e"
+        emoji = "📱"
+    elif count < 40:
+        kleur = "#22c55e"
+        emoji = "📱"
+    elif count < 45:
+        kleur = "#f59e0b"
+        emoji = "⚠️"
+    else:
+        kleur = "#ef4444"
+        emoji = "🚨"
+
+    st.markdown(
+        f"""<div style='background:#1a1f2e;border-radius:8px;padding:8px 12px;margin-bottom:8px;'>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:4px;'>{emoji} WhatsApp dagmeter</div>
+        <div style='background:#0f1117;border-radius:4px;height:8px;overflow:hidden;'>
+          <div style='width:{pct}%;height:100%;background:{kleur};border-radius:4px;transition:width .3s;'></div>
+        </div>
+        <div style='color:{kleur};font-size:11px;margin-top:4px;'>{count}/{max_b} berichten vandaag</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── SCAN EFFICIENCY MINI WIDGET ───────────────────────────────
+@st.cache_data(ttl=60, show_spinner=False)
+def get_scan_efficiency_data() -> Dict[str, Any]:
+    """Haalt scan efficiency data op uit bot_state voor mini widget."""
+    if not db_ready():
+        return {}
+    try:
+        sessie_raw = get_bot_state_val("laatste_scan_sessie", "{}")
+        sessie     = json.loads(sessie_raw) if sessie_raw else {}
+        return {
+            "gescand":        safe_int(sessie.get("gescand")),
+            "signalen":       safe_int(sessie.get("signalen")),
+            "beste_coin":     safe_str(sessie.get("beste_coin")),
+            "beste_score":    safe_int(sessie.get("beste_score")),
+            "duur_sec":       safe_float(sessie.get("duur_sec")),
+            "btc_regime":     safe_str(sessie.get("btc_regime", "?")),
+            "score_drempel":  safe_int(sessie.get("score_drempel", 92)),
+            "conversie_pct":  round(safe_int(sessie.get("signalen")) /
+                                    max(safe_int(sessie.get("gescand")), 1) * 100, 2),
+            "tijd":           safe_str(get_bot_state_val("laatste_scan_tijd", "nooit")),
+        }
+    except Exception:
+        return {}
+
+
+def render_scan_efficiency_widget() -> None:
+    """
+    Toont scan efficiency als compacte widget.
+    Laat zien: gescand, signalen, conversie%, beste coin, duur.
+    """
+    d = get_scan_efficiency_data()
+    if not d:
+        st.caption("⏳ Nog geen scan uitgevoerd")
+        return
+
+    gescand   = d.get("gescand", 0)
+    signalen  = d.get("signalen", 0)
+    conv      = d.get("conversie_pct", 0)
+    beste     = d.get("beste_coin", "—")
+    score     = d.get("beste_score", 0)
+    duur      = d.get("duur_sec", 0)
+    tijd      = d.get("tijd", "nooit")
+    drempel   = d.get("score_drempel", 92)
+    btc       = d.get("btc_regime", "?")
+
+    kleur_conv = "#22c55e" if conv >= 0.3 else "#f59e0b" if conv >= 0.1 else "#94a3b8"
+
+    st.markdown(
+        f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🔍 Laatste scan — {tijd}</div>
+        <div style='display:flex;gap:16px;flex-wrap:wrap;'>
+          <span style='color:#e2e8f0;font-size:12px;'>📊 {gescand} gescand</span>
+          <span style='color:{kleur_conv};font-size:12px;'>🎯 {signalen} signalen ({conv:.2f}%)</span>
+          <span style='color:#94a3b8;font-size:12px;'>⏱️ {duur:.0f}s</span>
+          <span style='color:#94a3b8;font-size:12px;'>BTC: {btc} | drempel: {drempel}</span>
+        </div>
+        {f"<div style='color:#f59e0b;font-size:11px;margin-top:4px;'>Beste: {beste} score={score}</div>" if beste and beste != "—" else ""}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── KELLY CRITERION WIDGET ────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def get_kelly_data() -> Dict[str, Any]:
+    """Haalt Kelly Criterion data op uit coach geheugen."""
+    if not db_ready():
+        return {}
+    try:
+        df = run_query("""
+        SELECT waarde FROM public.coach_memory
+        WHERE type='kelly' AND sleutel LIKE 'analyse_%'
+        ORDER BY bijgewerkt DESC LIMIT 1
+        """)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return json.loads(df.iloc[0]["waarde"])
+    except Exception:
+        pass
+    return {}
+
+
+def render_kelly_widget() -> None:
+    """
+    Toont Kelly Criterion positiegrootte aanbeveling als widget.
+    Rood als edge negatief, groen als edge positief.
+    """
+    d = get_kelly_data()
+    if not d:
+        return
+
+    kelly_pct  = safe_float(d.get("kelly_pct"))
+    half_kelly = safe_float(d.get("half_kelly_pct"))
+    aanbevolen = safe_float(d.get("aanbevolen_eur", 0.50))
+    positief   = d.get("edge_positief", True)
+    wr         = safe_float(d.get("win_rate_pct"))
+    n          = safe_int(d.get("n"))
+
+    if n < 10:
+        return
+
+    kleur  = "#22c55e" if positief else "#ef4444"
+    emoji  = "✅" if positief else "❌"
+    status = "POSITIEF" if positief else "NEGATIEF"
+
+    st.markdown(
+        f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>📐 Kelly Criterion</div>
+        <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;'>
+          <span style='color:{kleur};font-size:13px;font-weight:600;'>{emoji} Edge {status}</span>
+          <span style='color:#e2e8f0;font-size:12px;'>WR: {wr:.1f}%</span>
+          <span style='color:#e2e8f0;font-size:12px;'>Half Kelly: {half_kelly:.1f}%</span>
+          <span style='color:{kleur};font-size:12px;font-weight:600;'>Aanbevolen: €{aanbevolen:.2f}/trade</span>
+        </div>
+        <div style='color:#64748b;font-size:10px;margin-top:4px;'>
+          Gebaseerd op {n} live trades | Kelly: {kelly_pct:.1f}%
+        </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── COIN CLUSTER WIDGET ───────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def get_coin_clusters() -> Dict[str, List[str]]:
+    """Haalt coin clusters op uit bot_state."""
+    if not db_ready():
+        return {}
+    try:
+        raw = get_bot_state_val("coach_coin_clusters", "{}")
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def render_coin_clusters_widget() -> None:
+    """
+    Toont coin clusters (STAR/STABLE/WEAK/ZOMBIE) als compacte widget.
+    STAR coins = groen, ZOMBIE coins = rood.
+    """
+    clusters = get_coin_clusters()
+    if not clusters:
+        return
+
+    st.markdown(
+        "<div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🏷️ Coin Clusters</div>",
+        unsafe_allow_html=True,
+    )
+
+    cluster_config = [
+        ("STAR",   "⭐", "#f59e0b", "Beste performers"),
+        ("STABLE", "✅", "#22c55e", "Solide"),
+        ("WEAK",   "⚠️", "#94a3b8", "Underperform"),
+        ("ZOMBIE", "💀", "#ef4444", "Blacklist"),
+    ]
+
+    rijen = []
+    for naam, emoji, kleur, label in cluster_config:
+        coins = clusters.get(naam, [])
+        if not coins:
+            continue
+        coins_txt = ", ".join(coins[:4])
+        if len(coins) > 4:
+            coins_txt += f" +{len(coins)-4}"
+        rijen.append(
+            f"<div style='margin-bottom:4px;'>"
+            f"<span style='color:{kleur};font-size:11px;'>{emoji} {naam} ({len(coins)}): </span>"
+            f"<span style='color:#94a3b8;font-size:11px;'>{coins_txt}</span>"
+            f"</div>"
+        )
+
+    if rijen:
+        st.markdown(
+            f"<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>"
+            + "".join(rijen)
+            + "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ── PARAMETER ROLLBACK WIDGET ─────────────────────────────────
+@st.cache_data(ttl=120, show_spinner=False)
+def get_recente_rollbacks() -> List[Dict]:
+    """Haalt recente parameter rollbacks op uit de DB."""
+    if not db_ready():
+        return []
+    try:
+        df = run_query("""
+        SELECT tijdstip, parameter, test_waarde, origineel, wr_voor, wr_na, reden
+        FROM public.coach_param_rollback_log
+        WHERE gerollback = TRUE
+          AND tijdstip >= NOW() - INTERVAL '7 days'
+        ORDER BY tijdstip DESC LIMIT 5
+        """)
+        if isinstance(df, pd.DataFrame) and not df.empty:
+            return df.to_dict("records")
+    except Exception:
+        pass
+    return []
+
+
+def render_rollback_widget() -> None:
+    """
+    Toont recente parameter rollbacks als info widget.
+    Laat zien welke parameters automatisch zijn teruggezet.
+    """
+    rollbacks = get_recente_rollbacks()
+    if not rollbacks:
+        return
+
+    items = []
+    for rb in rollbacks[:3]:
+        param  = safe_str(rb.get("parameter", ""))
+        oud    = safe_str(rb.get("test_waarde", ""))
+        nieuw  = safe_str(rb.get("origineel", ""))
+        wr_v   = safe_float(rb.get("wr_voor"))
+        wr_n   = safe_float(rb.get("wr_na"))
+        verschil = wr_n - wr_v
+        items.append(
+            f"<div style='margin-bottom:4px;font-size:11px;'>"
+            f"<span style='color:#f59e0b;'>🔄 {param}</span>: "
+            f"<span style='color:#94a3b8;'>{oud} → {nieuw}</span> "
+            f"<span style='color:#ef4444;'>(WR {verschil:+.1f}%)</span>"
+            f"</div>"
+        )
+
+    st.markdown(
+        f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #f59e0b;'>
+        <div style='color:#f59e0b;font-size:11px;margin-bottom:6px;'>⚙️ Parameter Rollbacks (7d)</div>
+        {"".join(items)}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── DAGBRIEF WIDGET ───────────────────────────────────────────
+@st.cache_data(ttl=300, show_spinner=False)
+def get_coach_dagbrief() -> str:
+    """Haalt de dagelijkse coach brief op uit bot_state."""
+    if not db_ready():
+        return ""
+    return get_bot_state_val("coach_dagbrief", "")
+
+
+def render_dagbrief_widget() -> None:
+    """
+    Toont de dagelijkse AI coach brief als opvouwbare sectie.
+    Wordt om 08:00 UTC bijgewerkt door ai_coach.py.
+    """
+    brief = get_coach_dagbrief()
+    if not brief:
+        return
+
+    with st.expander("📋 Dagelijkse Coach Brief", expanded=False):
+        st.markdown(
+            f"<pre style='color:#e2e8f0;font-size:12px;white-space:pre-wrap;"
+            f"background:#0f1117;padding:10px;border-radius:6px;'>{brief}</pre>",
+            unsafe_allow_html=True,
+        )
+
+
+# ── SHADOW vs LIVE VERGELIJKING WIDGET ───────────────────────
+@st.cache_data(ttl=120, show_spinner=False)
+def get_shadow_vs_live() -> Dict[str, Any]:
+    """Vergelijkt shadow en live win rates voor de laatste 30 dagen."""
+    if not db_ready():
+        return {}
+    try:
+        df = run_query("""
+        SELECT
+            CASE WHEN UPPER(COALESCE(source,'')) IN ('REAL','LIVE') THEN 'LIVE'
+                 ELSE 'SHADOW' END AS bron,
+            COUNT(*) AS n,
+            ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric
+                  /NULLIF(COUNT(*),0)*100,1) AS wr
+        FROM public.experience_trades
+        WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW')
+          AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+          AND COALESCE(exit_time,updated_at) >= NOW() - INTERVAL '30 days'
+        GROUP BY 1
+        """)
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            return {}
+        result = {}
+        for _, row in df.iterrows():
+            bron = safe_str(row.get("bron"))
+            result[bron] = {
+                "n":  safe_int(row.get("n")),
+                "wr": safe_float(row.get("wr")),
+            }
+        return result
+    except Exception:
+        return {}
+
+
+def render_shadow_live_widget() -> None:
+    """
+    Toont shadow vs live win rate vergelijking.
+    Grote discrepantie (>10%) = waarschuwing.
+    """
+    data   = get_shadow_vs_live()
+    live   = data.get("LIVE",   {})
+    shadow = data.get("SHADOW", {})
+
+    if not live and not shadow:
+        return
+
+    live_wr   = live.get("wr", 0)
+    shadow_wr = shadow.get("wr", 0)
+    live_n    = live.get("n", 0)
+    shadow_n  = shadow.get("n", 0)
+    verschil  = shadow_wr - live_wr
+
+    kleur_diff = "#22c55e" if abs(verschil) <= 10 else "#ef4444"
+    status     = "✅ Consistent" if abs(verschil) <= 10 else "⚠️ Discrepantie"
+
+    st.markdown(
+        f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🌉 Shadow ↔ Live (30d)</div>
+        <div style='display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
+          <div>
+            <div style='color:#94a3b8;font-size:10px;'>🎭 Shadow</div>
+            <div style='color:#e2e8f0;font-size:14px;font-weight:600;'>{shadow_wr:.1f}%</div>
+            <div style='color:#64748b;font-size:10px;'>{shadow_n} trades</div>
+          </div>
+          <div style='color:#475569;font-size:18px;'>↔</div>
+          <div>
+            <div style='color:#94a3b8;font-size:10px;'>🔴 Live</div>
+            <div style='color:#e2e8f0;font-size:14px;font-weight:600;'>{live_wr:.1f}%</div>
+            <div style='color:#64748b;font-size:10px;'>{live_n} trades</div>
+          </div>
+          <div>
+            <div style='color:#94a3b8;font-size:10px;'>Verschil</div>
+            <div style='color:{kleur_diff};font-size:12px;font-weight:600;'>{verschil:+.1f}%</div>
+            <div style='color:{kleur_diff};font-size:10px;'>{status}</div>
+          </div>
+        </div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+# ── RENDER UITGEBREIDE MONITOR PAGINA ────────────────────────
+def render_uitgebreide_monitor_pagina() -> None:
+    """
+    Uitgebreide monitor pagina met alle v3.0 widgets gecombineerd.
+    Geeft een compleet beeld van de bot gezondheid:
+    - Twilio dagmeter
+    - Scan efficiency
+    - Kelly Criterion
+    - Coin clusters
+    - Shadow vs Live brug
+    - Parameter rollbacks
+    - Dagelijkse brief
+    Wordt bereikbaar via de monitor pagina als extra tab.
+    """
+    st.markdown(
+        "<h3 style='color:#e2e8f0;margin-bottom:16px;'>🔍 Bot Gezondheid — v3.0</h3>",
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        render_twilio_dagmeter_widget()
+        render_kelly_widget()
+        render_shadow_live_widget()
+
+    with col2:
+        render_scan_efficiency_widget()
+        render_coin_clusters_widget()
+        render_rollback_widget()
+
+    st.divider()
+    render_dagbrief_widget()
+
+    # Gradient optimizer resultaat tonen
+    st.markdown(
+        "<div style='color:#94a3b8;font-size:11px;margin-top:8px;'>⚙️ Gradient Score Optimizer</div>",
+        unsafe_allow_html=True,
+    )
+    try:
+        df_grad = run_query("""
+        SELECT waarde FROM public.coach_memory
+        WHERE type='gradient_optimizer' ORDER BY bijgewerkt DESC LIMIT 1
+        """)
+        if isinstance(df_grad, pd.DataFrame) and not df_grad.empty:
+            grad = json.loads(df_grad.iloc[0]["waarde"])
+            beste    = safe_int(grad.get("beste_drempel", 92))
+            huidig   = safe_int(grad.get("huidige_drempel", 92))
+            composite = safe_float(grad.get("composite_score"))
+            aanbev   = safe_str(grad.get("aanbeveling", "HOUD"))
+            kleur    = "#22c55e" if aanbev == "HOUD" else "#f59e0b"
+            st.markdown(
+                f"<div style='background:#1a1f2e;border-radius:8px;padding:10px;margin-top:6px;'>"
+                f"<span style='color:{kleur};font-size:12px;'>Optimale drempel: {beste} "
+                f"(huidig: {huidig}) — {aanbev}</span>"
+                f"<span style='color:#64748b;font-size:11px;'> | composite: {composite:.1f}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        pass
