@@ -1,6 +1,6 @@
 # whatsapp_webhook.py
 # ============================================================
-# Crypto AI Bot — WhatsApp Webhook v2.0
+# Crypto AI Bot — WhatsApp Webhook v2.1
 # ============================================================
 # Dit is het centrale communicatiepunt van de bot.
 # Alle WhatsApp berichten van en naar de gebruiker lopen
@@ -23,7 +23,14 @@
 #   ✅ Zelfde trading hours filter (08:00-22:00 UTC)
 #   ✅ Zelfde weekend: gewoon doorgaan
 #
-# BUGS GEFIXED:
+# BUGS GEFIXED v2.1:
+#   ✅ /health route toegevoegd (was /healthz — Render pollt /health)
+#   ✅ /health geeft uitgebreide JSON terug met bot status + DB check
+#   ✅ /health geeft 503 terug als DB niet bereikbaar (Render alert)
+#   ✅ /healthz blijft als alias voor backwards compatibility
+#   ✅ _PROCESS_START bijgehouden voor uptime in /health response
+#
+# BUGS GEFIXED v2.0:
 #   ✅ Auto mode fix — live eerst, paper als fallback
 #   ✅ send_whatsapp() gedefinieerd zodat trade_monitor kan notificeren
 #   ✅ HMAC digestmod= fix
@@ -113,6 +120,9 @@ SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT") or "0.001")
 TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
 
 BOT_STATE_TABLE = "public.bot_state"
+
+# Starttijd van dit process — voor uptime berekening in /health
+_PROCESS_START = datetime.now(timezone.utc)
 
 # ============================================================
 # BASIS HELPERS — identiek aan alle andere bestanden
@@ -1110,7 +1120,7 @@ def claude_health_check(conn) -> str:
     config_checks = [
         f"DATABASE_URL:      {'✅' if DATABASE_URL else '❌'}",
         f"TWILIO:            {'✅' if TWILIO_ACCOUNT_SID else '❌'}",
-        f"ANTHROPIC_API_KEY: {'✅' if ANTHROPIC_API_KEY else '❌'}",
+        f"ANTHROPIC_API_KEY: {'✅' if ANTHROPIC_API_KEY else '⚠️ niet ingesteld'}",
         f"BOT_SECRET:        {'✅' if len(BOT_INTERNAL_SECRET) > 10 else '⚠️ te kort'}",
         f"MAX_PER_TRADE:     €{MAX_PER_TRADE_EUR:.2f}",
         f"DAILY_STOP_LOSS:   €{DAILY_STOP_LOSS_EUR:.2f}",
@@ -1269,12 +1279,10 @@ def build_weekly_rapport(conn) -> str:
     Bouwt het wekelijkse WhatsApp rapport.
     Verstuurd elke maandag om 08:00 UTC.
     """
-    # Verzamel week data
     week_data: Dict = {}
 
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            # Beste setup types
             cur.execute("""
             SELECT setup_type,
                    COUNT(*) AS n,
@@ -1292,7 +1300,6 @@ def build_weekly_rapport(conn) -> str:
             """)
             week_data["per_setup"] = [dict(r) for r in cur.fetchall()]
 
-            # Beste regime
             cur.execute("""
             SELECT market_regime AS regime,
                    COUNT(*) AS n,
@@ -1311,7 +1318,6 @@ def build_weekly_rapport(conn) -> str:
     except Exception as e:
         week_data["error"] = str(e)
 
-    # Totalen
     w7, l7, pnl7 = get_rolling_stats(conn, 7)
     t7 = w7 + l7
     wr7 = (w7 / t7 * 100) if t7 > 0 else 0.0
@@ -1320,9 +1326,7 @@ def build_weekly_rapport(conn) -> str:
 
     week_data["totaal"] = {"wins": w7, "losses": l7, "pnl": pnl7, "wr_pct": wr7}
 
-    # Claude analyse
     claude_tekst = claude_analyseer_weekrapport(week_data, pf30)
-
     teken = "+" if pnl7 >= 0 else ""
 
     return (
@@ -1352,7 +1356,6 @@ def build_monthly_rapport(conn) -> str:
     wr30 = (w30 / t30 * 100) if t30 > 0 else 0.0
     pf30 = get_profit_factor(conn, 30)
 
-    # Edge decay
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -1409,27 +1412,22 @@ def build_status_bericht(conn) -> str:
     """
     Bouwt het STATUS bericht.
     Antwoord op WhatsApp STATUS command.
-    Uitgebreide context — win rate, PnL, open trades, limieten.
     """
     status_line = get_bot_status_line(conn)
 
-    # Vandaag
     w_v, l_v, pnl_v = get_daily_pnl(conn, utc_day_str())
     tot_v = w_v + l_v
     wr_v  = (w_v / tot_v * 100) if tot_v > 0 else 0.0
 
-    # 7 dagen
     w7, l7, pnl7 = get_rolling_stats(conn, 7)
     t7 = w7 + l7
     wr7 = (w7 / t7 * 100) if t7 > 0 else 0.0
 
-    # Limieten
     trades_today = get_real_trades_today(conn)
     open_count   = get_open_real_trades_count(conn)
     pf30         = get_profit_factor(conn, 30)
     consecutive  = get_consecutive_losses(conn)
 
-    # Bot pauzeer info
     pause_info = ""
     if is_bot_paused(conn):
         reason = get_bot_state(conn, "bot_paused_reason", "")
@@ -1555,14 +1553,9 @@ def process_command(body: str, conn) -> str:
     """
     Verwerkt een WhatsApp command.
     Geeft antwoord terug als string.
-
-    Commands: START, STOP, STATUS, TRADES, RAPPORT,
-              WEEKRAPPORT, MAANDRAPPORT, ADVIES, HEALTH,
-              ANALYSE [dagen], ANALYSEKORT, HELP
     """
     cmd = body.strip().upper()
 
-    # ── START ──────────────────────────────────────────
     if cmd == "START":
         activate_bot(conn)
         w_v, l_v, pnl_v = get_daily_pnl(conn, utc_day_str())
@@ -1586,7 +1579,6 @@ def process_command(body: str, conn) -> str:
             f"Stuur STATUS voor overzicht."
         )
 
-    # ── STOP ───────────────────────────────────────────
     if cmd == "STOP":
         deactivate_bot(conn)
         open_count = get_open_real_trades_count(conn)
@@ -1600,27 +1592,21 @@ def process_command(body: str, conn) -> str:
             f"Stuur TRADES voor open posities."
         )
 
-    # ── STATUS ─────────────────────────────────────────
     if cmd == "STATUS":
         return build_status_bericht(conn)
 
-    # ── TRADES ─────────────────────────────────────────
     if cmd == "TRADES":
         return build_trades_bericht(conn)
 
-    # ── RAPPORT ────────────────────────────────────────
     if cmd == "RAPPORT":
         return build_daily_rapport(conn)
 
-    # ── WEEKRAPPORT ────────────────────────────────────
     if cmd == "WEEKRAPPORT":
         return build_weekly_rapport(conn)
 
-    # ── MAANDRAPPORT ───────────────────────────────────
     if cmd == "MAANDRAPPORT":
         return build_monthly_rapport(conn)
 
-    # ── ADVIES ─────────────────────────────────────────
     if cmd == "ADVIES":
         status_line  = get_bot_status_line(conn)
         leer_analyse = claude_trade_leeranalyse(conn)
@@ -1636,7 +1622,6 @@ def process_command(body: str, conn) -> str:
             f"Commands: STATUS | RAPPORT | STOP"
         )
 
-    # ── HEALTH ─────────────────────────────────────────
     if cmd == "HEALTH":
         status_line  = get_bot_status_line(conn)
         health_tekst = claude_health_check(conn)
@@ -1649,14 +1634,7 @@ def process_command(body: str, conn) -> str:
             f"Commands: STATUS | ADVIES | ANALYSE | STOP"
         )
 
-    # ── ANALYSE ────────────────────────────────────────
-    # Roept ai_coach.py aan voor een volledige data-analyse
-    # met concrete parameter aanbevelingen.
-    # ANALYSE       → standaard 60 dagen
-    # ANALYSE 30    → laatste 30 dagen
-    # ANALYSE 90    → laatste 90 dagen
     if cmd == "ANALYSE" or cmd.startswith("ANALYSE "):
-        # Bepaal analyseperiode — default 60 dagen
         dagen = 60
         if " " in cmd:
             try:
@@ -1664,7 +1642,6 @@ def process_command(body: str, conn) -> str:
             except (ValueError, IndexError):
                 dagen = 60
 
-        # Stuur eerst een bevestiging — analyse duurt 20-60 seconden
         send_whatsapp(
             f"🧠 AI COACH GESTART\n"
             f"{'─' * 32}\n\n"
@@ -1682,13 +1659,10 @@ def process_command(body: str, conn) -> str:
         )
 
         try:
-            # Importeer ai_coach — zelfde map als dit bestand
             from ai_coach import run_coach
             log(f"📊 AI Coach gestart voor {dagen} dagen")
             rapport = run_coach(dagen=dagen, stuur_whatsapp=True)
             log(f"✅ AI Coach klaar: {len(rapport)} tekens")
-            # run_coach stuurt zelf al via WhatsApp
-            # Stuur alleen een korte bevestiging terug
             return (
                 f"✅ AI COACH ANALYSE KLAAR\n"
                 f"Rapport is verzonden via WhatsApp.\n\n"
@@ -1714,15 +1688,11 @@ def process_command(body: str, conn) -> str:
                 f"Commands: HEALTH | ADVIES"
             )
 
-    # ── ANALYSEKORT ────────────────────────────────────
-    # Snelle versie van ANALYSE zonder WhatsApp verzending
-    # — geeft rapport direct terug in dit bericht (ingekort)
     if cmd == "ANALYSEKORT":
         try:
             from ai_coach import run_coach
             log("📊 AI Coach kort rapport gestart (30 dagen, geen WhatsApp)")
             rapport = run_coach(dagen=30, stuur_whatsapp=False)
-            # Stuur alleen de eerste 1400 tekens — past in één WhatsApp
             if len(rapport) > 1400:
                 rapport_kort = rapport[:1380] + "\n...[zie volledig ANALYSE]"
             else:
@@ -1736,11 +1706,9 @@ def process_command(body: str, conn) -> str:
         except Exception as e:
             return f"❌ Fout: {type(e).__name__}: {str(e)[:100]}"
 
-    # ── HELP ───────────────────────────────────────────
     if cmd == "HELP":
         return build_help_bericht()
 
-    # ── ONBEKEND ───────────────────────────────────────
     return (
         f"❓ Onbekend command: '{body[:20]}'\n\n"
         f"Stuur HELP voor alle commands."
@@ -1750,17 +1718,102 @@ def process_command(body: str, conn) -> str:
 # ============================================================
 # FLASK ROUTES — webhook endpoints
 # ============================================================
-@app.route("/healthz", methods=["GET"])
-def healthz():
-    """Health check endpoint voor Render."""
+
+@app.route("/health", methods=["GET"])
+def health():
+    """
+    ✅ FIX v2.1: /health route — primaire health check voor Render.
+
+    Render pollt standaard /health om de service te monitoren.
+    Zonder deze route verschijnen er elke ~15 minuten 404 warnings
+    in de logs (zoals zichtbaar was in de screenshot).
+
+    De route voert drie checks uit:
+      1. DB verbinding (SELECT 1)
+      2. Bot state ophalen (is_bot_active)
+      3. Open trades tellen
+
+    Render gedrag:
+      - HTTP 200 → service is "Healthy"
+      - HTTP 503 → service is "Unhealthy" → Render stuurt alert
+
+    De JSON response bevat alle relevante bot-info zodat je
+    de service direct kunt monitoren zonder in te loggen op Render.
+    Uptime wordt berekend vanaf het moment dat het Flask process
+    gestart is (_PROCESS_START).
+    """
+    uptime_sec = int((now_utc() - _PROCESS_START).total_seconds())
+    uptime_str = (
+        f"{uptime_sec // 3600}h "
+        f"{(uptime_sec % 3600) // 60}m "
+        f"{uptime_sec % 60}s"
+    )
+
+    db_ok        = False
+    bot_active   = False
+    open_trades  = 0
+    trades_today = 0
+    db_error     = ""
+
+    conn = None
     try:
-        conn = db_connect()
+        conn         = db_connect()
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
-        conn.close()
-        return jsonify({"status": "ok", "db": "connected"}), 200
+        db_ok        = True
+        bot_active   = is_bot_active(conn)
+        open_trades  = get_open_real_trades_count(conn)
+        trades_today = get_real_trades_today(conn)
     except Exception as e:
-        return jsonify({"status": "error", "detail": str(e)}), 500
+        db_error = str(e)[:200]
+        log(f"⚠️ /health DB check mislukt: {db_error}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    payload = {
+        "status":        "ok" if db_ok else "degraded",
+        "service":       "whatsapp_webhook",
+        "version":       "2.1",
+        "timestamp_utc": now_utc().strftime("%Y-%m-%d %H:%M:%S"),
+        "uptime":        uptime_str,
+        "database": {
+            "connected": db_ok,
+            "error":     db_error if not db_ok else None,
+        },
+        "bot": {
+            "active":           bot_active,
+            "open_trades":      open_trades,
+            "trades_today":     trades_today,
+            "trader_mode":      TRADER_MODE,
+            "trading_hours":    f"{TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC",
+            "in_trading_hours": is_trading_hours(),
+        },
+        "config": {
+            "twilio_ok":      bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN),
+            "claude_ok":      bool(ANTHROPIC_API_KEY),
+            "bitvavo_ok":     bool(BITVAVO_API_KEY and BITVAVO_API_SECRET),
+            "max_trade_eur":  MAX_PER_TRADE_EUR,
+            "daily_stop_eur": DAILY_STOP_LOSS_EUR,
+        },
+    }
+
+    # 503 als DB niet bereikbaar — Render markeert service als Unhealthy
+    http_status = 200 if db_ok else 503
+    return jsonify(payload), http_status
+
+
+@app.route("/healthz", methods=["GET"])
+def healthz():
+    """
+    Alias voor /health — backwards compatibility.
+    Render pollt /health maar sommige tools gebruiken /healthz.
+    Beide routes delegeren naar dezelfde health() functie.
+    """
+    return health()
 
 
 @app.route("/whatsapp", methods=["POST"])
@@ -1769,12 +1822,11 @@ def whatsapp_webhook():
     Hoofdroute voor WhatsApp berichten van Twilio.
     Verifieert Twilio signature, verwerkt command, stuurt antwoord.
     """
-    # Twilio verificatie
     if not verify_twilio_signature():
         log("❌ Twilio verificatie mislukt")
         return jsonify({"error": "Unauthorized"}), 403
 
-    body = safe_str(request.form.get("Body", ""))
+    body    = safe_str(request.form.get("Body", ""))
     from_nr = safe_str(request.form.get("From", ""))
 
     log(f"📱 WhatsApp van {from_nr[:15]}: '{body[:40]}'")
@@ -1782,21 +1834,24 @@ def whatsapp_webhook():
     if not body:
         return "", 200
 
+    conn = None
     try:
-        conn = db_connect()
+        conn     = db_connect()
         antwoord = process_command(body, conn)
-        conn.close()
     except Exception as e:
         log(f"❌ process_command fout: {e}")
         antwoord = (
             f"❌ Fout bij verwerken command.\n"
             f"Probeer opnieuw of stuur HELP."
         )
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
-    # WhatsApp antwoord via Twilio
     send_whatsapp(antwoord)
-
-    # TwiML response (leeg — we sturen via API)
     return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>', 200
 
 
@@ -1811,7 +1866,7 @@ def auto_buy():
         log("❌ Auto buy auth mislukt")
         return jsonify({"ok": False, "error": "Unauthorized"}), 403
 
-    data = request.get_json(silent=True) or {}
+    data      = request.get_json(silent=True) or {}
     prebuy_id = safe_str(data.get("prebuy_id"))
 
     if not prebuy_id:
@@ -1819,14 +1874,20 @@ def auto_buy():
 
     log(f"🤖 Auto BUY trigger: prebuy_id={prebuy_id}")
 
+    conn = None
     try:
-        conn = db_connect()
+        conn    = db_connect()
         ok, msg = execute_auto_buy(prebuy_id, conn)
-        conn.close()
         return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
     except Exception as e:
         log(f"❌ auto_buy route fout: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ── Cron rapport routes ──────────────────────────────────
@@ -1835,15 +1896,21 @@ def send_daily_rapport():
     """Render Cron: 0 8 * * * — Dagrapport om 08:00 UTC."""
     if not verify_internal_auth():
         return jsonify({"ok": False}), 403
+    conn = None
     try:
-        conn   = db_connect()
+        conn    = db_connect()
         bericht = build_daily_rapport(conn)
-        conn.close()
-        ok = send_whatsapp(bericht)
+        ok      = send_whatsapp(bericht)
         return jsonify({"ok": ok}), 200
     except Exception as e:
         log(f"❌ send_daily_rapport fout: {e}")
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @app.route("/send_weekly_rapport", methods=["POST"])
@@ -1851,14 +1918,20 @@ def send_weekly_rapport():
     """Render Cron: 0 8 * * 1 — Weekrapport op maandag 08:00 UTC."""
     if not verify_internal_auth():
         return jsonify({"ok": False}), 403
+    conn = None
     try:
         conn    = db_connect()
         bericht = build_weekly_rapport(conn)
-        conn.close()
-        ok = send_whatsapp(bericht)
+        ok      = send_whatsapp(bericht)
         return jsonify({"ok": ok}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @app.route("/send_monthly_rapport", methods=["POST"])
@@ -1866,14 +1939,20 @@ def send_monthly_rapport():
     """Render Cron: 0 8 1 * * — Maandrapport op de 1e van de maand."""
     if not verify_internal_auth():
         return jsonify({"ok": False}), 403
+    conn = None
     try:
         conn    = db_connect()
         bericht = build_monthly_rapport(conn)
-        conn.close()
-        ok = send_whatsapp(bericht)
+        ok      = send_whatsapp(bericht)
         return jsonify({"ok": ok}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @app.route("/send_health_check", methods=["POST"])
@@ -1881,11 +1960,11 @@ def send_health_check():
     """Render Cron: 0 9 * * 1 — Health check op maandag 09:00 UTC."""
     if not verify_internal_auth():
         return jsonify({"ok": False}), 403
+    conn = None
     try:
         conn         = db_connect()
         status_line  = get_bot_status_line(conn)
         health_tekst = claude_health_check(conn)
-        conn.close()
 
         bericht = (
             f"🏥 WEKELIJKSE HEALTH CHECK\n"
@@ -1900,6 +1979,12 @@ def send_health_check():
         return jsonify({"ok": ok}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 @app.route("/send_leeranalyse", methods=["POST"])
@@ -1907,12 +1992,12 @@ def send_leeranalyse():
     """Render Cron: 0 8 1,15 * * — Leeranalyse op 1e en 15e van de maand."""
     if not verify_internal_auth():
         return jsonify({"ok": False}), 403
+    conn = None
     try:
         conn         = db_connect()
         status_line  = get_bot_status_line(conn)
         leer_analyse = claude_trade_leeranalyse(conn)
         pf30         = get_profit_factor(conn, 30)
-        conn.close()
 
         bericht = (
             f"🧠 CLAUDE LEERANALYSE\n"
@@ -1929,6 +2014,12 @@ def send_leeranalyse():
         return jsonify({"ok": ok}), 200
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ============================================================
@@ -1936,7 +2027,7 @@ def send_leeranalyse():
 # ============================================================
 if __name__ == "__main__":
     log("=" * 60)
-    log("WhatsApp Webhook v2.0 — gestart")
+    log("WhatsApp Webhook v2.1 — gestart")
     log("=" * 60)
     log(f"Database:       {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
     log(f"Twilio:         {'✅' if TWILIO_ACCOUNT_SID else '⚠️ niet ingesteld'}")
@@ -1947,6 +2038,7 @@ if __name__ == "__main__":
     log(f"Daily stop:     €{DAILY_STOP_LOSS_EUR:.2f}")
     log(f"Max trades/dag: {MAX_REAL_TRADES_PER_DAY}")
     log(f"Trading hours:  {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
+    log(f"Health check:   /health (+ /healthz alias)")
     log("=" * 60)
 
     port = int(os.getenv("PORT", "5000"))
