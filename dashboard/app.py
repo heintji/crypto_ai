@@ -3493,7 +3493,7 @@ def render_health_page() -> None:
     versheid_checks = [
         {
             "naam": "Candles (1H)",
-            "sql": "SELECT MAX(close_time) FROM public.candles WHERE interval_='1h'",
+            "sql": "SELECT MAX(open_time) FROM public.candles WHERE timeframe ='1h'",
             "max_uren": 2,
         },
         {
