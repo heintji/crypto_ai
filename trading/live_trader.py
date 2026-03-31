@@ -861,7 +861,7 @@ def get_current_price(symbol_usdt: str, market: str) -> Optional[float]:
 
 def get_eur_balance() -> float:
     """Haalt beschikbaar EUR saldo op van Bitvavo."""
-    ok, data = _bitvavo_request("GET", "/balance", {"symbol": "EUR"})
+    ok, data = _bitvavo_request("GET", "/balance")
     if not ok or not data:
         return 0.0
     if isinstance(data, list):
