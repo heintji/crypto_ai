@@ -2909,6 +2909,8 @@ if __name__ == "__main__":
         log("Auto blacklist/whitelist update check...")
         update_coin_blacklist_whitelist(conn)
 
+        global MIN_SCORE_TO_TRADE, TRADING_HOURS_START, TRADING_HOURS_END
+        global SCORE_DREMPEL_BULL, SCORE_DREMPEL_RANGE, SCORE_DREMPEL_BEAR
         drempels = haal_coach_drempels_op(conn)
 
         # FIX v4.1: Dashboard globals override
@@ -2916,8 +2918,6 @@ if __name__ == "__main__":
         # variabelen overschreven zodat dashboard wijzigingen direct
         # actief zijn zonder dat de Render service herstart hoeft.
         # Dit maakt Bot Controls sliders echt functioneel.
-        global MIN_SCORE_TO_TRADE, TRADING_HOURS_START, TRADING_HOURS_END
-        global SCORE_DREMPEL_BULL, SCORE_DREMPEL_RANGE, SCORE_DREMPEL_BEAR
 
         _nieuwe_score = drempels.get("min_score", MIN_SCORE_TO_TRADE)
         if _nieuwe_score != MIN_SCORE_TO_TRADE:
