@@ -2911,13 +2911,10 @@ if __name__ == "__main__":
 
         global MIN_SCORE_TO_TRADE, TRADING_HOURS_START, TRADING_HOURS_END
         global SCORE_DREMPEL_BULL, SCORE_DREMPEL_RANGE, SCORE_DREMPEL_BEAR
+        global MIN_SCORE_TO_TRADE, TRADING_HOURS_START, TRADING_HOURS_END
+        global SCORE_DREMPEL_BULL, SCORE_DREMPEL_RANGE, SCORE_DREMPEL_BEAR
         drempels = haal_coach_drempels_op(conn)
 
-        # FIX v4.1: Dashboard globals override
-        # Na het ophalen van drempels uit bot_state worden de globale
-        # variabelen overschreven zodat dashboard wijzigingen direct
-        # actief zijn zonder dat de Render service herstart hoeft.
-        # Dit maakt Bot Controls sliders echt functioneel.
 
         _nieuwe_score = drempels.get("min_score", MIN_SCORE_TO_TRADE)
         if _nieuwe_score != MIN_SCORE_TO_TRADE:
