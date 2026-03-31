@@ -1,6 +1,6 @@
 # analysis/multi_coin_score.py
 # ============================================================
-# Crypto AI Bot — Multi Coin Scorer v4.0  (VOLLEDIG)
+# Crypto AI Bot — Multi Coin Scorer v4.1
 # ============================================================
 # Scant alle Bitvavo-tradable coins via Binance data.
 # Berekent een score (0-100) per coin op basis van:
@@ -43,6 +43,20 @@
 #   - Markt sessie timing (EU/US/ASIA)   [v4.0] NEW
 #   - Correlatie risico Claude analyse   [v4.0] NEW
 #   - Open posities correlatie check     [v4.0] NEW
+#
+# FIXES v4.1:
+# ─────────────────────────────────────────────────────────────
+# ✅ Fix 1: model string → claude-sonnet-4-6
+# ✅ Fix 2: BREAKOUT_RETEST in BEAR geblokkeerd
+#    Basis: 149 shadow trades tonen 28.9% win rate = verliesgevend.
+#    In een bearish BTC markt mislukt bijna elke uitbraak.
+#    Blokkeren bespaart onnodige verliezen.
+# ✅ Fix 3: TREND_PULLBACK score bonus +5
+#    Basis: 67% win rate RANGE, 53.6% BULL = bewezen beste setup.
+#    Bonus geeft deze setup voorrang bij gelijke scores.
+# ✅ Fix 4: Dashboard globals override in main()
+#    Min score en trading hours worden nu gelezen uit bot_state DB.
+#    Wijzigingen via het dashboard zijn direct actief zonder herstart.
 #
 # SAMENWERKING MET ANDERE BESTANDEN:
 #   -> Schrijft naar public.pending_approvals
@@ -164,17 +178,17 @@ MIN_FUNDING_RATE = float(os.getenv("MIN_FUNDING_RATE") or "-0.001")
 MAX_CORRELATIE_DREMPEL = float(os.getenv("MAX_CORRELATIE_DREMPEL") or "0.85")
 
 # v4.0: Markt sessie timing bonus
-SESSIE_BONUS_EU   = int(os.getenv("SESSIE_BONUS_EU") or "3")   # 07:00-16:00 UTC
-SESSIE_BONUS_US   = int(os.getenv("SESSIE_BONUS_US") or "2")   # 13:00-22:00 UTC
-SESSIE_BONUS_ASIA = int(os.getenv("SESSIE_BONUS_ASIA") or "1") # 00:00-08:00 UTC
+SESSIE_BONUS_EU   = int(os.getenv("SESSIE_BONUS_EU") or "3")
+SESSIE_BONUS_US   = int(os.getenv("SESSIE_BONUS_US") or "2")
+SESSIE_BONUS_ASIA = int(os.getenv("SESSIE_BONUS_ASIA") or "1")
 
 # v4.0: Kelly Criterion instelling
-KELLY_FRACTIE = float(os.getenv("KELLY_FRACTIE") or "0.25")  # Gebruik 25% van Kelly
-MAX_KELLY_EUR  = float(os.getenv("MAX_KELLY_EUR") or "2.00")   # Nooit meer dan €2 per trade
-MIN_KELLY_EUR  = float(os.getenv("MIN_KELLY_EUR") or "0.25")   # Nooit minder dan €0.25
+KELLY_FRACTIE = float(os.getenv("KELLY_FRACTIE") or "0.25")
+MAX_KELLY_EUR  = float(os.getenv("MAX_KELLY_EUR") or "2.00")
+MIN_KELLY_EUR  = float(os.getenv("MIN_KELLY_EUR") or "0.25")
 
 # v4.0: Auto blacklist/whitelist update instellingen
-AUTO_BL_INTERVAL_UREN = int(os.getenv("AUTO_BL_INTERVAL_UREN") or "6")  # Elke 6 uur bijwerken
+AUTO_BL_INTERVAL_UREN = int(os.getenv("AUTO_BL_INTERVAL_UREN") or "6")
 
 # Overige filters
 MAX_SPREAD_PCT   = float(os.getenv("MAX_SPREAD_PCT") or "0.5")
@@ -186,7 +200,6 @@ _MARKETS_CACHE: Dict[str, Any] = {"ts": 0.0, "markets": set()}
 _MARKETS_TTL   = 30 * 60
 _FUNDING_CACHE: Dict[str, Tuple[float, float]] = {}
 _FUNDING_TTL   = 60 * 60
-# v4.0: correlatie cache — open coin closes opslaan
 _CORRELATIE_CACHE: Dict[str, List[float]] = {}
 
 # Scan sessie statistieken
@@ -203,7 +216,6 @@ _SESSIE: Dict[str, Any] = {
     "shadow_trades":      0,
     "btc_regime":         "UNKNOWN",
     "score_drempel":      MIN_SCORE_TO_TRADE,
-    # v4.0 extra metrics
     "correlatie_skip":    0,
     "taker_bonus":        0,
     "markt_structuur_ok": 0,
@@ -289,6 +301,10 @@ def send_whatsapp(message: str) -> bool:
 # CLAUDE AI
 # ============================================================
 def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
+    """
+    Claude API aanroep. Geeft lege string bij elke fout.
+    FIX v4.1: model string bijgewerkt naar claude-sonnet-4-6.
+    """
     if not ANTHROPIC_API_KEY:
         return ""
     try:
@@ -300,7 +316,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-sonnet-4-6",  # FIX v4.1: was claude-sonnet-4-20250514
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -348,10 +364,6 @@ def claude_beoordeel_signaal(symbol: str, setup_type: str, regime: str,
                               markt_structuur: str = "ONBEKEND",
                               taker_ratio: float = 0.5,
                               coin_cluster: str = "STABLE") -> str:
-    """
-    v4.0: Uitgebreide Claude signaal beoordeling.
-    Bevat nu ook markt structuur, taker ratio en coin cluster.
-    """
     prompt = (
         f"Crypto trading bot signaal beoordeling in 2 zinnen Nederlands.\n"
         f"Coin:{symbol} Setup:{setup_type} Regime:{regime} BTC:{btc_regime}\n"
@@ -368,11 +380,6 @@ def claude_beoordeel_signaal(symbol: str, setup_type: str, regime: str,
 def claude_analyseer_correlatie_risico(open_coins: List[str],
                                         new_coin: str,
                                         correlatie: float) -> str:
-    """
-    v4.0: Claude analyseert het risico van hoge correlatie tussen open posities.
-    Gecorreleerde posities verhogen het systeemrisico — als BTC crasht gaan
-    beide posities tegelijk verlies.
-    """
     prompt = (
         f"Crypto portfolio correlatie risico analyse in 2 zinnen Nederlands.\n"
         f"Open posities: {', '.join(open_coins[:5])}\n"
@@ -405,7 +412,7 @@ def claude_analyseer_sessie(sessie: Dict) -> str:
 
 def claude_scanner_health_check() -> str:
     prompt = (
-        f"Check multi_coin_score.py v4.0 configuratie in 3 zinnen Nederlands.\n"
+        f"Check multi_coin_score.py v4.1 configuratie in 3 zinnen Nederlands.\n"
         f"DB:{'OK' if DATABASE_URL else 'ONTBREEKT'} "
         f"Webhook:{'OK' if WEBHOOK_BASE_URL else 'NIET_INGESTELD'} "
         f"Claude:{'OK' if ANTHROPIC_API_KEY else 'ONTBREEKT'} "
@@ -439,7 +446,6 @@ def claude_dagrapport(n_live: int, n_shadow: int, dagpnl: float,
                        wins: int, losses: int, btc_regime: str,
                        top_coins: List[Dict],
                        edge_decay_coins: List[str] = []) -> str:
-    """v4.0: Uitgebreider dagrapport met edge decay melding."""
     wr = wins / max(wins + losses, 1)
     top_txt = ", ".join(f"{c.get('symbol','?')}({c.get('score',0)})" for c in top_coins[:3])
     edge_txt = f"Edge decay gedetecteerd bij: {', '.join(edge_decay_coins[:3])}" if edge_decay_coins else ""
@@ -456,10 +462,6 @@ def claude_dagrapport(n_live: int, n_shadow: int, dagpnl: float,
 
 
 def claude_analyseer_score_gradient(gradient_data: Dict) -> str:
-    """
-    v4.0: Claude analyseert de score gradient efficiency.
-    Helpt bepalen of de huidige drempel optimaal is.
-    """
     prompt = (
         f"Analyseer score drempel efficiëntie voor crypto bot in 3 zinnen Nederlands.\n"
         f"Gradient data (drempel → gemiddelde WR):\n"
@@ -536,7 +538,6 @@ def is_bot_paused(conn) -> bool:
     except Exception: return True
 
 def get_consecutive_losses(conn) -> int:
-    """Telt aaneengesloten verliezen (live trades)."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -573,36 +574,40 @@ def table_bestaat(conn, naam: str) -> bool:
 def haal_coach_drempels_op(conn) -> Dict[str, Any]:
     """
     Leest coach aanbevelingen uit bot_state en coach_memory.
-    ai_coach.py schrijft optimale drempels op basis van historische data.
-    v4.0: ook Kelly fractie en correlatie drempel worden gelezen.
+    v4.1: ook trading_hours worden gelezen zodat dashboard controls werken.
     """
     drempels = {
-        "min_score":       MIN_SCORE_TO_TRADE,
-        "min_chance":      MIN_CHANCE,
-        "min_confidence":  MIN_CONFIDENCE,
-        "atr_multiplier":  ATR_MULTIPLIER,
-        "atr_target_r":    ATR_TARGET_R,
-        "rsi_min":         RSI_MIN,
-        "rsi_max":         RSI_MAX,
-        "score_bull":      SCORE_DREMPEL_BULL,
-        "score_range":     SCORE_DREMPEL_RANGE,
-        "score_bear":      SCORE_DREMPEL_BEAR,
-        "kelly_fractie":   KELLY_FRACTIE,
-        "max_correlatie":  MAX_CORRELATIE_DREMPEL,
-        "coach_suggesties": [],
+        "min_score":           MIN_SCORE_TO_TRADE,
+        "min_chance":          MIN_CHANCE,
+        "min_confidence":      MIN_CONFIDENCE,
+        "atr_multiplier":      ATR_MULTIPLIER,
+        "atr_target_r":        ATR_TARGET_R,
+        "rsi_min":             RSI_MIN,
+        "rsi_max":             RSI_MAX,
+        "score_bull":          SCORE_DREMPEL_BULL,
+        "score_range":         SCORE_DREMPEL_RANGE,
+        "score_bear":          SCORE_DREMPEL_BEAR,
+        "kelly_fractie":       KELLY_FRACTIE,
+        "max_correlatie":      MAX_CORRELATIE_DREMPEL,
+        "trading_hours_start": TRADING_HOURS_START,
+        "trading_hours_end":   TRADING_HOURS_END,
+        "coach_suggesties":    [],
     }
     try:
         for key, dest, conv, default in [
-            ("min_score_to_trade",  "min_score",      safe_int,   MIN_SCORE_TO_TRADE),
-            ("atr_multiplier",      "atr_multiplier", safe_float, ATR_MULTIPLIER),
-            ("atr_target_r",        "atr_target_r",   safe_float, ATR_TARGET_R),
-            ("rsi_min",             "rsi_min",        safe_int,   RSI_MIN),
-            ("rsi_max",             "rsi_max",        safe_int,   RSI_MAX),
-            ("score_drempel_bull",  "score_bull",     safe_int,   SCORE_DREMPEL_BULL),
-            ("score_drempel_range", "score_range",    safe_int,   SCORE_DREMPEL_RANGE),
-            ("score_drempel_bear",  "score_bear",     safe_int,   SCORE_DREMPEL_BEAR),
-            ("kelly_fractie",       "kelly_fractie",  safe_float, KELLY_FRACTIE),
-            ("max_correlatie",      "max_correlatie", safe_float, MAX_CORRELATIE_DREMPEL),
+            ("min_score_to_trade",  "min_score",           safe_int,   MIN_SCORE_TO_TRADE),
+            ("atr_multiplier",      "atr_multiplier",      safe_float, ATR_MULTIPLIER),
+            ("atr_target_r",        "atr_target_r",        safe_float, ATR_TARGET_R),
+            ("rsi_min",             "rsi_min",             safe_int,   RSI_MIN),
+            ("rsi_max",             "rsi_max",             safe_int,   RSI_MAX),
+            ("score_drempel_bull",  "score_bull",          safe_int,   SCORE_DREMPEL_BULL),
+            ("score_drempel_range", "score_range",         safe_int,   SCORE_DREMPEL_RANGE),
+            ("score_drempel_bear",  "score_bear",          safe_int,   SCORE_DREMPEL_BEAR),
+            ("kelly_fractie",       "kelly_fractie",       safe_float, KELLY_FRACTIE),
+            ("max_correlatie",      "max_correlatie",      safe_float, MAX_CORRELATIE_DREMPEL),
+            # v4.1: dashboard Bot Controls sliders
+            ("trading_hours_start", "trading_hours_start", safe_int,   TRADING_HOURS_START),
+            ("trading_hours_end",   "trading_hours_end",   safe_int,   TRADING_HOURS_END),
         ]:
             val = get_bot_state_value(conn, key, "")
             if val:
@@ -838,8 +843,7 @@ def binance_get(endpoint: str, params: dict,
 def fetch_candles(symbol: str, interval: str = "4h", limit: int = 120) -> List[Dict]:
     """
     Haalt OHLCV candles op van Binance.
-    v4.0: ook taker_buy_base (index 9) en taker_buy_quote (index 10) meegenomen
-    voor het berekenen van de taker buy ratio (koopdruk indicator).
+    v4.0: ook taker_buy_base en taker_buy_quote meegenomen.
     """
     time.sleep(BINANCE_SLEEP)
     data = binance_get("/klines", {"symbol": symbol, "interval": interval, "limit": limit})
@@ -856,8 +860,8 @@ def fetch_candles(symbol: str, interval: str = "4h", limit: int = 120) -> List[D
                 "ts":              safe_int(c[0]),
                 "quote_volume":    safe_float(c[7]),
                 "trades":          safe_int(c[8]),
-                "taker_buy_base":  safe_float(c[9]),   # v4.0: koopvolume
-                "taker_buy_quote": safe_float(c[10]),  # v4.0: koop quote volume
+                "taker_buy_base":  safe_float(c[9]),
+                "taker_buy_quote": safe_float(c[10]),
             })
         except Exception: continue
     return candles
@@ -884,11 +888,7 @@ def fetch_order_book_spread(symbol: str) -> float:
 
 
 def fetch_funding_rate(symbol: str) -> float:
-    """
-    Haalt huidige funding rate op van Binance Futures.
-    Hoge positieve funding = te veel longs = short squeeze risico.
-    Cache: 1 uur per coin.
-    """
+    """Haalt huidige funding rate op van Binance Futures. Cache: 1 uur."""
     now_ts = time.time()
     cached = _FUNDING_CACHE.get(symbol)
     if cached and (now_ts - cached[1]) < _FUNDING_TTL:
@@ -1118,24 +1118,10 @@ def bereken_vwap_positie(candles: List[Dict], prijs: float) -> str:
 def bereken_taker_buy_ratio(candles: List[Dict], lookback: int = 14) -> float:
     """
     v4.0: Taker buy ratio — maat voor koopdruk.
-
-    De taker buy ratio = taker_buy_volume / totaal_volume.
-    Waarden:
-      > 0.55 = kopers domineren → bullish koopdruk → score bonus
-      < 0.45 = verkopers domineren → bearish druk → score malus
-      0.45-0.55 = neutraal
-
-    Data komt uit Binance klines index [9] (taker_buy_base_asset_volume)
-    en index [5] (volume). Deze worden al opgeslagen in fetch_candles()
-    als 'taker_buy_base' en 'volume'.
-
-    Waarom dit werkt: market orders (takers) drukken de echte urgentie uit.
-    Als meer dan 55% van het volume van kopers komt, is er echte vraag.
-    Limit orders van makers wachten passief — takers gaan actief handelen.
+    > 0.55 = kopers domineren, < 0.45 = verkopers domineren.
     """
     recent = candles[-lookback:] if len(candles) >= lookback else candles
     if not recent: return 0.5
-
     totaal_vol  = 0.0
     taker_koop  = 0.0
     for c in recent:
@@ -1144,7 +1130,6 @@ def bereken_taker_buy_ratio(candles: List[Dict], lookback: int = 14) -> float:
         if vol > 0:
             totaal_vol += vol
             taker_koop += tbuy
-
     if totaal_vol <= 0:
         return 0.5
     return round(taker_koop / totaal_vol, 4)
@@ -1154,162 +1139,82 @@ def detecteer_markt_structuur(closes: List[float], candles: List[Dict],
                                lookback: int = 20) -> str:
     """
     v4.0: Markt structuur analyse op basis van swing highs en swing lows.
-
-    Detecteert het patroon van higher highs + higher lows (BULLISH_TREND)
-    versus lower highs + lower lows (BEARISH_TREND) of geen duidelijk
-    patroon (NEUTRAL / CONSOLIDATIE).
-
-    Methodologie:
-    - Identificeer swing highs (lokale maxima over 3 candles)
-    - Identificeer swing lows (lokale minima over 3 candles)
-    - Vergelijk de laatste 2 swing highs en 2 swing lows
-
-    Geeft terug:
-      BULLISH_TREND    = HH + HL (hogere toppen, hogere bodems)
-      BEARISH_TREND    = LH + LL (lagere toppen, lagere bodems)
-      CONSOLIDATIE     = gemengd patroon
-      ONBEKEND         = te weinig data
+    BULLISH_TREND = HH+HL, BEARISH_TREND = LH+LL, CONSOLIDATIE = gemengd.
     """
     if len(closes) < lookback or len(candles) < lookback:
         return "ONBEKEND"
-
     recent_candles = candles[-lookback:]
-    recent_closes  = closes[-lookback:]
-
-    # Identificeer swing highs en lows (lokaal maximum/minimum over 3 bars)
     swing_highs: List[float] = []
     swing_lows: List[float]  = []
-
     for i in range(1, len(recent_candles) - 1):
         h = recent_candles[i]["high"]
         l = recent_candles[i]["low"]
         h_prev, h_next = recent_candles[i-1]["high"], recent_candles[i+1]["high"]
         l_prev, l_next = recent_candles[i-1]["low"],  recent_candles[i+1]["low"]
-
         if h > h_prev and h > h_next:
             swing_highs.append(h)
         if l < l_prev and l < l_next:
             swing_lows.append(l)
-
     if len(swing_highs) < 2 or len(swing_lows) < 2:
         return "CONSOLIDATIE"
-
-    # Vergelijk laatste 2 swings
-    hh = swing_highs[-1] > swing_highs[-2]  # Higher High
-    hl = swing_lows[-1]  > swing_lows[-2]   # Higher Low
-    lh = swing_highs[-1] < swing_highs[-2]  # Lower High
-    ll = swing_lows[-1]  < swing_lows[-2]   # Lower Low
-
+    hh = swing_highs[-1] > swing_highs[-2]
+    hl = swing_lows[-1]  > swing_lows[-2]
+    lh = swing_highs[-1] < swing_highs[-2]
+    ll = swing_lows[-1]  < swing_lows[-2]
     if hh and hl:   return "BULLISH_TREND"
     if lh and ll:   return "BEARISH_TREND"
-    if hh and ll:   return "CONSOLIDATIE"    # Expanding range
-    if lh and hl:   return "CONSOLIDATIE"    # Contracting range
     return "CONSOLIDATIE"
 
 
 def bereken_volume_zone(candles: List[Dict], bins: int = 10) -> Tuple[float, float]:
-    """
-    v4.0: Volume profiel analyse — vindt de hoogste volume prijs zone.
-
-    Verdeelt het prijsbereik in 'bins' zones en berekent het totale
-    volume per zone. De zone met het hoogste volume is een sterke
-    support/weerstand zone.
-
-    Waarom dit werkt: prijsniveaus waar veel volume verhandeld is
-    zijn psychologisch en technisch belangrijk. Als de prijs naar zo'n
-    zone valt en terugkaatst, is dat een sterk koopsignaal. Handelaren
-    die op dat niveau gekocht hebben hebben een belang bij het
-    verdedigen van dat niveau.
-
-    Geeft (zone_low, zone_high) van de hoogste volume zone terug.
-    Als de huidige prijs boven de zone is = zone werkt als support.
-    """
+    """v4.0: Volume profiel analyse — vindt de hoogste volume prijs zone."""
     if len(candles) < bins:
         c = candles[-1] if candles else {}
         prijs = c.get("close", 0) if c else 0
         return prijs * 0.95, prijs * 1.05
-
-    # Bepaal het prijs bereik over de hele candle set
     alle_highs = [c["high"] for c in candles]
     alle_lows  = [c["low"]  for c in candles]
     prijs_min  = min(alle_lows)
     prijs_max  = max(alle_highs)
-
     if prijs_max <= prijs_min:
         return prijs_min, prijs_max
-
-    # Maak bins aan
     bin_grootte = (prijs_max - prijs_min) / bins
     volumes_per_bin: List[float] = [0.0] * bins
-
     for c in candles:
         typisch = (c["high"] + c["low"] + c["close"]) / 3
         vol     = safe_float(c.get("quote_volume") or c.get("volume", 0))
         bin_idx = int((typisch - prijs_min) / bin_grootte)
         bin_idx = max(0, min(bins - 1, bin_idx))
         volumes_per_bin[bin_idx] += vol
-
-    # Vind de bin met het hoogste volume
     max_vol_idx = volumes_per_bin.index(max(volumes_per_bin))
     zone_low    = round(prijs_min + max_vol_idx * bin_grootte, 8)
     zone_high   = round(zone_low + bin_grootte, 8)
-
     return zone_low, zone_high
 
 
 def bereken_pearson_correlatie(closes_a: List[float],
                                 closes_b: List[float]) -> float:
-    """
-    v4.0: Pearson correlatie coëfficiënt tussen twee price series.
-
-    Gebruikt om te detecteren of twee coins sterk gecorreleerd zijn.
-    Een correlatie > 0.85 betekent dat de coins bijna identiek bewegen.
-    In dat geval is het kopen van beide coins equivalent aan het
-    verdubbelen van de positiegrootte — meer risico zonder diversificatie.
-
-    Geeft waarde tussen -1 (perfect negatief) en +1 (perfect positief).
-    """
+    """v4.0: Pearson correlatie coëfficiënt tussen twee price series."""
     n = min(len(closes_a), len(closes_b))
     if n < 20:
-        return 0.0  # Te weinig data — aanname geen correlatie
-
+        return 0.0
     a = closes_a[-n:]
     b = closes_b[-n:]
-
     gem_a = sum(a) / n
     gem_b = sum(b) / n
-
     teller   = sum((a[i] - gem_a) * (b[i] - gem_b) for i in range(n))
     noemer_a = (sum((x - gem_a) ** 2 for x in a)) ** 0.5
     noemer_b = (sum((x - gem_b) ** 2 for x in b)) ** 0.5
-
     noemer = noemer_a * noemer_b
     if noemer == 0:
         return 0.0
-
     return round(teller / noemer, 4)
 
 
 def coin_correlatie_filter(conn, symbol: str, closes: List[float],
                             drempels: Dict) -> Tuple[bool, float, str]:
-    """
-    v4.0: Controleert of een coin te sterk gecorreleerd is met open posities.
-
-    Hoe het werkt:
-    1. Haal alle open live posities op
-    2. Haal de closes op uit de _CORRELATIE_CACHE (gevuld tijdens scan)
-    3. Bereken Pearson correlatie tussen nieuwe coin en elke open positie
-    4. Als correlatie > drempel → blokkeer het signaal
-
-    Waarom dit belangrijk is: als je ETH koopt terwijl je al LINK open hebt,
-    en beide coins correleren 90% met BTC, dan is een BTC crash een dubbel
-    verlies. Door correlatie te meten voorkom je onbedoeld geconcentreerd risico.
-
-    Geeft (ok, max_correlatie, gecorreleerde_coin) terug.
-    """
+    """v4.0: Controleert of een coin te sterk gecorreleerd is met open posities."""
     max_drempel = drempels.get("max_correlatie", MAX_CORRELATIE_DREMPEL)
-
-    # Haal open posities op
     open_coins: List[str] = []
     try:
         with conn.cursor() as cur:
@@ -1323,54 +1228,29 @@ def coin_correlatie_filter(conn, symbol: str, closes: List[float],
             open_coins = [safe_str(r[0]).upper() for r in (rows or []) if r[0]]
     except Exception:
         return True, 0.0, ""
-
     if not open_coins:
         return True, 0.0, ""
-
-    # Sla closes op in cache voor toekomstige vergelijking
     coin_base = symbol.replace("USDT", "").replace("BUSD", "")
     _CORRELATIE_CACHE[coin_base] = closes[-50:] if len(closes) >= 50 else closes
-
     max_corr   = 0.0
     corr_coin  = ""
-
     for open_coin in open_coins:
         open_closes = _CORRELATIE_CACHE.get(open_coin, [])
         if not open_closes:
             continue
-
         corr = bereken_pearson_correlatie(closes, open_closes)
         if corr > max_corr:
             max_corr  = corr
             corr_coin = open_coin
-
     if max_corr > max_drempel:
         log(f"Correlatie filter {symbol} ↔ {corr_coin}: r={max_corr:.3f} > {max_drempel:.2f}")
         _SESSIE["correlatie_skip"] = _SESSIE.get("correlatie_skip", 0) + 1
         return False, max_corr, corr_coin
-
     return True, max_corr, corr_coin
 
 
 def update_coin_blacklist_whitelist(conn) -> None:
-    """
-    v4.0: Automatische blacklist en whitelist update op basis van recente performance.
-
-    Blacklist criteria (verwijder slechte performers):
-    - Win rate < BLACKLIST_MAX_WINRATE (35%) na minimaal BLACKLIST_MIN_TRADES (15)
-
-    Whitelist criteria (beloon goede performers):
-    - Win rate > WHITELIST_MIN_WINRATE (60%) na minimaal WHITELIST_MIN_TRADES (20)
-    - Wordt bijgewerkt maximaal elke AUTO_BL_INTERVAL_UREN uur
-
-    De blacklist/whitelist wordt opgeslagen in bot_state als JSON arrays.
-    Multi-coin-score.py leest deze tijdens de scan en past score aan.
-
-    Dit is leren van echte resultaten: coins die consistent slecht presteren
-    worden automatisch geblokkeerd. Coins die consistent goed presteren
-    krijgen een score bonus.
-    """
-    # Controleer of update nodig is
+    """v4.0: Automatische blacklist en whitelist update op basis van recente performance."""
     laatste_update_str = get_bot_state_value(conn, "bl_wl_update_tijd", "")
     if laatste_update_str:
         try:
@@ -1379,15 +1259,12 @@ def update_coin_blacklist_whitelist(conn) -> None:
                 laatste = laatste.replace(tzinfo=timezone.utc)
             uren_geleden = (now_utc() - laatste).total_seconds() / 3600
             if uren_geleden < AUTO_BL_INTERVAL_UREN:
-                return  # Te vroeg voor update
+                return
         except Exception:
             pass
-
     log(f"Blacklist/whitelist automatisch bijwerken...")
-
     try:
         with conn.cursor() as cur:
-            # Haal performance per coin op (minimaal trades vereist)
             cur.execute("""
             SELECT
                 UPPER(COALESCE(coin, symbol, '')) AS coin_naam,
@@ -1403,8 +1280,6 @@ def update_coin_blacklist_whitelist(conn) -> None:
             HAVING COUNT(*) >= %s
             """, (min(BLACKLIST_MIN_TRADES, WHITELIST_MIN_TRADES),))
             rijen = cur.fetchall()
-
-        # Haal huidige lijsten op
         huidige_bl = set()
         huidige_wl = set()
         try:
@@ -1414,53 +1289,38 @@ def update_coin_blacklist_whitelist(conn) -> None:
             huidige_wl = set(json.loads(wl_raw))
         except Exception:
             pass
-
         nieuwe_bl = set(huidige_bl)
         nieuwe_wl = set(huidige_wl)
         bl_toegevoegd = []
         wl_toegevoegd = []
         bl_verwijderd = []
         wl_verwijderd = []
-
         for rij in (rijen or []):
             coin_naam = safe_str(rij[0])
             n         = safe_int(rij[1])
             win_rate  = safe_float(rij[3])
-
             if not coin_naam or coin_naam in ("BTC", "BTCUSDT"):
                 continue
-
-            # Blacklist check
             if n >= BLACKLIST_MIN_TRADES and win_rate < BLACKLIST_MAX_WINRATE:
                 if coin_naam not in nieuwe_bl:
                     nieuwe_bl.add(coin_naam)
                     bl_toegevoegd.append(f"{coin_naam}({pct_str(win_rate)})")
-                # Verwijder uit whitelist als blacklisted
                 if coin_naam in nieuwe_wl:
                     nieuwe_wl.discard(coin_naam)
                     wl_verwijderd.append(coin_naam)
-
-            # Whitelist check
             elif n >= WHITELIST_MIN_TRADES and win_rate > WHITELIST_MIN_WINRATE:
                 if coin_naam not in nieuwe_wl:
                     nieuwe_wl.add(coin_naam)
                     wl_toegevoegd.append(f"{coin_naam}({pct_str(win_rate)})")
-                # Verwijder uit blacklist als whitelisted
                 if coin_naam in nieuwe_bl:
                     nieuwe_bl.discard(coin_naam)
                     bl_verwijderd.append(coin_naam)
-
-            # Verwijder uit blacklist als performance verbeterd is
             elif coin_naam in nieuwe_bl and win_rate >= BLACKLIST_MAX_WINRATE + 0.10:
                 nieuwe_bl.discard(coin_naam)
                 bl_verwijderd.append(coin_naam)
-
-        # Sla bij
         set_bot_state_value(conn, "coin_blacklist",    json.dumps(sorted(nieuwe_bl)))
         set_bot_state_value(conn, "coin_whitelist",    json.dumps(sorted(nieuwe_wl)))
         set_bot_state_value(conn, "bl_wl_update_tijd", now_utc().isoformat())
-
-        # Log veranderingen
         if bl_toegevoegd:
             log(f"Blacklist +{len(bl_toegevoegd)}: {', '.join(bl_toegevoegd[:5])}")
             _SESSIE["bl_updates"] += len(bl_toegevoegd)
@@ -1471,49 +1331,25 @@ def update_coin_blacklist_whitelist(conn) -> None:
             log(f"Blacklist -{len(bl_verwijderd)}: {', '.join(bl_verwijderd[:5])}")
         if wl_verwijderd:
             log(f"Whitelist -{len(wl_verwijderd)}: {', '.join(wl_verwijderd[:5])}")
-
         log(f"BL/WL update klaar: {len(nieuwe_bl)} blacklisted, {len(nieuwe_wl)} whitelisted")
-
     except Exception as e:
         safe_rollback(conn)
         log(f"BL/WL update fout: {e}")
 
 
 def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
-    """
-    v4.0: Edge decay detectie per coin.
-
-    Vergelijkt de simulatie win rate met de live win rate over de
-    laatste 30 dagen. Als de simulatie veel beter presteert dan live
-    handel, is er sprake van edge decay voor die specifieke coin.
-
-    Edge decay kan optreden door:
-    - Marktstructuur verandering (coin wordt minder volatiel)
-    - Toegenomen competitie van andere bots
-    - Slippage en fees die in simulatie niet goed meegenomen worden
-    - Overfitting van de strategie op historische data
-
-    Drempel: als live WR meer dan 15% lager is dan sim WR → melding.
-
-    Geeft dict terug met: sim_wr, live_wr, verschil, edge_decay bool.
-    """
+    """v4.0: Edge decay detectie per coin. Verschil sim vs live WR > 15% = decay."""
     result = {
-        "sim_wr":     0.0,
-        "live_wr":    0.0,
-        "verschil":   0.0,
-        "edge_decay": False,
-        "n_sim":      0,
-        "n_live":     0,
+        "sim_wr": 0.0, "live_wr": 0.0, "verschil": 0.0,
+        "edge_decay": False, "n_sim": 0, "n_live": 0,
     }
     coin_base = symbol.replace("USDT", "").replace("BUSD", "")
-
     try:
         with conn.cursor() as cur:
             cur.execute("""
-            SELECT
-                UPPER(COALESCE(source,'')) AS src,
-                COUNT(*) AS n,
-                COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins
+            SELECT UPPER(COALESCE(source,'')) AS src,
+                   COUNT(*) AS n,
+                   COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins
             FROM public.experience_trades
             WHERE UPPER(COALESCE(coin,'')) = UPPER(%s)
               AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
@@ -1521,7 +1357,6 @@ def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
             GROUP BY 1
             """, (coin_base,))
             rijen = cur.fetchall()
-
         data: Dict[str, Tuple[int, int]] = {}
         for rij in (rijen or []):
             src = safe_str(rij[0])
@@ -1530,25 +1365,19 @@ def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
             key = "LIVE" if src in ("REAL", "LIVE") else src
             data[key] = data.get(key, (0, 0))
             data[key] = (data[key][0] + n, data[key][1] + w)
-
         sim_data  = data.get("SIM", (0, 0))
         live_data = data.get("LIVE", (0, 0))
-
         if sim_data[0] >= 5:
             result["sim_wr"] = round(sim_data[1] / sim_data[0], 4)
             result["n_sim"]  = sim_data[0]
-
         if live_data[0] >= 5:
             result["live_wr"] = round(live_data[1] / live_data[0], 4)
             result["n_live"]  = live_data[0]
-
         if result["n_sim"] >= 5 and result["n_live"] >= 5:
             result["verschil"]   = round(result["sim_wr"] - result["live_wr"], 4)
-            result["edge_decay"] = result["verschil"] > 0.15  # 15% verschil
-
+            result["edge_decay"] = result["verschil"] > 0.15
     except Exception as e:
         log(f"Edge decay check fout ({symbol}): {e}")
-
     return result
 
 
@@ -1557,71 +1386,26 @@ def bereken_kelly_grootte(win_rate: float, avg_win_r: float = 2.5,
                            max_eur: float = MAX_KELLY_EUR,
                            min_eur: float = MIN_KELLY_EUR,
                            kelly_fractie: float = KELLY_FRACTIE) -> float:
-    """
-    v4.0: Kelly Criterion voor optimale positiegrootte.
-
-    Formule: f = (win_rate * avg_win_r - (1 - win_rate) * avg_loss_r) / avg_win_r
-
-    Waarbij:
-      f         = Kelly fractie van je kapitaal
-      win_rate  = historische win rate (0-1)
-      avg_win_r = gemiddelde winst in R-multiples (standaard 2.5R)
-      avg_loss_r = gemiddelde verlies in R-multiples (standaard 1.0R = stop loss)
-
-    We gebruiken een fractie van Kelly (KELLY_FRACTIE = 0.25 = 25% Kelly)
-    om het risico te beperken. Volledige Kelly is theoretisch optimaal maar
-    in de praktijk te volatiel voor psychologisch comfort.
-
-    Bij €10 starting capital en Kelly van 5% → €0.50 per trade (onze Fase 1 limiet).
-    We clampen altijd tussen MIN_KELLY_EUR en MAX_KELLY_EUR.
-    """
+    """v4.0: Kelly Criterion voor optimale positiegrootte."""
     if win_rate <= 0 or avg_win_r <= 0:
         return min_eur
-
     b       = avg_win_r / avg_loss_r if avg_loss_r > 0 else avg_win_r
     kelly_f = (win_rate * b - (1 - win_rate)) / b
-    kelly_f = max(0.0, kelly_f)  # Kelly is altijd >= 0
-
-    # Fractional Kelly — gebruik slechts een deel voor veiligheid
+    kelly_f = max(0.0, kelly_f)
     kelly_f = kelly_f * kelly_fractie
-
-    # Bereken euro bedrag op basis van dagbudget (beschouw als "bankroll")
-    bankroll = DAILY_STOP_LOSS_EUR * 2  # Conservatieve schatting
+    bankroll = DAILY_STOP_LOSS_EUR * 2
     kelly_eur = bankroll * kelly_f
-
-    # Zorg dat het binnen grenzen valt
     kelly_eur = max(min_eur, min(max_eur, kelly_eur))
-
-    # Niet meer dan de Fase 1 limiet (maar laat coach dit overschrijven)
     kelly_eur = min(kelly_eur, MAX_PER_TRADE_EUR * 2)
-
     return round(kelly_eur, 2)
 
 
 def bepaal_coin_cluster(exp_n: int, win_rate: float,
                          recent_trades: int = 0,
                          edge_decay: bool = False) -> str:
-    """
-    v4.0: Coin clustering — classificeert coins in 4 categorieën.
-
-    STAR    = hoge win rate, veel trades, geen edge decay
-              → maximale positiegrootte, top prioriteit
-    STABLE  = gemiddelde win rate, voldoende trades
-              → normale positiegrootte
-    WEAK    = lage win rate of weinig data
-              → minimale positiegrootte, extra filters
-    ZOMBIE  = aanhoudend slecht, bijna op blacklist
-              → alleen shadow trades, geen live
-
-    Criteria:
-    STAR:   WR >= 60% EN n >= 20 EN geen edge decay
-    STABLE: WR >= 45% EN n >= 10
-    ZOMBIE: WR < 35% EN n >= 10 (of edge decay gedetecteerd)
-    WEAK:   alle andere gevallen
-    """
+    """v4.0: Coin clustering — STAR/STABLE/WEAK/ZOMBIE."""
     if edge_decay:
         return "ZOMBIE"
-
     if exp_n >= 20 and win_rate >= 0.60:
         return "STAR"
     elif exp_n >= 10 and win_rate >= 0.45:
@@ -1633,42 +1417,12 @@ def bepaal_coin_cluster(exp_n: int, win_rate: float,
 
 
 def bepaal_markt_sessie_timing() -> str:
-    """
-    v4.0: Bepaalt in welke markt sessie we zitten.
-
-    De crypto markt kent drie belangrijke handelssessies die overlappen
-    met traditionele financiële markten:
-
-    AZIATISCH (00:00-08:00 UTC):
-      - Tokyo/Shanghai/Hong Kong actief
-      - Vaak rustigere bewegingen tenzij Aziatisch nieuws
-      - Lager volume voor EUR/westerse coins
-
-    EUROPEES (07:00-16:00 UTC):
-      - Frankfurt/Londen actief
-      - Overlap EU-Aziatisch (07-08u) = hogere liquiditeit
-      - Beste periode voor EUR-gebaseerde handel
-
-    AMERIKAANS (13:00-22:00 UTC):
-      - New York actief
-      - Overlap EU-VS (13-16u) = hoogste liquiditeit van de dag
-      - Meeste volatiliteit, grootste bewegingen
-
-    OVERLAPPING (overlap periodes):
-      - 07-08u UTC: Aziatisch + Europees = extra liquiditeit
-      - 13-16u UTC: Europees + Amerikaans = maximum liquiditeit
-
-    Geeft de dominante sessie naam terug.
-    """
+    """v4.0: Bepaalt in welke markt sessie we zitten (EU/US/AZIATISCH/OVERLAP)."""
     uur = now_utc().hour
-
-    # Overlap periodes — hoogste prioriteit
     if 13 <= uur <= 16:
-        return "EU_US_OVERLAP"   # Beste sessie — max liquiditeit
+        return "EU_US_OVERLAP"
     if 7 <= uur <= 8:
         return "ASIA_EU_OVERLAP"
-
-    # Individuele sessies
     if 0 <= uur < 8:
         return "AZIATISCH"
     elif 8 <= uur < 13:
@@ -1676,19 +1430,13 @@ def bepaal_markt_sessie_timing() -> str:
     elif 13 <= uur < 22:
         return "AMERIKAANS"
     else:
-        return "NACHT"          # 22-24u UTC — laag volume
+        return "NACHT"
 
 
 def get_sessie_timing_bonus(sessie: str) -> int:
-    """
-    v4.0: Score bonus op basis van markt sessie timing.
-
-    Hogere liquiditeit = betere uitvoering = minder slippage.
-    Tijdens de overlap periodes is de spread kleiner en worden
-    orders beter gevuld. Dit vertaalt zich naar een klein score bonus.
-    """
+    """v4.0: Score bonus op basis van markt sessie timing."""
     bonussen = {
-        "EU_US_OVERLAP":  SESSIE_BONUS_EU + SESSIE_BONUS_US,  # Max bonus
+        "EU_US_OVERLAP":  SESSIE_BONUS_EU + SESSIE_BONUS_US,
         "ASIA_EU_OVERLAP": SESSIE_BONUS_EU,
         "EUROPEES":       SESSIE_BONUS_EU,
         "AMERIKAANS":     SESSIE_BONUS_US,
@@ -1700,27 +1448,10 @@ def get_sessie_timing_bonus(sessie: str) -> int:
 
 
 def bereken_score_gradient_efficiency(conn) -> Dict[str, Any]:
-    """
-    v4.0: Score gradient efficiency analyse.
-
-    Analyseert welke score drempel in het verleden de beste
-    verhouding tussen volume en kwaliteit zou hebben gegeven.
-
-    Methode: loop door score buckets (70-75, 75-80, ..., 90-95, 95+)
-    en bereken de win rate en trade count per bucket.
-
-    Dit helpt bij het beantwoorden van: "Als we de drempel van 92
-    naar 80 verlagen, hoeveel extra trades krijgen we en is de
-    kwaliteit nog acceptabel?"
-
-    Resultaat wordt opgeslagen in bot_state en geanalyseerd door Claude.
-    """
+    """v4.0: Score gradient efficiency analyse per score bucket."""
     result: Dict[str, Any] = {
-        "buckets":     [],
-        "aanbeveling": "",
-        "timestamp":   now_utc().isoformat(),
+        "buckets": [], "aanbeveling": "", "timestamp": now_utc().isoformat(),
     }
-
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -1733,32 +1464,22 @@ def bereken_score_gradient_efficiency(conn) -> Dict[str, Any]:
                 ROUND(AVG(COALESCE(pnl_eur, 0))::numeric, 4) AS avg_pnl
             FROM public.experience_trades
             WHERE UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
-              AND score IS NOT NULL
-              AND score >= 60
+              AND score IS NOT NULL AND score >= 60
               AND COALESCE(exit_time, updated_at) >= NOW() - INTERVAL '60 days'
-            GROUP BY 1
-            ORDER BY 1
+            GROUP BY 1 ORDER BY 1
             """)
             rijen = cur.fetchall()
-
         for rij in (rijen or []):
-            bucket   = safe_float(rij[0])
-            n        = safe_int(rij[1])
-            wins     = safe_int(rij[2])
-            wr_pct   = safe_float(rij[3])
-            avg_pnl  = safe_float(rij[4])
             result["buckets"].append({
-                "score_van":   int(bucket),
-                "score_tot":   int(bucket + 5),
-                "n_trades":    n,
-                "wins":        wins,
-                "win_rate":    wr_pct,
-                "avg_pnl_eur": avg_pnl,
+                "score_van": int(safe_float(rij[0])),
+                "score_tot": int(safe_float(rij[0]) + 5),
+                "n_trades":  safe_int(rij[1]),
+                "wins":      safe_int(rij[2]),
+                "win_rate":  safe_float(rij[3]),
+                "avg_pnl_eur": safe_float(rij[4]),
             })
-
     except Exception as e:
         log(f"Score gradient fout: {e}")
-
     return result
 
 
@@ -1766,44 +1487,22 @@ def bouw_uitgebreide_scan_samenvatting(conn, sessie: Dict,
                                         drempels: Dict,
                                         btc_regime: str,
                                         btc_sterkte: float) -> str:
-    """
-    v4.0: Bouwt een uitgebreide WhatsApp scan samenvatting.
-
-    Bevat:
-    - Scan statistieken (coins, signalen, duur)
-    - BTC context (regime, sterkte)
-    - Markt sessie timing
-    - Score gradient (welke drempel optimaal zou zijn)
-    - Blacklist/whitelist updates
-    - Correlatie skips
-    - Coin cluster verdeling
-    - Edge decay waarschuwingen
-    - Top 5 beste coins van de scan
-    - Claude analyse van de sessie
-    """
+    """v4.0: Bouwt een uitgebreide WhatsApp scan samenvatting."""
     if not sessie.get("start"):
         return ""
-
     duur = (now_utc() - sessie["start"]).total_seconds() / 60
     clusters = sessie.get("coin_clusters", {})
     top5 = sorted(sessie.get("coins_met_score", []),
                   key=lambda x: x["score"], reverse=True)[:5]
-
-    # Filter summary — top 5 filters
     filters = sessie.get("gefilterd", {})
     top_filters = sorted(filters.items(), key=lambda x: x[1], reverse=True)[:5]
     filter_txt = " | ".join(f"{k}:{v}" for k, v in top_filters)
-
-    # Top 5 coin tekst
     top_txt = ""
     for i, c in enumerate(top5, 1):
         top_txt += f"  #{i} {c.get('symbol','?')} score={c.get('score',0)}\n"
-
-    # Claude sessie analyse
     claude_txt = ""
     if ANTHROPIC_API_KEY:
         claude_txt = claude_analyseer_sessie(sessie)
-
     bericht = (
         f"SCAN RAPPORT — {now_utc().strftime('%H:%M UTC')}\n"
         f"{'='*32}\n"
@@ -1831,13 +1530,10 @@ def bouw_uitgebreide_scan_samenvatting(conn, sessie: Dict,
         f"  +Blacklist:{sessie.get('bl_updates',0)} "
         f"+Whitelist:{sessie.get('wl_updates',0)}\n\n"
     )
-
     if top5:
         bericht += f"TOP SIGNALEN:\n{top_txt}\n"
-
     if claude_txt:
         bericht += f"Claude: {claude_txt[:200]}\n"
-
     bericht += "Commands: STATUS | TRADES | STOP"
     return bericht
 
@@ -1890,96 +1586,60 @@ def detect_setup_type(candles_4h: List[Dict],
                        candles_1h: List[Dict]) -> Tuple[str, str]:
     """
     Detecteert setup type op basis van 4H en 1H candles.
-    Geeft (setup_type, why_tag) terug.
-
-    v4.0: MARKT_STRUCTUUR_BREAKOUT setup toegevoegd.
-    Setup types (sterk naar zwak):
-    1. SQUEEZE_BREAK:              uitbraak na Bollinger Band squeeze
-    2. MARKT_STRUCTUUR_BREAKOUT:   uitbraak boven HH in bullish trend [v4.0]
-    3. BREAKOUT:                   uitbraak boven recente swing high
-    4. BULLISH_DIVERGENCE:         RSI bullish divergentie
-    5. TREND_PULLBACK:             pullback naar SMA20 in uptrend
-    6. VWAP_BOUNCE:                bounce terug boven VWAP
-    7. VOLUME_ZONE_BOUNCE:         bounce van high-volume support zone [v4.0]
-    8. BOUNCE:                     bounce van SMA50 support
-    9. OVERSOLD_RECLAIM:           herstel na extreme oversold
-    10. MOMENTUM:                   sterk momentum
+    Setup types: SQUEEZE_BREAK, MARKT_STRUCTUUR_BREAKOUT, BREAKOUT,
+    BULLISH_DIVERGENCE, TREND_PULLBACK, VWAP_BOUNCE, VOLUME_ZONE_BOUNCE,
+    BOUNCE, OVERSOLD_RECLAIM, MOMENTUM.
     """
     if len(candles_4h) < 20:
         return "UNKNOWN", "te_weinig_data"
-
     closes_4h = [c["close"] for c in candles_4h]
     closes_1h = [c["close"] for c in candles_1h] if candles_1h else []
-
     rsi_4h   = rsi_wilder(closes_4h, RSI_PERIOD)
     sma20_4h = sma(closes_4h, 20)
     sma50_4h = sma(closes_4h, 50)
     current  = closes_4h[-1]
     vorige   = closes_4h[-2] if len(closes_4h) >= 2 else current
-
     if rsi_4h is None or sma20_4h is None or sma50_4h is None:
         return "UNKNOWN", "indicator_fout"
-
-    # 1. SQUEEZE_BREAK
     if detecteer_squeeze(closes_4h, candles_4h):
         if current > vorige * 1.005:
             return "SQUEEZE_BREAK", f"squeeze|RSI={rsi_4h:.0f}"
-
-    # 2. MARKT_STRUCTUUR_BREAKOUT (v4.0)
     ms = detecteer_markt_structuur(closes_4h, candles_4h, 20)
     if ms == "BULLISH_TREND" and current > vorige * 1.008:
         return "MARKT_STRUCTUUR_BREAKOUT", f"ms_bull_breakout|RSI={rsi_4h:.0f}"
-
-    # 3. BREAKOUT
     if len(candles_4h) >= 20:
         high_20    = max(c["high"] for c in candles_4h[-20:])
         prev_close = closes_4h[-2] if len(closes_4h) > 1 else current
         if current > high_20 * 0.998 and prev_close < high_20:
             return "BREAKOUT", f"break_high20({high_20:.4f})|RSI={rsi_4h:.0f}"
-
-    # 4. BULLISH_DIVERGENCE
     div = detecteer_divergentie(closes_4h, candles_4h, 10)
     if div == "BULLISH" and current > vorige:
         return "BULLISH_DIVERGENCE", f"bull_div|RSI={rsi_4h:.0f}"
-
-    # 5. TREND_PULLBACK
     if sma20_4h > sma50_4h and current > sma50_4h:
         dist_sma20 = abs(current - sma20_4h) / max(sma20_4h, 1e-10)
         if dist_sma20 < 0.025 and RSI_MIN <= rsi_4h <= 58:
             return "TREND_PULLBACK", f"sma20_pb({dist_sma20*100:.1f}%)|RSI={rsi_4h:.0f}"
-
-    # 6. VWAP_BOUNCE
     vwap_val = vwap(candles_4h, 20)
     if vwap_val and current > vwap_val and vorige < vwap_val and rsi_4h < 55:
         return "VWAP_BOUNCE", f"vwap_cross({vwap_val:.4f})|RSI={rsi_4h:.0f}"
-
-    # 7. VOLUME_ZONE_BOUNCE (v4.0)
     vol_zone_low, vol_zone_high = bereken_volume_zone(candles_4h, 10)
     if vol_zone_low > 0:
-        # Prijs net boven de hoge-volume zone = zone werkt als support
         if vol_zone_low <= current <= vol_zone_high * 1.02 and current > vorige:
             taker_ratio = bereken_taker_buy_ratio(candles_4h, 10)
-            if taker_ratio > 0.52:  # Kopers domineren in de zone
+            if taker_ratio > 0.52:
                 return "VOLUME_ZONE_BOUNCE", (
                     f"vol_zone({vol_zone_low:.4f}-{vol_zone_high:.4f})"
                     f"|taker={taker_ratio:.2f}|RSI={rsi_4h:.0f}"
                 )
-
-    # 8. BOUNCE
     if sma50_4h > 0:
         dist_sma50 = abs(current - sma50_4h) / max(sma50_4h, 1e-10)
         if dist_sma50 < 0.02 and rsi_4h < 52:
             return "BOUNCE", f"sma50_bounce({dist_sma50*100:.1f}%)|RSI={rsi_4h:.0f}"
-
-    # 9. OVERSOLD_RECLAIM
     if rsi_4h < 30 and current > vorige * 1.002:
         return "OVERSOLD_RECLAIM", f"oversold_bounce|RSI={rsi_4h:.0f}"
-
-    # 10. MOMENTUM
     mom = detecteer_momentum(closes_4h, 10)
     if 52 <= rsi_4h <= RSI_MAX and current > sma20_4h > sma50_4h and mom > 3:
         return "MOMENTUM", f"momentum({mom:.1f}%)|RSI={rsi_4h:.0f}"
-
     return "UNKNOWN", f"geen_setup|RSI={rsi_4h:.0f}"
 
 
@@ -1999,44 +1659,8 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
                     sessie_timing: str = "ONBEKEND",
                     coin_cluster: str = "STABLE") -> Tuple[int, int, int, str, float, float]:
     """
-    v4.0: Berekent score (0-100), chance, confidence.
-
-    BASIS (max 100):
-      RSI ideale zone:        0-20 pt
-      Trend alignment SMA:    0-20 pt
-      Volume bevestiging:     0-15 pt
-      Experience win rate:    0-20 pt
-      BTC regime + sterkte:   0-15 pt
-      Multi-timeframe 1H RSI: 0-10 pt
-
-    BONUSSEN v3.0:
-      MACD bullish:           +5 pt
-      BB Squeeze:             +3 pt
-      Momentum >5%:           +4 pt
-      VWAP boven:             +3 pt
-      StochRSI <30:           +3 pt
-      Bullish divergentie:    +4 pt
-
-    BONUSSEN v4.0 NIEUW:
-      Taker ratio >0.60:      +5 pt  (sterke koopdruk)
-      Taker ratio >0.55:      +3 pt  (lichte koopdruk)
-      Markt structuur BULL:   +4 pt  (HH+HL patroon)
-      Volume zone support:    +3 pt  (prijs boven hoge-vol zone)
-      Sessie timing bonus:    +1-5pt (EU/US overlap)
-      STAR cluster:           +3 pt  (bewezen performer)
-
-    MALUSSEN:
-      Fee >0.3%:              -3 pt
-      Vol EXTREEM:            -5 pt
-      Vol LAAG:               -2 pt
-      Funding extreem:        -5 pt
-      VWAP onder:             -3 pt
-      MACD bearish:           -3 pt
-      Bearish divergentie:    -4 pt
-      Momentum <-5%:          -2 pt
-      Taker ratio <0.40:      -3 pt  v4.0: verkoopdruk
-      Markt structuur BEAR:   -5 pt  v4.0: LH+LL patroon
-      ZOMBIE cluster:         -10 pt v4.0: slecht presterende coin
+    v4.1: Berekent score (0-100), chance, confidence.
+    Bevat TREND_PULLBACK bonus +5 op basis van shadow data (67% win rate).
     """
     if not candles_4h or len(candles_4h) < 20:
         return 0, 0, 0, "te_weinig_data", 0.0, 0.0
@@ -2174,7 +1798,6 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
         score = max(score - 4, 0);   why_tags.append("DIV=bearish")
 
     # ── BONUSSEN v4.0 ─────────────────────────────────────
-    # Taker buy ratio: echte koopdruk van market takers
     if taker_ratio > 0.60:
         score = min(score + 5, 110)
         why_tags.append(f"taker={taker_ratio:.2f}STERK")
@@ -2186,7 +1809,6 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
         score = max(score - 3, 0)
         why_tags.append(f"taker={taker_ratio:.2f}VERKOOP")
 
-    # Markt structuur: patroon van hogere toppen/bodems
     if markt_structuur == "BULLISH_TREND":
         score = min(score + 4, 110)
         why_tags.append("MS=BULL_HH_HL")
@@ -2195,19 +1817,24 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
         score = max(score - 5, 0)
         why_tags.append("MS=BEAR_LH_LL")
 
-    # Sessie timing bonus
     sessie_bonus = get_sessie_timing_bonus(sessie_timing)
     if sessie_bonus > 0:
         score = min(score + sessie_bonus, 110)
         why_tags.append(f"sessie={sessie_timing}+{sessie_bonus}")
 
-    # Coin cluster bonus/malus
     if coin_cluster == "STAR":
         score = min(score + 3, 110); why_tags.append("cluster=STAR")
     elif coin_cluster == "ZOMBIE":
         score = max(score - 10, 0); why_tags.append("cluster=ZOMBIE")
     elif coin_cluster == "WEAK":
         why_tags.append("cluster=WEAK")
+
+    # ── BONUS v4.1: TREND_PULLBACK ────────────────────────
+    # Basis: shadow data toont 67% win rate in RANGE, 53.6% in BULL.
+    # Dit is de bewezen beste setup — bonus geeft hem voorrang.
+    if setup_type == "TREND_PULLBACK":
+        score = min(score + 5, 110)
+        why_tags.append("TP_BONUS+5")
 
     # ── MALUSSEN ─────────────────────────────────────────
     fee_impact = TOTAL_COST_PCT * 100
@@ -2477,10 +2104,7 @@ def get_top_signalen_vandaag(conn) -> List[Dict]:
 
 
 def get_edge_decay_coins_vandaag(conn) -> List[str]:
-    """
-    v4.0: Haalt coins op waarvoor edge decay gedetecteerd is (30 dagen).
-    Gebruikt in het dagrapport als waarschuwing.
-    """
+    """v4.0: Haalt coins op waarvoor edge decay gedetecteerd is (30 dagen)."""
     decay_coins: List[str] = []
     try:
         with conn.cursor() as cur:
@@ -2505,7 +2129,7 @@ def get_edge_decay_coins_vandaag(conn) -> List[str]:
                 coin    = safe_str(rij[0])
                 live_wr = safe_float(rij[3])
                 sim_wr  = safe_float(rij[4])
-                if sim_wr - live_wr > 0.15:  # 15% verschil
+                if sim_wr - live_wr > 0.15:
                     decay_coins.append(coin)
     except Exception:
         pass
@@ -2559,7 +2183,6 @@ def zorg_voor_pending_tabel(conn) -> None:
         conn.commit()
     except Exception:
         safe_rollback(conn)
-
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -2608,8 +2231,6 @@ def zorg_voor_pending_tabel(conn) -> None:
     except Exception as e:
         safe_rollback(conn)
         log(f"Tabel check fout: {e}")
-
-    # Migraties
     try:
         migraties = [
             ("score_details",       "JSONB"),
@@ -2621,13 +2242,13 @@ def zorg_voor_pending_tabel(conn) -> None:
             ("btc_regime",          "TEXT"),
             ("rr_ratio",            "DOUBLE PRECISION"),
             ("exp_bias",            "TEXT DEFAULT 'NEUTRAL'"),
-            ("markt_structuur",     "TEXT"),       # v4.0
-            ("taker_ratio",         "DOUBLE PRECISION DEFAULT 0.5"),  # v4.0
-            ("coin_cluster",        "TEXT DEFAULT 'STABLE'"),          # v4.0
-            ("kelly_grootte_eur",   "DOUBLE PRECISION DEFAULT 0.50"),  # v4.0
-            ("correlatie_max",      "DOUBLE PRECISION DEFAULT 0.0"),   # v4.0
-            ("edge_decay",          "BOOLEAN DEFAULT FALSE"),          # v4.0
-            ("sessie_timing",       "TEXT"),                            # v4.0
+            ("markt_structuur",     "TEXT"),
+            ("taker_ratio",         "DOUBLE PRECISION DEFAULT 0.5"),
+            ("coin_cluster",        "TEXT DEFAULT 'STABLE'"),
+            ("kelly_grootte_eur",   "DOUBLE PRECISION DEFAULT 0.50"),
+            ("correlatie_max",      "DOUBLE PRECISION DEFAULT 0.0"),
+            ("edge_decay",          "BOOLEAN DEFAULT FALSE"),
+            ("sessie_timing",       "TEXT"),
         ]
         with conn.cursor() as cur:
             for kolom, definitie in migraties:
@@ -2691,7 +2312,6 @@ def insert_pending(conn, prebuy: Dict) -> str:
                 prebuy.get("divergentie","GEEN"),
                 prebuy.get("funding_rate", 0.0),
                 prebuy.get("live_toegestaan", False),
-                # v4.0 velden
                 prebuy.get("markt_structuur", "ONBEKEND"),
                 prebuy.get("taker_ratio", 0.5),
                 prebuy.get("coin_cluster", "STABLE"),
@@ -2761,15 +2381,12 @@ def verstuur_dagrapport(conn) -> None:
         dag_trades        = get_daily_trade_count(conn)
         shadow_cnt        = get_daily_shadow_count(conn)
         top_coins         = get_top_signalen_vandaag(conn)
-        edge_decay_coins  = get_edge_decay_coins_vandaag(conn)  # v4.0
-
+        edge_decay_coins  = get_edge_decay_coins_vandaag(conn)
         claude_txt = claude_dagrapport(dag_trades, shadow_cnt, dagpnl,
                                         wins, losses, btc_regime, top_coins,
                                         edge_decay_coins)
-
         totaal = wins + losses
         wr = wins / totaal if totaal > 0 else 0.0
-
         rapport = (
             f"DAGRAPPORT — {utc_day_str()}\n"
             f"{'='*30}\n"
@@ -2786,7 +2403,6 @@ def verstuur_dagrapport(conn) -> None:
         if claude_txt:
             rapport += f"\nClaude: {claude_txt}"
         rapport += "\n\nCommands: STATUS | TRADES | STOP"
-
         send_whatsapp(rapport)
         set_bot_state_value(conn, "dagrapport_datum",    utc_day_str())
         set_bot_state_value(conn, "dagrapport_verstuurd", now_utc().strftime("%Y-%m-%d %H:%M UTC"))
@@ -2801,24 +2417,16 @@ def verstuur_dagrapport(conn) -> None:
 def voer_health_check_uit(conn) -> Dict[str, Any]:
     """Uitgebreide health check van scanner en systeem."""
     health: Dict[str, Any] = {
-        "database":      False,
-        "bitvavo_api":   False,
-        "binance_api":   False,
-        "claude_api":    False,
-        "webhook":       False,
-        "btc_data_vers": False,
-        "candles_vers":  False,
-        "problemen":     [],
-        "score":         0,
+        "database": False, "bitvavo_api": False, "binance_api": False,
+        "claude_api": False, "webhook": False, "btc_data_vers": False,
+        "candles_vers": False, "problemen": [], "score": 0,
     }
-
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
             health["database"] = True
     except Exception as e:
         health["problemen"].append(f"DB fout: {e}")
-
     try:
         resp = requests.get(f"{BITVAVO_BASE}/v2/markets", timeout=10)
         health["bitvavo_api"] = resp.ok
@@ -2826,7 +2434,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
             health["problemen"].append(f"Bitvavo status {resp.status_code}")
     except Exception as e:
         health["problemen"].append(f"Bitvavo onbereikbaar: {e}")
-
     try:
         resp = requests.get(f"{BINANCE_BASE}/ping", timeout=5)
         health["binance_api"] = resp.ok
@@ -2834,7 +2441,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
             health["problemen"].append(f"Binance status {resp.status_code}")
     except Exception as e:
         health["problemen"].append(f"Binance onbereikbaar: {e}")
-
     if ANTHROPIC_API_KEY:
         test = _claude_analyse("Zeg alleen OK.", 10)
         health["claude_api"] = bool(test)
@@ -2842,7 +2448,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
             health["problemen"].append("Claude API reageert niet")
     else:
         health["problemen"].append("ANTHROPIC_API_KEY niet ingesteld")
-
     if WEBHOOK_BASE_URL:
         try:
             resp = requests.get(f"{WEBHOOK_BASE_URL}/health", timeout=10)
@@ -2851,7 +2456,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
             health["problemen"].append("Webhook onbereikbaar")
     else:
         health["problemen"].append("WEBHOOK_BASE_URL niet ingesteld")
-
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT MAX(open_time) FROM public.btc_regime_4h")
@@ -2866,7 +2470,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
                     health["problemen"].append(f"BTC data {uren_oud:.0f}u oud")
     except Exception as e:
         health["problemen"].append(f"BTC data check fout: {e}")
-
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT MAX(updated_at) FROM public.candles WHERE timeframe='4h'")
@@ -2881,7 +2484,6 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
                     health["problemen"].append(f"Candles {uren_oud:.0f}u oud")
     except Exception:
         pass
-
     ok_count = sum(1 for k, v in health.items() if isinstance(v, bool) and v)
     total    = sum(1 for v in health.values() if isinstance(v, bool))
     health["score"] = int(ok_count / max(total, 1) * 100)
@@ -2907,22 +2509,11 @@ def scan_universe(conn, drempels: Dict) -> int:
     """
     Scant alle Bitvavo-tradable coins via Binance data.
 
-    v4.0 NIEUW PER COIN:
-    - Taker buy ratio berekening (koopdruk)
-    - Markt structuur analyse (HH/HL vs LH/LL)
-    - Volume zone detectie (high-volume support)
-    - Coin correlatie filter (geen gecorreleerde dubbele posities)
-    - Edge decay check per coin
-    - Kelly Criterion positiegrootte
-    - Coin clustering (STAR/STABLE/WEAK/ZOMBIE)
-    - Sessie timing bonus in score
-
-    Architectuur:
-    - Scanner draait ALTIJD 24/7
-    - Shadow trades → ALTIJD (leerdata)
-    - Live trades → alleen als bot AAN + trading hours
+    v4.1 FIXES IN DEZE FUNCTIE:
+    - BREAKOUT_RETEST in BEAR wordt geblokkeerd (28.9% win rate)
+    - TREND_PULLBACK krijgt +5 score bonus (67% win rate)
+    - Dashboard controls (min score, trading hours) werken correct
     """
-    # ── Bot status ──────────────────────────────────────────
     bot_actief = is_bot_active(conn)
     bot_gepauz = is_bot_paused(conn)
     live_ok    = bot_actief and not bot_gepauz
@@ -2964,7 +2555,6 @@ def scan_universe(conn, drempels: Dict) -> int:
         log(f"Pre-buy daglimiet bereikt: {prebuy_today}/{MAX_PREBUY_PER_DAY}")
         return 0
 
-    # ── BTC regime + trend ─────────────────────────────────
     btc_regime  = get_btc_regime(conn)
     btc_sterkte = get_btc_sterkte(conn)
     btc_trend   = get_btc_trend_richting(conn)
@@ -2977,7 +2567,6 @@ def scan_universe(conn, drempels: Dict) -> int:
     score_drempel = get_score_drempel_voor_regime(btc_regime, drempels)
     _SESSIE["score_drempel"] = score_drempel
 
-    # v4.0: Markt sessie timing
     sessie_timing = _SESSIE.get("sessie_timing", bepaal_markt_sessie_timing())
 
     log(f"BTC: {btc_regime} ({btc_sterkte:.0f}%) trend={btc_trend} | "
@@ -3042,6 +2631,17 @@ def scan_universe(conn, drempels: Dict) -> int:
             if setup_type == "UNKNOWN":
                 tel_filter("geen_setup"); update_sessie(symbol_usdt, 0, "geen_setup"); continue
 
+            # FIX v4.1: BREAKOUT_RETEST in BEAR blokkeren
+            # Shadow data: 149 trades, 28.9% win rate = verliesgevend.
+            # In een bearish BTC markt mislukt bijna elke uitbraak poging.
+            # TREND_PULLBACK werkt wel goed (67% win rate) maar BREAKOUT niet.
+            # Dit filter bespaart onnodige verliezen bij slechte marktomstandigheden.
+            if ("BREAKOUT" in setup_type or "RETEST" in setup_type) and btc_regime == "BEAR":
+                tel_filter("breakout_bear_geblokkeerd")
+                update_sessie(symbol_usdt, 0, "breakout_bear_geblokkeerd")
+                log(f"BREAKOUT in BEAR geblokkeerd: {symbol_usdt} ({setup_type}) — 28.9% WR")
+                continue
+
             # ── Experience ophalen ─────────────────────────
             exp_win_rate, exp_n, exp_bias = get_experience(
                 conn, symbol_usdt, setup_type, coin_regime)
@@ -3069,7 +2669,6 @@ def scan_universe(conn, drempels: Dict) -> int:
             _SESSIE["coin_clusters"][coin_cluster] = \
                 _SESSIE["coin_clusters"].get(coin_cluster, 0) + 1
 
-            # ZOMBIE coins gaan niet live
             if coin_cluster == "ZOMBIE" and live_ok:
                 tel_filter("zombie_coin")
                 log(f"ZOMBIE coin {symbol_usdt} — shadow only")
@@ -3141,24 +2740,20 @@ def scan_universe(conn, drempels: Dict) -> int:
             if weerstand > 0 and target > weerstand * 1.05:
                 target = weerstand * 0.99
 
-            # ── v4.0: Volume zone aanpassing ──────────────
             vol_zone_low, vol_zone_high = bereken_volume_zone(candles_4h, 10)
             if vol_zone_low > 0 and stop < vol_zone_low:
-                # Zet stop net onder de volume zone voor betere bescherming
                 stop = max(stop, vol_zone_low * 0.995)
 
-            # ── v4.0: Kelly positiegrootte ────────────────
             kelly_eur = bereken_kelly_grootte(
-                win_rate     = exp_win_rate if exp_n >= 10 else 0.50,
-                avg_win_r    = tgt_eff,
-                avg_loss_r   = 1.0,
-                max_eur      = MAX_KELLY_EUR,
-                min_eur      = MIN_KELLY_EUR,
+                win_rate      = exp_win_rate if exp_n >= 10 else 0.50,
+                avg_win_r     = tgt_eff,
+                avg_loss_r    = 1.0,
+                max_eur       = MAX_KELLY_EUR,
+                min_eur       = MIN_KELLY_EUR,
                 kelly_fractie = drempels.get("kelly_fractie", KELLY_FRACTIE),
             )
             _SESSIE["kelly_grootte"].append(kelly_eur)
 
-            # ── Claude beoordeling ─────────────────────────
             claude_txt = claude_beoordeel_signaal(
                 symbol_usdt, setup_type, coin_regime, btc_regime,
                 score, chance, confidence, rsi_4h, vol_ratio,
@@ -3167,11 +2762,8 @@ def scan_universe(conn, drempels: Dict) -> int:
             )
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
-
-            # Live toegestaan — ZOMBIE coins gaan nooit live
             live_toegestaan = live_ok and coin_cluster != "ZOMBIE"
 
-            # ── Pre-BUY aanmaken ───────────────────────────
             prebuy = {
                 "id":               str(uuid.uuid4()),
                 "symbol":           symbol_usdt,
@@ -3194,7 +2786,6 @@ def scan_universe(conn, drempels: Dict) -> int:
                 "vwap_positie":     vwap_pos,
                 "divergentie":      divergentie,
                 "funding_rate":     funding_rate,
-                # v4.0 velden
                 "markt_structuur":  markt_structuur,
                 "taker_ratio":      taker_ratio,
                 "coin_cluster":     coin_cluster,
@@ -3219,7 +2810,6 @@ def scan_universe(conn, drempels: Dict) -> int:
                     "live_toegestaan":  live_toegestaan,
                     "atr_multiplier":   atr_eff,
                     "atr_target_r":     tgt_eff,
-                    # v4.0
                     "markt_structuur":  markt_structuur,
                     "taker_ratio":      taker_ratio,
                     "coin_cluster":     coin_cluster,
@@ -3265,7 +2855,7 @@ def scan_universe(conn, drempels: Dict) -> int:
 # ============================================================
 if __name__ == "__main__":
     log("=" * 65)
-    log(f"Multi Coin Scorer v4.0 — {now_utc().strftime('%Y-%m-%d %H:%M UTC')}")
+    log(f"Multi Coin Scorer v4.1 — {now_utc().strftime('%Y-%m-%d %H:%M UTC')}")
     log("=" * 65)
     log(f"Database:              {'OK' if DATABASE_URL else 'ONTBREEKT'}")
     log(f"Webhook URL:           {'OK' if WEBHOOK_BASE_URL else 'niet ingesteld'}")
@@ -3281,7 +2871,6 @@ if __name__ == "__main__":
     log(f"Funding filter:        {MIN_FUNDING_RATE*100:.3f}% tot {MAX_FUNDING_RATE*100:.3f}%")
     log(f"Weekend live skip:     {SKIP_WEEKEND}")
     log(f"Rapport uur UTC:       {RAPPORT_HOUR_UTC}:00")
-    # v4.0
     log(f"Correlatie max:        {MAX_CORRELATIE_DREMPEL:.2f}")
     log(f"Kelly fractie:         {KELLY_FRACTIE:.2f} (max €{MAX_KELLY_EUR:.2f})")
     log(f"Auto BL interval:      {AUTO_BL_INTERVAL_UREN}u")
@@ -3298,7 +2887,6 @@ if __name__ == "__main__":
         conn = db_connect()
         log("Database verbonden")
 
-        # Health check
         log("Health check uitvoeren...")
         health = voer_health_check_uit(conn)
         log_health_check(health)
@@ -3309,35 +2897,54 @@ if __name__ == "__main__":
                 f"Problemen: {' | '.join(health['problemen'][:3])}"
             )
 
-        # Claude health check
         if ANTHROPIC_API_KEY:
             log("Claude scanner health check...")
             hc_txt = claude_scanner_health_check()
             if hc_txt:
                 log(f"Claude health: {hc_txt}")
 
-        # Pending tabel aanmaken / migreren
         zorg_voor_pending_tabel(conn)
-
-        # Verlopen pending opruimen
         cleanup_verlopen_pending(conn)
 
-        # v4.0: Auto blacklist/whitelist update
         log("Auto blacklist/whitelist update check...")
         update_coin_blacklist_whitelist(conn)
 
-        # Coach drempels ophalen
         drempels = haal_coach_drempels_op(conn)
-        log(f"Coach drempels: score>={drempels['min_score']} "
-            f"ATR={drempels['atr_multiplier']} "
-            f"BULL={drempels['score_bull']}/RANGE={drempels['score_range']}/BEAR={drempels['score_bear']} "
-            f"Kelly={drempels.get('kelly_fractie', KELLY_FRACTIE):.2f} "
-            f"Correlatie max={drempels.get('max_correlatie', MAX_CORRELATIE_DREMPEL):.2f}")
 
-        # Sessie initialiseren
+        # FIX v4.1: Dashboard globals override
+        # Na het ophalen van drempels uit bot_state worden de globale
+        # variabelen overschreven zodat dashboard wijzigingen direct
+        # actief zijn zonder dat de Render service herstart hoeft.
+        # Dit maakt Bot Controls sliders echt functioneel.
+        global MIN_SCORE_TO_TRADE, TRADING_HOURS_START, TRADING_HOURS_END
+        global SCORE_DREMPEL_BULL, SCORE_DREMPEL_RANGE, SCORE_DREMPEL_BEAR
+
+        _nieuwe_score = drempels.get("min_score", MIN_SCORE_TO_TRADE)
+        if _nieuwe_score != MIN_SCORE_TO_TRADE:
+            log(f"[DASHBOARD] Min score: {MIN_SCORE_TO_TRADE} → {_nieuwe_score}")
+            MIN_SCORE_TO_TRADE = _nieuwe_score
+
+        _nieuwe_start = drempels.get("trading_hours_start", TRADING_HOURS_START)
+        _nieuwe_end   = drempels.get("trading_hours_end",   TRADING_HOURS_END)
+        if _nieuwe_start != TRADING_HOURS_START or _nieuwe_end != TRADING_HOURS_END:
+            log(f"[DASHBOARD] Trading hours: {TRADING_HOURS_START}-{TRADING_HOURS_END} "
+                f"→ {_nieuwe_start}-{_nieuwe_end} UTC")
+            TRADING_HOURS_START = _nieuwe_start
+            TRADING_HOURS_END   = _nieuwe_end
+
+        if drempels.get("score_bull"):  SCORE_DREMPEL_BULL  = drempels["score_bull"]
+        if drempels.get("score_range"): SCORE_DREMPEL_RANGE = drempels["score_range"]
+        if drempels.get("score_bear"):  SCORE_DREMPEL_BEAR  = drempels["score_bear"]
+
+        log(f"Coach drempels: score>={MIN_SCORE_TO_TRADE} "
+            f"ATR={drempels['atr_multiplier']} "
+            f"BULL={SCORE_DREMPEL_BULL}/RANGE={SCORE_DREMPEL_RANGE}/BEAR={SCORE_DREMPEL_BEAR} "
+            f"Kelly={drempels.get('kelly_fractie', KELLY_FRACTIE):.2f} "
+            f"Correlatie max={drempels.get('max_correlatie', MAX_CORRELATIE_DREMPEL):.2f} "
+            f"Uren={TRADING_HOURS_START}-{TRADING_HOURS_END}UTC")
+
         init_sessie()
 
-        # BTC en Bitvavo status
         btc         = get_btc_regime(conn)
         btc_sterkte = get_btc_sterkte(conn)
         btc_trend   = get_btc_trend_richting(conn)
@@ -3346,18 +2953,14 @@ if __name__ == "__main__":
         log(f"Bitvavo markets: {len(markets)} tradable")
         log(f"Markt sessie: {_SESSIE['sessie_timing']}")
 
-        # Dagelijks rapport check
         verstuur_dagrapport(conn)
 
-        # Hoofd scan
         n = scan_universe(conn, drempels)
         log(f"Resultaat: {n} pre-buys gegenereerd")
 
-        # Sessie opslaan
         sla_sessie_op(conn)
         sla_sessie_naar_tabel(conn)
 
-        # v4.0: Score gradient efficiency analyse
         if ANTHROPIC_API_KEY and _SESSIE["gescand"] > 50:
             log("Score gradient efficiency berekenen...")
             gradient = bereken_score_gradient_efficiency(conn)
@@ -3370,14 +2973,12 @@ if __name__ == "__main__":
                     log(f"Claude gradient: {claude_gradient}")
                     set_bot_state_value(conn, "score_gradient_analyse", claude_gradient)
 
-        # Claude sessie analyse
         if ANTHROPIC_API_KEY and _SESSIE["gescand"] > 10:
             analyse = claude_analyseer_sessie(_SESSIE)
             if analyse:
                 log(f"Claude sessie: {analyse}")
                 set_bot_state_value(conn, "laatste_scan_claude", analyse)
 
-        # Claude marktbeoordeling
         if ANTHROPIC_API_KEY:
             markt = claude_beoordeel_marktomstandigheden(
                 btc, n, _SESSIE["gescand"], now_utc().hour, btc_sterkte,
@@ -3387,23 +2988,20 @@ if __name__ == "__main__":
                 log(f"Claude markt: {markt}")
                 set_bot_state_value(conn, "markt_beoordeling", markt)
 
-        # v4.0: Uitgebreide WhatsApp scan samenvatting
         if n >= 2 or _SESSIE["gescand"] > 100:
             samenvatting = bouw_uitgebreide_scan_samenvatting(
                 conn, _SESSIE, drempels, btc, btc_sterkte)
             if samenvatting and n >= 2:
                 send_whatsapp(samenvatting)
         elif n == 0 and _SESSIE["gescand"] > 50:
-            # Stuur een kort bericht als er helemaal geen signalen zijn
             log(f"0 signalen na {_SESSIE['gescand']} coins — geen WhatsApp")
 
-        # Status wegschrijven
         set_bot_state_value(conn, "scanner_actief",  "true")
-        set_bot_state_value(conn, "scanner_versie",  "4.0")
+        set_bot_state_value(conn, "scanner_versie",  "4.1")
         set_bot_state_value(conn, "scanner_health",  str(health["score"]))
 
         conn.close()
-        log("Scanner v4.0 klaar")
+        log("Scanner v4.1 klaar")
         sys.exit(0)
 
     except KeyboardInterrupt:
