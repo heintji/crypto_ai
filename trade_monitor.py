@@ -1,6 +1,6 @@
 # trade_monitor.py
 # ============================================================
-# Crypto AI Bot — Trade Monitor v3.0
+# Crypto AI Bot — Trade Monitor v3.1
 # ============================================================
 # Bewaakt alle open live en shadow trades.
 # Voert exits uit op basis van de strategie regels.
@@ -24,7 +24,7 @@
 #   STRUCTUUR gebroken (-1%)         → SELL 100%
 #   1R bereikt → stop naar breakeven → trailing stop actief
 #   2R bereikt → stop naar +1R       → trailing stop verbeterd
-#   >1R bereikt, terug <1R           → SELL 40% partial
+#   >1R bereikt, terug <1R           → SELL 40% partial + WhatsApp
 #   3x candles <1R na partial sell   → SELL rest
 #
 # KRITIEKE FIXES vs v2.0:
@@ -51,6 +51,16 @@
 # ✅ Rolling 7/30-dagen metrics
 # ✅ Health monitoring met WhatsApp bij problemen
 # ✅ Per-run statistieken gelogd
+#
+# FIXES v3.1:
+# ─────────────────────────────────────────────────────────────
+# ✅ Fix 1: model string → claude-sonnet-4-6
+# ✅ Fix 2: STRUCTUUR mode minimum winst check (target - 0.5%)
+#    → voorkomt verkoop onder target door fees/slippage
+# ✅ Fix 3: WhatsApp notificatie bij partial sell 40%
+#    → jij weet nu altijd wanneer bot 40% verkoopt
+# ✅ Fix 4: Shadow trades max houdtijd → 48u (was 24u)
+#    → meer leerdata per shadow trade
 #
 # SAMENWERKING MET ANDERE BESTANDEN:
 # ─────────────────────────────────────────────────────────────
@@ -259,7 +269,10 @@ def send_whatsapp(message: str, rate_key: str = "") -> bool:
 # CLAUDE — analyse helper
 # ============================================================
 def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
-    """Claude API aanroep. Geeft lege string bij elke fout."""
+    """
+    Claude API aanroep. Geeft lege string bij elke fout.
+    FIX v3.1: model string bijgewerkt naar claude-sonnet-4-6.
+    """
     if not ANTHROPIC_API_KEY:
         return ""
     try:
@@ -271,7 +284,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-sonnet-4-6",  # FIX v3.1: was claude-sonnet-4-20250514
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -973,9 +986,10 @@ def process_live_trade(
     2. Stop bereikt (R < 0)               → SELL 100%
     3. Target bereikt                      → STRUCTUUR mode
     4. STRUCTUUR gebroken (-1%)            → SELL 100%
+       FIX v3.1: minimum winst check — niet verkopen onder target - 0.5%
     5. 1R bereikt → trailing stop actief
     6. 2R bereikt → trailing stop verbeterd
-    7. Terug <1R na >1R                   → SELL 40% partial
+    7. Terug <1R na >1R                   → SELL 40% partial + WhatsApp
     8. 3x candles <1R na partial          → SELL rest
 
     Geeft (changed, sold) terug.
@@ -1062,10 +1076,20 @@ def process_live_trade(
             trade["structuur_high"] = current
             changed = True
         elif current < structuur_high * 0.99:
-            log(f"📉 {symbol}: structuur gebroken @ {current:.6f} → SELL 100%")
-            result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STRUCTUUR_BREAK"})
-            _finalize_trade(symbol, trade, current, result, conn, "STRUCTUUR_BREAK")
-            return True, result.get("ok", False)
+            # FIX v3.1: minimum winst check
+            # Voorkomt dat fees/slippage ons onder target uitkomen.
+            # Verkopen we alleen als we minstens target - 0.5% verdienen.
+            # Zo blijft de trade altijd winstgevend na kosten.
+            min_winst_prijs = target * 0.995
+            if current < min_winst_prijs:
+                log(f"📉 {symbol}: structuur gebroken @ {current:.6f} "
+                    f"(min winst prijs={min_winst_prijs:.6f}) → SELL 100%")
+                result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STRUCTUUR_BREAK"})
+                _finalize_trade(symbol, trade, current, result, conn, "STRUCTUUR_BREAK")
+                return True, result.get("ok", False)
+            else:
+                log(f"⚠️ {symbol}: structuur trekt terug maar boven min winst "
+                    f"({current:.6f} > {min_winst_prijs:.6f}) — wachten op herstel")
         return changed, False
 
     # ── 5. Trailing stop na 1R ─────────────────────────────
@@ -1103,6 +1127,26 @@ def process_live_trade(
             trade["last_candle_check_ts"] = 0
             changed = True
             log(f"✅ {symbol}: 40% verkocht")
+            # FIX v3.1: WhatsApp notificatie bij partial sell
+            # Zodat jij altijd weet wanneer de bot 40% heeft verkocht.
+            # 60% positie blijft open met stop op break-even.
+            entry_p  = safe_float(trade.get("entry"))
+            pct_move = (current - entry_p) / entry_p * 100 if entry_p > 0 else 0.0
+            send_whatsapp(
+                rate_key=f"partial_{symbol}",
+                message=(
+                    f"⚠️ PARTIAL SELL — {symbol}\n"
+                    f"{'─' * 28}\n\n"
+                    f"40% verkocht — prijs terug <1R\n\n"
+                    f"Entry:   {entry_p:.6f}\n"
+                    f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
+                    f"R:       {r:.2f}\n\n"
+                    f"60% positie nog open.\n"
+                    f"Stop staat op break-even.\n"
+                    f"Als prijs 3 candles <1R blijft → rest verkopen.\n\n"
+                    f"Commands: TRADES | STATUS"
+                ),
+            )
 
     # ── 8. Candle counter <1R na partial sell ─────────────
     if trade.get("partial_sold_40") and r < 1.0:
@@ -1316,6 +1360,10 @@ def evaluate_shadow_for_symbol(
     Verwerkt één open shadow trade.
     Logt uitkomst naar experience_trades met source=SHADOW.
     Geeft (changed, closed) terug.
+
+    FIX v3.1: max houdtijd verhoogd naar 48u (was 24u).
+    Meer tijd = meer leerdata over hoe trades zich werkelijk ontwikkelen.
+    Shadow trades gebruiken geen echt geld dus langere houdtijd is geen risico.
     """
     if current is None or current <= 0:
         return False, False
@@ -1327,8 +1375,10 @@ def evaluate_shadow_for_symbol(
     hold_min = _holding_minutes(shadow_trade)
     changed  = False
 
-    # Max houdtijd
-    if hold_min >= MAX_HOLD_HOURS * 60:
+    # FIX v3.1: shadow trades krijgen 48u houdtijd (live=24u)
+    # Meer leerdata per trade — geen financieel risico bij verlenging
+    shadow_max_hold_min = MAX_HOLD_HOURS * 2 * 60  # 48u in minuten
+    if hold_min >= shadow_max_hold_min:
         _log_shadow_outcome(symbol, shadow_trade, current, "LOSS", "MAX_HOLD_TIME", conn)
         return True, True
 
@@ -2084,7 +2134,7 @@ def update_monitor_dashboard(conn) -> None:
     monitor_wr_7d        → win rate laatste 7 dagen
     monitor_pnl_vandaag  → PnL vandaag
     monitor_btc_regime   → huidig BTC regime
-    monitor_versie       → 3.0
+    monitor_versie       → 3.1
     """
     try:
         uptime_min = 0.0
@@ -2123,7 +2173,7 @@ def update_monitor_dashboard(conn) -> None:
             "monitor_wr_7d":          str(wr_7),
             "monitor_pnl_vandaag":    str(round(pnl_vandaag, 4)),
             "monitor_btc_regime":     btc_regime,
-            "monitor_versie":         "3.0",
+            "monitor_versie":         "3.1",
             "monitor_laatste_update": now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
 
@@ -2261,13 +2311,13 @@ def run_monitor_loop() -> None:
     Interval: 30 seconden (configureerbaar via MONITOR_INTERVAL_SEC).
     """
     log("=" * 60)
-    log("Trade Monitor v3.0 — gestart")
+    log("Trade Monitor v3.1 — gestart")
     log("=" * 60)
     log(f"Database:     {'✅' if DATABASE_URL else '❌ ONTBREEKT'}")
     log(f"Twilio:       {'✅' if TWILIO_ACCOUNT_SID else '⚠️ niet ingesteld'}")
     log(f"Claude API:   {'✅' if ANTHROPIC_API_KEY else '⚠️ niet ingesteld'}")
     log(f"Interval:     {MONITOR_INTERVAL_SEC}s")
-    log(f"Max hold:     {MAX_HOLD_HOURS}u (BULL=x1.5, BEAR=x0.5)")
+    log(f"Max hold:     {MAX_HOLD_HOURS}u live | {MAX_HOLD_HOURS*2:.0f}u shadow")
     log(f"Cooldown:     {COIN_COOLDOWN_HOURS}u na verlies")
     log(f"Fee+slip:     {TOTAL_COST_PCT*100:.2f}%")
     log(f"Daily stop:   €{DAILY_STOP_LOSS_EUR:.2f} (informatief)")
@@ -2291,7 +2341,7 @@ def run_monitor_loop() -> None:
 # CLI
 # ============================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Trade Monitor v3.0")
+    parser = argparse.ArgumentParser(description="Trade Monitor v3.1")
     parser.add_argument("--once",   action="store_true",
                         help="Één monitor run en stoppen")
     parser.add_argument("--symbol", type=str, default=None,
