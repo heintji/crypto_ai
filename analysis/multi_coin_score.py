@@ -1916,9 +1916,9 @@ def get_coin_statistieken(conn, symbol: str) -> Dict[str, Any]:
                 ROUND(COUNT(*) FILTER (WHERE UPPER(outcome)='WIN')::numeric/NULLIF(COUNT(*),0),3) AS wr,
                 ROUND(AVG(COALESCE(pnl_r,result_r,0))::numeric,3) AS gem_r,
                 ROUND(COALESCE(
-                    SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END) /
-                    NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001),
-                1),2) AS pf,
+                    SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END)::numeric /
+                    NULLIF(SUM(CASE WHEN UPPER(outcome)='LOSS' THEN ABS(COALESCE(pnl_eur,0)) ELSE 0 END),0.001)::numeric,
+                1.0),2) AS pf,
                 MAX(COALESCE(exit_time, updated_at)) AS laatste
             FROM public.experience_trades
             WHERE UPPER(COALESCE(coin,'')) = UPPER(%s)
