@@ -1386,6 +1386,7 @@ def log_trade_open_to_db(
                 qty, amount_eur, fee_eur, outcome,
                 bot_confidence, score, timeframe,
                 exp_n, exp_win_rate, why_tag,
+                bitvavo_market,
                 created_at, updated_at
             )
             VALUES (
@@ -1393,6 +1394,7 @@ def log_trade_open_to_db(
                 %s,%s,%s,'OPEN',
                 %s,%s,%s,
                 %s,%s,%s,
+                %s,
                 NOW(),NOW()
             )
             ON CONFLICT (trade_key) DO UPDATE SET
@@ -1409,6 +1411,7 @@ def log_trade_open_to_db(
                 safe_int(meta.get("exp_n")),
                 safe_float(meta.get("exp_win_rate")),
                 safe_str(meta.get("why_tag")),
+                market,
             ))
         conn.commit()
         log(f"✅ DB gelogd (OPEN): {symbol} entry={entry:.6f}")
