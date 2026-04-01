@@ -1719,6 +1719,10 @@ def process_command(body: str, conn) -> str:
 # FLASK ROUTES — webhook endpoints
 # ============================================================
 
+@app.route("/", methods=["GET"])
+def index():
+    return "OK", 200
+
 @app.route("/health", methods=["GET"])
 def health():
     """
