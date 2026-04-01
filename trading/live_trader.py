@@ -76,7 +76,7 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 # ============================================================
 # FASE 1 LIMIETEN — identiek aan alle andere bestanden
 # ============================================================
-MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "0.50")
+MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
 MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "5")
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
@@ -1668,7 +1668,7 @@ def place_market_sell(
 # ============================================================
 def buy_eur(
     symbol:     str,
-    amount_eur: float          = MAX_PER_TRADE_EUR,
+    amount_eur: float          = 0.0,
     meta:       Optional[Dict] = None,
 ) -> Tuple[bool, str]:
     """
@@ -1690,6 +1690,15 @@ def buy_eur(
     v3.0: conn=None + finally conn.close() + safe_rollback.
     """
     meta = meta or {}
+    # Positiegrootte uit bot_state lezen als niet opgegeven
+    if not amount_eur:
+        try:
+            conn_tmp = db_connect()
+            val = get_bot_state(conn_tmp, "position_size_eur", str(MAX_PER_TRADE_EUR))
+            conn_tmp.close()
+            amount_eur = float(val or MAX_PER_TRADE_EUR)
+        except Exception:
+            amount_eur = MAX_PER_TRADE_EUR
 
     # 1. Market ophalen
     market = symbol_to_market(symbol)

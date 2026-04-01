@@ -3743,7 +3743,7 @@ def render_controls_page() -> None:
                     st.success(f"✅ ATR multiplier → {nieuw_atr:.1f}")
 
         huidig_size = float(get_bot_state_val("position_size_eur","0.5") or "0.5")
-        nieuw_size  = st.slider("💶 Positiegrootte (EUR)", 0.10, 2.00, huidig_size, 0.05,
+        nieuw_size  = st.slider("💶 Positiegrootte (EUR)", 1.00, 25.00, max(1.0, huidig_size), 0.50,
                                  format="€%.2f", key="ctrl_size")
         if abs(nieuw_size - huidig_size) > 0.01:
             if st.button(f"Opslaan positie=€{nieuw_size:.2f}", key="save_size"):
