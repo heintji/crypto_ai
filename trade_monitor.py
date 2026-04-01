@@ -1241,6 +1241,21 @@ def _finalize_trade(
         fee_eur, claude_tekst, mfe_r, mae_r, exit_r,
     )
 
+    # WhatsApp notificatie bij 100% sell
+    emoji = "✅" if outcome == "WIN" else "❌"
+    send_whatsapp(
+        rate_key=f"trade_closed_{symbol}",
+        message=(
+            f"{emoji} TRADE GESLOTEN: {symbol}\n"
+            f"{'─' * 30}\n\n"
+            f"📊 Resultaat:  {outcome}\n"
+            f"💶 PnL:        €{pnl_eur:.4f}\n"
+            f"📈 R-multiple: {exit_r:.2f}R\n"
+            f"🎯 Reden:      {exit_reden}\n"
+            f"⏱️ Houdtijd:   {hold_min:.0f} min\n"
+        )
+    )
+
     # Log naar coach_events
     log_coach_event(
         conn,

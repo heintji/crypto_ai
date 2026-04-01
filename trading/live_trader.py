@@ -1818,6 +1818,15 @@ def buy_eur(
         )
 
         log(f"✅ Live BUY: {symbol} @ €{entry:.6f} qty={qty:.6f} stop={stop:.6f}")
+        send_whatsapp_rate_limited(
+            f"🟢 TRADE GEOPEND: {symbol}\n"
+            f"──────────────────────────────\n\n"
+            f"💰 Bedrag:  €{amount_eur:.2f}\n"
+            f"📈 Entry:   €{entry:.6f}\n"
+            f"🛑 Stop:    €{stop:.6f}\n"
+            f"🎯 Target:  €{target:.6f}\n",
+            key=f"buy_{symbol}"
+        )
         return True, f"BUY {symbol} @ €{entry:.6f}"
 
     except Exception as e:
