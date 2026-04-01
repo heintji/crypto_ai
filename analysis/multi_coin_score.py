@@ -122,7 +122,7 @@ TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "17")
 BOT_STATE_TABLE         = "public.bot_state"
 
 # Score & filter instellingen
-MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "78")
+MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "85")
 MIN_CHANCE          = int(os.getenv("MIN_CHANCE") or "75")
 MIN_CONFIDENCE      = int(os.getenv("MIN_CONFIDENCE") or "75")
 MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "20")
@@ -156,7 +156,7 @@ BITVAVO_BASE    = "https://api.bitvavo.com"
 # ATR instellingen
 ATR_PERIOD     = int(os.getenv("ATR_PERIOD") or "14")
 ATR_MULTIPLIER = float(os.getenv("ATR_MULTIPLIER") or "1.6")
-ATR_TARGET_R   = float(os.getenv("ATR_TARGET_R") or "2.5")
+ATR_TARGET_R   = float(os.getenv("ATR_TARGET_R") or "2.0")
 
 # RSI instellingen
 RSI_PERIOD = int(os.getenv("RSI_PERIOD") or "14")
@@ -2636,10 +2636,9 @@ def scan_universe(conn, drempels: Dict) -> int:
             # In een bearish BTC markt mislukt bijna elke uitbraak poging.
             # TREND_PULLBACK werkt wel goed (67% win rate) maar BREAKOUT niet.
             # Dit filter bespaart onnodige verliezen bij slechte marktomstandigheden.
-            if ("BREAKOUT" in setup_type or "RETEST" in setup_type) and btc_regime == "BEAR":
-                tel_filter("breakout_bear_geblokkeerd")
-                update_sessie(symbol_usdt, 0, "breakout_bear_geblokkeerd")
-                log(f"BREAKOUT in BEAR geblokkeerd: {symbol_usdt} ({setup_type}) — 28.9% WR")
+            if "BREAKOUT" in setup_type or "RETEST" in setup_type:
+                tel_filter("breakout_geblokkeerd")
+                update_sessie(symbol_usdt, 0, "breakout_geblokkeerd")
                 continue
 
             # ── Experience ophalen ─────────────────────────
