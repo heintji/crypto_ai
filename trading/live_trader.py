@@ -729,7 +729,7 @@ def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
         raise ValueError("Bitvavo API key of secret ontbreekt")
 
     ts      = str(int(time.time() * 1000))
-    message = f"{ts}{method}{signing_path}{body}"
+    message = f"{ts}{method}{path}{body}"
 
     sig = hmac.new(
         BITVAVO_API_SECRET.strip("'\"").encode("utf-8"),
