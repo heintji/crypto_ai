@@ -122,7 +122,7 @@ TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "17")
 BOT_STATE_TABLE         = "public.bot_state"
 
 # Score & filter instellingen
-MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "92")
+MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "78")
 MIN_CHANCE          = int(os.getenv("MIN_CHANCE") or "75")
 MIN_CONFIDENCE      = int(os.getenv("MIN_CONFIDENCE") or "75")
 MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "20")
@@ -148,7 +148,7 @@ WHITELIST_MIN_TRADES  = int(os.getenv("WHITELIST_MIN_TRADES") or "20")
 # Binance API
 BINANCE_BASE    = "https://api.binance.com/api/v3"
 BINANCE_FAPI    = "https://fapi.binance.com/fapi/v1"
-BINANCE_SLEEP   = float(os.getenv("BINANCE_SLEEP") or "0.2")
+BINANCE_SLEEP   = float(os.getenv("BINANCE_SLEEP") or "0.0")
 BINANCE_TIMEOUT = int(os.getenv("BINANCE_TIMEOUT") or "10")
 MAX_RETRIES     = int(os.getenv("MAX_RETRIES") or "3")
 BITVAVO_BASE    = "https://api.bitvavo.com"
@@ -2305,7 +2305,7 @@ def insert_pending(conn, prebuy: Dict) -> str:
                 prebuy["score"], prebuy["chance"], prebuy["confidence"],
                 prebuy.get("bitvavo_market",""),
                 prebuy.get("exp_n", 0), prebuy.get("exp_win_rate", 0.5),
-                prebuy.get("exp_bias","NEUTRAL"), prebuy.get("why_tag",""),
+                {"NEUTRAL":0,"LONG":1,"SHORT":-1}.get(str(prebuy.get("exp_bias","NEUTRAL")),0), prebuy.get("why_tag",""),
                 prebuy.get("claude_beoordeling",""),
                 json.dumps(prebuy.get("score_details",{})),
                 prebuy.get("vwap_positie","ONBEKEND"),

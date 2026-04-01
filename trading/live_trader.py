@@ -746,7 +746,7 @@ def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
     }
 
     if BITVAVO_OPERATOR_ID:
-        headers["Bitvavo-Operator-Id"] = BITVAVO_OPERATOR_ID.strip("'\"")
+        headers["Bitvavo-Operator-Id"] = str(BITVAVO_OPERATOR_ID)
 
     return headers
 
@@ -2041,3 +2041,68 @@ if __name__ == "__main__":
             log(f"Claude: {health}")
 
     log("✅ Live Trader v3.0 configuratie check klaar")
+
+
+def main_loop():
+    """Hoofd trading loop — draait continu."""
+    log("🚀 Live Trader main loop gestart")
+    conn = None
+    try:
+        conn = db_connect()
+    except Exception as e:
+        log(f"❌ DB verbinding mislukt: {e}")
+        return
+
+    while True:
+        try:
+            # Haal pending approvals op
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, symbol, bitvavo_market, score, entry, stop, target,
+                           kelly_grootte_eur, live_toegestaan
+                    FROM pending_approvals
+                    WHERE status = 'PENDING'
+                    AND live_toegestaan = TRUE
+                    AND expires_at > NOW()
+                    ORDER BY score DESC
+                    LIMIT 5
+                """)
+                rows = cur.fetchall()
+
+            for row in rows:
+                pid, symbol, market, score, entry, stop, target, kelly, live_ok = row
+                log(f"🔍 Pending: {symbol} score={score}")
+                ok, result = buy_eur(
+                    symbol=symbol,
+                    amount_eur=min(kelly or MAX_PER_TRADE_EUR, MAX_PER_TRADE_EUR),
+                    meta={"score": score, "stop": stop, "target": target, "prebuy_id": pid},
+                )
+                if ok:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE pending_approvals SET status='EXECUTED' WHERE id=%s",
+                            (pid,)
+                        )
+                    conn.commit()
+                    log(f"✅ BUY uitgevoerd: {symbol}")
+                else:
+                    log(f"❌ BUY mislukt: {symbol}: {result}")
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE pending_approvals SET status='FAILED' WHERE id=%s",
+                            (pid,)
+                        )
+                    conn.commit()
+
+        except Exception as e:
+            log(f"❌ Loop fout: {e}")
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+
+        time.sleep(30)
+
+
+# Start main loop
+main_loop()
