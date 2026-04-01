@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from python_bitvavo_api.bitvavo import Bitvavo as BitvavoSDK
 import json
 import os
 import sys
@@ -1549,12 +1550,16 @@ def place_market_buy_eur(
 
     log(f"📤 Bitvavo BUY: {market} €{amount_eur:.2f}")
 
-    ok, data = _bitvavo_request("POST", "/order", payload)
-
+    try:
+        sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
+        data = sdk.placeOrder(market, "buy", "market", {"amountQuote": str(round(amount_eur, 2)), "operatorId": BITVAVO_OPERATOR_ID})
+        ok = "errorCode" not in data and "error" not in data
+    except Exception as e:
+        log(f"❌ BUY exception ({market}): {e}")
+        return False, {"error": str(e)}
     if not ok:
         log(f"❌ BUY mislukt ({market}): {data}")
         return False, {"error": str(data)}
-
     if isinstance(data, dict) and "error" in data:
         log(f"❌ BUY error ({market}): {data}")
         return False, data
@@ -1610,8 +1615,13 @@ def place_market_sell(
 
     log(f"📤 Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
 
-    ok, data = _bitvavo_request("POST", "/order", payload)
-
+    try:
+        sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
+        data = sdk.placeOrder(market, "sell", "market", {"amount": str(sell_qty), "operatorId": BITVAVO_OPERATOR_ID})
+        ok = "errorCode" not in data and "error" not in data
+    except Exception as e:
+        log(f"❌ SELL exception ({market}): {e}")
+        return False, {"error": str(e)}
     if not ok:
         log(f"❌ SELL mislukt ({market}): {data}")
         return False, {"error": str(data)}
