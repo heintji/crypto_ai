@@ -798,33 +798,25 @@ def update_trade_in_db(
 # STATE FILE HELPERS
 # ============================================================
 def load_state() -> Dict[str, Any]:
-    """
-    Laadt de live trade state.
-
-    FIX vs v2.0: als JSON een list is (corrupt) ipv dict
-    crashte alles met 'list object has no attribute setdefault'.
-    Nu: isinstance check + reset naar leeg dict bij corruptie.
-    """
-    _ensure_dir(LIVE_STATE_PATH)
-    if not os.path.exists(LIVE_STATE_PATH):
-        return {"positions": {}, "open_trades": []}
+    """Laadt open live posities uit experience_trades DB."""
+    conn2 = None
     try:
-        with open(LIVE_STATE_PATH, "r", encoding="utf-8") as f:
-            s = json.load(f)
-        # FIX: corrupt JSON (list ipv dict) → reset
-        if not isinstance(s, dict):
-            log(f"⚠️ live_state.json was geen dict ({type(s).__name__}) — reset")
-            s = {}
-    except Exception:
-        s = {}
-    s.setdefault("positions", {})
-    s.setdefault("open_trades", [])
-    # Zorg dat positions een dict is, niet een list
-    if not isinstance(s["positions"], dict):
-        log("⚠️ live positions was geen dict — reset naar leeg")
-        s["positions"] = {}
-    return s
-
+        conn2 = db_connect()
+        cur2 = conn2.cursor()
+        cur2.execute("SELECT trade_key, symbol, bitvavo_market, entry, stop, stop_loss, target, qty, amount_eur, setup_type, score, entry_time, prebuy_id, max_price_seen FROM experience_trades WHERE status = 'OPEN' AND is_shadow = FALSE AND source = 'LIVE'")
+        rows = cur2.fetchall()
+        positions = {}
+        for r in rows:
+            key = r[0] or f"LIVE|{r[1]}|0"
+            positions[key] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "peak_price": float(r[13] or r[3] or 0)}
+        return {"positions": positions, "open_trades": list(positions.keys())}
+    except Exception as e:
+        log(f"⚠️ load_state DB fout: {e}")
+        return {"positions": {}, "open_trades": []}
+    finally:
+        if conn2:
+            try: conn2.close()
+            except: pass
 
 def save_state(state: Dict[str, Any]) -> None:
     """Slaat state op — atomisch via tmp file."""
