@@ -742,9 +742,11 @@ def update_trade_in_db(
                 outcome    = %s,
                 pnl_eur    = %s,
                 exit_time  = %s,
+                status     = 'CLOSED',
+                closed_at  = NOW(),
                 updated_at = NOW()
-            WHERE trade_key = %s
-            """, (outcome, pnl_eur, exit_time, trade_key))
+            WHERE trade_key = %s OR (symbol = %s AND source = 'LIVE' AND status = 'OPEN')
+            """, (outcome, pnl_eur, exit_time, trade_key, symbol))
 
             if cur.rowcount == 0:
                 cur.execute("""

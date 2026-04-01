@@ -993,7 +993,13 @@ def shadow_sell(
     """
     try:
         state = load_shadow_state()
-        pos   = (state.get("positions") or {}).get(symbol)
+        positions = state.get("positions") or {}
+        pos = positions.get(symbol)
+        if not pos:
+            for k, v in positions.items():
+                if isinstance(v, dict) and v.get("symbol") == symbol:
+                    pos = v
+                    break
         if not pos:
             return
 
@@ -1859,7 +1865,13 @@ def sell(
     conn = None
     try:
         state = load_state()
-        pos   = (state.get("positions") or {}).get(symbol)
+        positions = state.get("positions") or {}
+        pos = positions.get(symbol)
+        if not pos:
+            for k, v in positions.items():
+                if isinstance(v, dict) and v.get("symbol") == symbol:
+                    pos = v
+                    break
 
         if not pos:
             log_naar_bot_state(f"SELL fout: {symbol} niet in state", busy=False)
