@@ -67,7 +67,7 @@ TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO")   or "").strip()
 
 BITVAVO_API_KEY      = (os.getenv("BITVAVO_API_KEY")      or "").strip()
 BITVAVO_API_SECRET   = (os.getenv("BITVAVO_API_SECRET")   or "").strip()
-BITVAVO_OPERATOR_ID  = (os.getenv("BITVAVO_OPERATOR_ID")  or "").strip()
+BITVAVO_OPERATOR_ID  = int(os.getenv("BITVAVO_OPERATOR_ID") or "10001")
 
 BITVAVO_BASE = "https://api.bitvavo.com"
 BINANCE_BASE = "https://api.binance.com/api/v3"
@@ -745,8 +745,6 @@ def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
         "Content-Type":             "application/json",
     }
 
-    if BITVAVO_OPERATOR_ID:
-        headers["Bitvavo-Operator-Id"] = str(BITVAVO_OPERATOR_ID)
 
     return headers
 
@@ -1546,6 +1544,7 @@ def place_market_buy_eur(
         "side":        "buy",
         "orderType":   "market",
         "amountQuote": str(round(amount_eur, 2)),
+        "operatorId":  BITVAVO_OPERATOR_ID,
     }
 
     log(f"📤 Bitvavo BUY: {market} €{amount_eur:.2f}")
@@ -1606,6 +1605,7 @@ def place_market_sell(
         "side":      "sell",
         "orderType": "market",
         "amount":    str(sell_qty),
+        "operatorId": BITVAVO_OPERATOR_ID,
     }
 
     log(f"📤 Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
