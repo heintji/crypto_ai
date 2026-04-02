@@ -129,8 +129,8 @@ MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "20")
 PREBUY_EXPIRY_HOURS = int(os.getenv("PREBUY_EXPIRY_HOURS") or "2")
 
 # ── Regime-afhankelijke score drempels ────────────────────
-SCORE_DREMPEL_BULL  = int(os.getenv("SCORE_DREMPEL_BULL")  or "88")
-SCORE_DREMPEL_RANGE = int(os.getenv("SCORE_DREMPEL_RANGE") or "92")
+SCORE_DREMPEL_BULL  = int(os.getenv("SCORE_DREMPEL_BULL")  or "85")
+SCORE_DREMPEL_RANGE = int(os.getenv("SCORE_DREMPEL_RANGE") or "80")
 SCORE_DREMPEL_BEAR  = int(os.getenv("SCORE_DREMPEL_BEAR")  or "99")
 
 # Fee + slippage
