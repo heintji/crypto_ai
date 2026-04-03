@@ -4771,7 +4771,7 @@ def render_dashboard(
         pf_color = "green" if pf >= 1.5 else "red"
         st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", "✅ OK" if pf >= 1.5 else "⚠️ Laag", pf_color), unsafe_allow_html=True)
     with c5:
-        st.markdown(metric_card("Expectancy", f"{summary_all['expectancy']:.3f} R", "Per trade gemiddeld", "purple"), unsafe_allow_html=True)
+        st.markdown(metric_card("Expectancy", f"{summary_real['expectancy']:.3f} R", "Per live trade", "purple"), unsafe_allow_html=True)
     with c6:
         dd = summary_real["max_dd"]
         st.markdown(metric_card("Max Drawdown", f"{dd:.2f} R", "Live trades", "red"), unsafe_allow_html=True)
@@ -4800,11 +4800,15 @@ def render_dashboard(
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Equity Curve</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_equity_curve(history_df, "Cumulatief R"),
+            chart_equity_curve(real_df, "Live Trades (REAL)"),
             use_container_width=True, config={"displayModeBar":False}, key="hero_equity"
         )
         st.plotly_chart(
-            chart_daily_r(history_df, "Dagresultaten"),
+            chart_equity_curve(shadow_df, "Shadow Trades"),
+            use_container_width=True, config={"displayModeBar":False}, key="hero_equity_shadow"
+        )
+        st.plotly_chart(
+            chart_daily_r(real_df, "Dagresultaten (REAL)"),
             use_container_width=True, config={"displayModeBar":False}, key="hero_daily"
         )
         st.markdown("</div>", unsafe_allow_html=True)
