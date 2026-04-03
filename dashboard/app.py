@@ -7336,8 +7336,19 @@ else:
         elif page == "shadow":
             with st.spinner("Shadow trades laden..."):
                 shadow_df = load_shadow_trades()
-            render_trade_page("shadow", shadow_df, "🎭 Shadow Review",
-                "Meekijkende trades zonder echt geld — leerdata voor het scoreboard.")
+            # Shadow tabs: gefilterd vs ongefilterd
+            shadow_tab1, shadow_tab2 = st.tabs(["🎯 Gefilterd (score>=80, TREND_PULLBACK)", "📊 Alle Shadow Trades"])
+            with shadow_tab1:
+                shadow_filtered = shadow_df[
+                    (shadow_df["score"] >= 80) &
+                    (shadow_df["setup_type"] == "TREND_PULLBACK") &
+                    (shadow_df["regime"] != "BEAR")
+                ] if not shadow_df.empty else shadow_df
+                render_trade_page("shadow_filtered", shadow_filtered, "🎯 Shadow Gefilterd",
+                    "Shadow trades met score>=80, TREND_PULLBACK, geen BEAR — verwachte win rate ~64%")
+            with shadow_tab2:
+                render_trade_page("shadow", shadow_df, "🎭 Shadow Alle Trades",
+                    "Alle shadow trades zonder filter — win rate ~49%")
 
         elif page == "positions":
             render_open_positions_page()
