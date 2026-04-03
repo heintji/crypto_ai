@@ -4858,9 +4858,9 @@ def render_dashboard(
     with tab_charts:
         tc1, tc2 = st.columns(2, gap="small")
         with tc1:
-            st.plotly_chart(chart_setup_perf(history_df, "Setup Performance"), use_container_width=True, config={"displayModeBar":False}, key="dash_setup")
+            st.plotly_chart(chart_setup_perf(real_df, "Live Setup Performance"), use_container_width=True, config={"displayModeBar":False}, key="dash_setup")
         with tc2:
-            st.plotly_chart(chart_regime_dist(history_df, "Regime Verdeling"), use_container_width=True, config={"displayModeBar":False}, key="dash_regime")
+            st.plotly_chart(chart_win_loss_bar(real_df, "Live Win/Loss"), use_container_width=True, config={"displayModeBar":False}, key="dash_regime")
 
         tc3, tc4 = st.columns(2, gap="small")
         with tc3:
