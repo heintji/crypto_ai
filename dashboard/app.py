@@ -1323,7 +1323,7 @@ def get_scanner_status() -> Dict[str, Any]:
     result = {
         "bot_active":        get_bot_state_val("bot_active", "false"),
         "bot_paused":        get_bot_state_val("bot_paused", "false"),
-        "last_scan":         get_bot_state_val("last_scan_ts", ""),
+        "last_scan":         get_bot_state_val("laatste_scan_tijd", ""),
         "signals_today":     0,
         "signals_executed":  0,
         "signals_pending":   0,
