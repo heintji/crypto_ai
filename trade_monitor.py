@@ -1716,6 +1716,8 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         try:
             set_bot_state(conn, "monitor_laatste_run",
                           now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"))
+            set_bot_state(conn, "trade_monitor_last_check",
+                          now_utc().strftime("%Y-%m-%d %H:%M:%S UTC"))
             set_bot_state(conn, "monitor_open_live",   str(open_live))
             set_bot_state(conn, "monitor_open_shadow", str(open_shadow))
         except Exception:
