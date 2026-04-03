@@ -125,7 +125,7 @@ BOT_STATE_TABLE         = "public.bot_state"
 MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "85")
 MIN_CHANCE          = int(os.getenv("MIN_CHANCE") or "75")
 MIN_CONFIDENCE      = int(os.getenv("MIN_CONFIDENCE") or "75")
-MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "20")
+MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "200")
 PREBUY_EXPIRY_HOURS = int(os.getenv("PREBUY_EXPIRY_HOURS") or "2")
 
 # ── Regime-afhankelijke score drempels ────────────────────
@@ -660,7 +660,7 @@ def init_sessie() -> None:
     _SESSIE["live_trades"]        = 0
     _SESSIE["shadow_trades"]      = 0
     _SESSIE["btc_regime"]         = "UNKNOWN"
-    _SESSIE["score_drempel"]      = MIN_SCORE_TO_TRADE
+    _SESSIE["score_drempel"]      = drempels.get("min_score", MIN_SCORE_TO_TRADE)
     _SESSIE["correlatie_skip"]    = 0
     _SESSIE["taker_bonus"]        = 0
     _SESSIE["markt_structuur_ok"] = 0
