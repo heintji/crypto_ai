@@ -1690,6 +1690,17 @@ def buy_eur(
     v3.0: conn=None + finally conn.close() + safe_rollback.
     """
     meta = meta or {}
+    # Check of coin echt op Bitvavo staat voor SELL
+    if fraction >= 1.0:
+        try:
+            from trading.live_trader import get_balance_bitvavo
+            coin = symbol.replace("USDT","")
+            bal = get_balance_bitvavo(coin)
+            if bal <= 0:
+                send_whatsapp_rate_limited(f"⚠️ SELL GEBLOKKEERD: {symbol}\nGeen {coin} op Bitvavo", key=f"sell_check_{symbol}")
+                return {"ok": False, "reason": f"Geen {coin} op Bitvavo"}
+        except Exception:
+            pass
     # Positiegrootte uit bot_state lezen als niet opgegeven
     if not amount_eur:
         try:
@@ -1756,6 +1767,7 @@ def buy_eur(
                 busy=False,
                 error=err_msg,
             )
+            send_whatsapp_rate_limited(f"❌ BUY FOUT: {symbol}\nReden: {err_msg[:100]}\nSaldo: €{eur_balance:.2f}", key=f"buy_fout_{symbol}")
             return False, f"BUY mislukt: {err_msg}"
 
         # 7. Prijs en qty bepalen

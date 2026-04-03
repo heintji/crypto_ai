@@ -940,6 +940,7 @@ def _execute_sell(
             return {"ok": False, "reason": f"Import fout: {e}"}
     except Exception as e:
         log(f"❌ Sell call fout ({symbol}): {type(e).__name__}: {e}")
+        send_whatsapp(f"❌ SELL FOUT: {symbol}\nReden: {str(e)[:100]}", rate_key=f"sell_fout_{symbol}")
         return {"ok": False, "reason": str(e)}
 
 
