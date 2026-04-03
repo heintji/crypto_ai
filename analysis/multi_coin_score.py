@@ -117,8 +117,8 @@ MAX_PER_TRADE_EUR       = float(os.getenv("MAX_PER_TRADE_EUR") or "0.50")
 MAX_REAL_TRADES_PER_DAY = int(os.getenv("MAX_REAL_TRADES_PER_DAY") or "10")
 MAX_OPEN_REAL_TRADES    = int(os.getenv("MAX_OPEN_REAL_TRADES") or "5")
 DAILY_STOP_LOSS_EUR     = float(os.getenv("DAILY_STOP_LOSS_EUR") or "5.00")
-TRADING_HOURS_START     = int(os.getenv("TRADING_HOURS_START") or "9")
-TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "17")
+TRADING_HOURS_START     = int(os.getenv("TRADING_HOURS_START") or "0")
+TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "24")
 BOT_STATE_TABLE         = "public.bot_state"
 
 # Score & filter instellingen
