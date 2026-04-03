@@ -3722,7 +3722,7 @@ def render_controls_page() -> None:
         huidig_end   = int(get_bot_state_val("trading_hours_end","17") or "17")
         nieuw_start, nieuw_end = st.select_slider(
             "⏰ Trading Uren (UTC)",
-            options=list(range(0,24)),
+            options=list(range(0,25)),
             value=(huidig_start, huidig_end),
             key="ctrl_uren",
         )
