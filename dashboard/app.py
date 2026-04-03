@@ -959,6 +959,35 @@ def load_shadow_trades() -> pd.DataFrame:
     return normalize_trade_df(run_query(sql)) if sql else empty_trade_df()
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def get_winrate_totals() -> dict:
+    """Win/loss aantallen direct uit DB — snel zonder alle trades te laden."""
+    result = {}
+    for bron, where in [
+        ("ALL",    "UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW','SIM')"),
+        ("REAL",   "UPPER(COALESCE(source,'')) IN ('REAL','LIVE')"),
+        ("SHADOW", "UPPER(COALESCE(source,'')) = 'SHADOW'"),
+        ("SIM",    "UPPER(COALESCE(source,'')) = 'SIM'"),
+    ]:
+        df = run_query(f"""
+            SELECT outcome, COUNT(*) as n FROM public.experience_trades
+            WHERE {where} AND UPPER(COALESCE(outcome,'')) IN ('WIN','LOSS')
+            GROUP BY outcome
+        """)
+        wins = losses = 0
+        if not df.empty:
+            for _, r in df.iterrows():
+                if str(r.get('outcome','')).upper() == 'WIN':
+                    wins = int(r.get('n',0))
+                else:
+                    losses = int(r.get('n',0))
+        total = wins + losses
+        result[bron] = {
+            "wins": wins, "losses": losses, "total": total,
+            "winrate": round(wins/total*100, 1) if total > 0 else 0.0
+        }
+    return result
+
 @st.cache_data(ttl=25, show_spinner=False)
 def load_all_trades()    -> pd.DataFrame:
     sql = build_trades_sql("ALL", HISTORY_LIMIT)
@@ -4785,13 +4814,13 @@ def render_dashboard(
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Trade Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_all["winrate"], 0, "Alle trades", int(summary_all["count"]), int(summary_all["count"]*summary_all["winrate"]/100), int(summary_all["count"]*(100-summary_all["winrate"])/100)),
+            chart_donut(get_winrate_totals()["ALL"]["winrate"], 0, "Alle trades", get_winrate_totals()["ALL"]["total"], get_winrate_totals()["ALL"]["wins"], get_winrate_totals()["ALL"]["losses"]),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_all"
         )
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Live Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_real["winrate"], 0, "REAL trades", int(summary_real["count"]), int(summary_real["count"]*summary_real["winrate"]/100), int(summary_real["count"]*(100-summary_real["winrate"])/100)),
+            chart_donut(get_winrate_totals()["REAL"]["winrate"], 0, "REAL trades", get_winrate_totals()["REAL"]["total"], get_winrate_totals()["REAL"]["wins"], get_winrate_totals()["REAL"]["losses"]),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_real"
         )
         st.markdown("</div>", unsafe_allow_html=True)
