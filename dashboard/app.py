@@ -7251,11 +7251,14 @@ def _get_cons_light() -> int:
 
 @st.cache_data(ttl=30, show_spinner=False)
 def _get_open_count_light() -> int:
-    try:
-        state, _ = safe_json(LIVE_STATE_PATH)
-        return len((state or {}).get("positions", {}))
-    except Exception:
+    if not db_ready():
         return 0
+    result = run_scalar("""
+        SELECT COUNT(*) FROM public.experience_trades
+        WHERE UPPER(COALESCE(source,'')) IN ('REAL','LIVE')
+          AND UPPER(COALESCE(outcome,'OPEN')) NOT IN ('WIN','LOSS','CANCELLED','TIMEOUT')
+    """, default=0)
+    return safe_int(result)
 
 pnl_today   = _get_pnl_today_light()
 pf30d       = _get_pf30_light()
