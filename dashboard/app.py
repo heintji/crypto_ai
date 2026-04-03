@@ -2220,7 +2220,7 @@ def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.F
     return style_fig(fig, 260, title)
 
 
-def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trades: int = -1) -> go.Figure:
+def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trades: int = -1, n_wins: int = 0, n_losses: int = 0) -> go.Figure:
     """Donut chart. Neutraal grijs als geen data, kleur pas bij echte trades."""
     win  = max(0.0, min(100.0, safe_float(win_pct)))
     loss = 100.0 - win
@@ -2323,7 +2323,7 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
                 font=dict(color=TXT_MAIN, size=13, family="Courier New, monospace"),
             ),
             dict(
-                text=format_money(net_eur) if has_data else "geen data",
+                text=f"{n_wins}W / {n_losses}L" if has_data else "geen data",
                 x=0.5, y=0.27, showarrow=False,
                 font=dict(color=TXT_DIM, size=11, family="Courier New, monospace"),
             ),
@@ -4785,13 +4785,13 @@ def render_dashboard(
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Trade Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_all["winrate"], summary_all["total_eur"], "Alle trades", int(summary_all["count"])),
+            chart_donut(summary_all["winrate"], 0, "Alle trades", int(summary_all["count"]), int(summary_all["count"]*summary_all["winrate"]/100), int(summary_all["count"]*(100-summary_all["winrate"])/100)),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_all"
         )
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Live Win Rate</div>', unsafe_allow_html=True)
         st.plotly_chart(
-            chart_donut(summary_real["winrate"], summary_real["total_eur"], "REAL trades", int(summary_real["count"])),
+            chart_donut(summary_real["winrate"], 0, "REAL trades", int(summary_real["count"]), int(summary_real["count"]*summary_real["winrate"]/100), int(summary_real["count"]*(100-summary_real["winrate"])/100)),
             use_container_width=True, config={"displayModeBar":False}, key="hero_donut_real"
         )
         st.markdown("</div>", unsafe_allow_html=True)
