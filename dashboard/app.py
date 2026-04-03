@@ -3752,6 +3752,52 @@ def render_controls_page() -> None:
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
+    p3, p4 = st.columns(2)
+    with p3:
+        huidig_max_trades = int(get_bot_state_val("max_trades_per_dag","10") or "10")
+        nieuw_max_trades = st.slider("📊 Max trades/dag", 1, 20, huidig_max_trades, 1, key="ctrl_max_trades")
+        if nieuw_max_trades != huidig_max_trades:
+            if st.button(f"Opslaan max={nieuw_max_trades}/dag", key="save_max_trades"):
+                if _set_bot_state_key("max_trades_per_dag", str(nieuw_max_trades)):
+                    st.success(f"✅ Max trades/dag → {nieuw_max_trades}")
+        huidig_max_open = int(get_bot_state_val("max_open_trades","5") or "5")
+        nieuw_max_open = st.slider("📂 Max open tegelijk", 1, 10, huidig_max_open, 1, key="ctrl_max_open")
+        if nieuw_max_open != huidig_max_open:
+            if st.button(f"Opslaan max_open={nieuw_max_open}", key="save_max_open"):
+                if _set_bot_state_key("max_open_trades", str(nieuw_max_open)):
+                    st.success(f"✅ Max open → {nieuw_max_open}")
+        huidig_stop = float(get_bot_state_val("daily_stop_loss_eur","5.0") or "5.0")
+        nieuw_stop = st.slider("🛑 Daily stop loss", 1.0, 50.0, max(1.0,huidig_stop), 0.5, format="€%.1f", key="ctrl_stop")
+        if abs(nieuw_stop - huidig_stop) > 0.1:
+            if st.button(f"Opslaan stop=€{nieuw_stop:.1f}", key="save_stop"):
+                if _set_bot_state_key("daily_stop_loss_eur", str(round(nieuw_stop,1))):
+                    st.success(f"✅ Daily stop → €{nieuw_stop:.1f}")
+    with p4:
+        huidig_score_bull = int(get_bot_state_val("score_drempel_bull","85") or "85")
+        nieuw_score_bull = st.slider("🐂 Score BULL", 75, 99, huidig_score_bull, 1, key="ctrl_score_bull")
+        if nieuw_score_bull != huidig_score_bull:
+            if st.button(f"Opslaan score_bull={nieuw_score_bull}", key="save_score_bull"):
+                if _set_bot_state_key("score_drempel_bull", str(nieuw_score_bull)):
+                    st.success(f"✅ Score BULL → {nieuw_score_bull}")
+        huidig_score_range = int(get_bot_state_val("score_drempel_range","80") or "80")
+        nieuw_score_range = st.slider("📊 Score RANGE", 70, 99, huidig_score_range, 1, key="ctrl_score_range")
+        if nieuw_score_range != huidig_score_range:
+            if st.button(f"Opslaan score_range={nieuw_score_range}", key="save_score_range"):
+                if _set_bot_state_key("score_drempel_range", str(nieuw_score_range)):
+                    st.success(f"✅ Score RANGE → {nieuw_score_range}")
+        huidig_target = float(get_bot_state_val("atr_target_r","2.0") or "2.0")
+        nieuw_target = st.slider("🎯 Target R", 1.0, 5.0, huidig_target, 0.5, key="ctrl_target")
+        if abs(nieuw_target - huidig_target) > 0.1:
+            if st.button(f"Opslaan target={nieuw_target:.1f}R", key="save_target"):
+                if _set_bot_state_key("atr_target_r", str(round(nieuw_target,1))):
+                    st.success(f"✅ Target → {nieuw_target:.1f}R")
+        huidig_cooldown = int(get_bot_state_val("coin_cooldown_hours","48") or "48")
+        nieuw_cooldown = st.slider("⏳ Cooldown (uur)", 1, 96, huidig_cooldown, 1, key="ctrl_cooldown")
+        if nieuw_cooldown != huidig_cooldown:
+            if st.button(f"Opslaan cooldown={nieuw_cooldown}u", key="save_cooldown"):
+                if _set_bot_state_key("coin_cooldown_hours", str(nieuw_cooldown)):
+                    st.success(f"✅ Cooldown → {nieuw_cooldown}u")
+
     # ── WHATSAPP COMMANDO'S ──────────────────────────────────
     st.markdown("**📱 WhatsApp Commando's**")
     wa_cols = st.columns(5)
