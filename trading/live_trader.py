@@ -636,7 +636,8 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
 
     # Daily stop loss: alleen informeren — bot gaat door
     _, _, daily_pnl = get_daily_pnl(conn, utc_day_str())
-    if daily_pnl <= -DAILY_STOP_LOSS_EUR:
+    daily_stop = float(get_bot_state(conn, "daily_stop_loss_eur", str(DAILY_STOP_LOSS_EUR)) or DAILY_STOP_LOSS_EUR)
+    if daily_pnl <= -daily_stop:
         log(
             f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — "
             f"bot gaat door (jij beslist via STOP)"
@@ -647,8 +648,9 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
         return False, f"Daglimiet: {trades_today}/{MAX_REAL_TRADES_PER_DAY}"
 
     open_count = get_open_real_trades_count(conn)
-    if open_count >= MAX_OPEN_REAL_TRADES:
-        return False, f"Max open: {open_count}/{MAX_OPEN_REAL_TRADES}"
+    max_open = int(get_bot_state(conn, "max_open_trades", str(MAX_OPEN_REAL_TRADES)) or MAX_OPEN_REAL_TRADES)
+    if open_count >= max_open:
+        return False, f"Max open: {open_count}/{max_open}"
 
     # Consecutive losses: alleen informeren — bot gaat door
     consecutive = get_consecutive_losses(conn)
@@ -1509,7 +1511,8 @@ def is_coin_on_cooldown(conn, symbol: str) -> bool:
                 if hasattr(last_loss, "tzinfo") and last_loss.tzinfo is None:
                     last_loss = last_loss.replace(tzinfo=timezone.utc)
                 hours_since = (now_utc() - last_loss).total_seconds() / 3600
-                return hours_since < COIN_COOLDOWN_HOURS
+                cooldown = float(get_bot_state(conn, "coin_cooldown_hours", str(COIN_COOLDOWN_HOURS)) or COIN_COOLDOWN_HOURS)
+                return hours_since < cooldown
     except Exception:
         pass
     return False
