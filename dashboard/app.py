@@ -2291,8 +2291,8 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
         kleur_loss      = f"rgba(255,45,85,{min(alpha + 0.15, 0.75):.2f})"
         win_kleur_html  = C_LOSS
     elif win < 50:
-        # Matig → oranje/geel als waarschuwing
-        kleur_win       = C_WARN
+        # Matig → groen voor win boog, rood voor loss
+        kleur_win       = "rgba(0,230,118,0.70)"
         kleur_loss      = "rgba(255,45,85,0.50)"
         win_kleur_html  = C_WARN
     elif win < 60:
