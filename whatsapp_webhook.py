@@ -882,8 +882,11 @@ def execute_auto_buy(prebuy_id: str, conn) -> Tuple[bool, str]:
             "exp_win_rate": safe_float(prebuy.get("exp_win_rate")),
         }
 
-        # BUY uitvoeren
-        success, msg = _call_live_trader_buy(symbol, MAX_PER_TRADE_EUR, meta)
+        # BUY uitvoeren  Kelly Criterion sizing (gecapped op MAX_PER_TRADE_EUR)
+        kelly_eur = safe_float(prebuy.get("kelly_grootte_eur")) or 0.0
+        trade_eur = min(kelly_eur, MAX_PER_TRADE_EUR) if kelly_eur >= 5.0 else MAX_PER_TRADE_EUR
+        log(f"Kelly grootte: €{kelly_eur:.2f} → trade €{trade_eur:.2f}")
+        success, msg = _call_live_trader_buy(symbol, trade_eur, meta)
 
         if success:
             # Status updaten naar CONSUMED
