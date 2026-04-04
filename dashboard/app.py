@@ -540,12 +540,12 @@ BOT_STATE_TABLE         = "public.bot_state"
 # ================================================================
 
 # ── Semantische kleuren ──────────────────────────────────────
-C_WIN    = "#00ff88"   # electric green  — WIN, positief, omhoog
-C_LOSS   = "#ff1144"   # neon red        — LOSS, negatief, omlaag
+C_WIN    = "#00ff41"   # electric green  — WIN, positief, omhoog
+C_LOSS   = "#ff1133"   # neon red        — LOSS, negatief, omlaag
 C_LIVE   = "#00e5ff"   # electric cyan   — live trades, primair, open
-C_SHADOW = "#cc44ff"   # electric purple — shadow trades
+C_SHADOW = "#00e5ff"   # electric purple — shadow trades
 C_SIM    = "#ff6b00"   # neon orange     — simulator trades
-C_WARN   = "#ffcc00"   # electric yellow — waarschuwing, RANGE regime
+C_WARN   = "#ffaa00"   # electric yellow — waarschuwing, RANGE regime
 C_INFO   = "#3d8bff"   # deep blue       — algemene info
 
 # ── Alias voor backwards-compat (worden niet meer uitgebreid) ─
@@ -580,8 +580,8 @@ BG_PANEL = "rgba(10,10,20,0.98)" # panel achtergrond
 BG_CARD  = "rgba(8,8,16,0.99)"   # card achtergrond
 
 BORDER   = "rgba(0,212,255,0.10)"   # standaard border
-GRID     = "rgba(0,212,255,0.06)"   # grafiek gridlijnen
-ZEROLINE = "rgba(0,212,255,0.15)"   # nul-lijn in grafieken
+GRID     = "rgba(0,255,65,0.06)"   # grafiek gridlijnen
+ZEROLINE = "rgba(0,255,65,0.20)"   # nul-lijn in grafieken
 
 TXT_MAIN = "#e8f0ff"    # hoofd tekst kleur
 TXT_DIM  = "#4e5a7a"    # gedimd / muted tekst
@@ -595,10 +595,10 @@ COLORS_BY_OUTCOME = {
 }
 
 COLORS_BY_REGIME = {
-    "BULL":    C_BULL,
-    "BEAR":    C_BEAR,
-    "RANGE":   C_RANGE,
-    "UNKNOWN": TXT_DIM,
+    "BULL":    "#00ff41",
+    "BEAR":    "#ff1133",
+    "RANGE":   "#00e5ff",
+    "UNKNOWN": "#3a6a3a",
 }
 
 COLORS_BY_TYPE = {
@@ -1867,8 +1867,8 @@ def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
         mode="lines",
         fill="tozeroy",
         name="Drawdown",
-        line=dict(color=C_RED, width=1.5),
-        fillcolor="rgba(255,45,85,0.12)",
+        line=dict(color="#ff1133", width=2),
+        fillcolor="rgba(255,17,51,0.12)",
         hovertemplate="Drawdown: <b>%{y:.2f}R</b><extra></extra>",
     ))
     fig.add_hline(y=0, line_color=ZEROLINE, line_width=1)
@@ -1886,7 +1886,7 @@ def chart_rolling_winrate(df: pd.DataFrame, window: int = 20) -> go.Figure:
         y=rwr["rolling_wr"],
         mode="lines",
         name=f"Rolling WR ({window})",
-        line=dict(color=C_PURPLE, width=2.5),
+        line=dict(color="#00e5ff", width=2.5),
         hovertemplate="Rolling WR: <b>%{y:.1f}%%</b><extra></extra>",
     ))
     fig.add_hline(
@@ -1915,7 +1915,7 @@ def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
         y=freq["wins"],
         name="Wins",
         marker=dict(
-            color=C_GREEN,
+            color="#00ff41",
             line=dict(width=0),
         ),
         hovertemplate="Dag: %{x}<br>Wins: <b>%{y}</b><extra></extra>",
@@ -1925,7 +1925,7 @@ def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
         y=freq["losses"],
         name="Losses",
         marker=dict(
-            color=C_RED,
+            color="#ff1133",
             line=dict(width=0),
         ),
         hovertemplate="Dag: %{x}<br>Losses: <b>%{y}</b><extra></extra>",
@@ -2249,7 +2249,7 @@ def empty_fig(msg: str = "Geen data", height: int = 300) -> go.Figure:
             x=0.5, y=0.5,
             xref="paper", yref="paper",
             showarrow=False,
-            font=dict(color=TXT_DIM, size=12, family="Courier New, monospace"),
+            font=dict(color="#3a6a3a", size=12, family="Courier New, monospace"),
         )],
         xaxis=dict(visible=False, showgrid=False),
         yaxis=dict(visible=False, showgrid=False),
@@ -2263,7 +2263,7 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(3,3,12,0.60)",
+        plot_bgcolor="rgba(0,0,0,0.95)",
         font=dict(color=TXT_MAIN, family="Courier New, monospace", size=11),
         height=height,
         margin=dict(l=22, r=18, t=42, b=22),
@@ -2277,14 +2277,14 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
             bgcolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(
-            gridcolor=GRID,
-            zerolinecolor=ZEROLINE,
+            gridcolor="rgba(0,255,65,0.06)",
+            zerolinecolor="rgba(0,255,65,0.20)",
             linecolor="rgba(0,212,255,0.10)",
             tickfont=dict(color=TXT_DIM, size=10),
         ),
         yaxis=dict(
-            gridcolor=GRID,
-            zerolinecolor=ZEROLINE,
+            gridcolor="rgba(0,255,65,0.06)",
+            zerolinecolor="rgba(0,255,65,0.20)",
             linecolor="rgba(0,212,255,0.10)",
             tickfont=dict(color=TXT_DIM, size=10),
             autorange=True,
@@ -2307,8 +2307,8 @@ def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figu
 
     # Kleur op basis van eindstand: groen als positief, rood als negatief
     eindstand = float(cum_r.iloc[-1]) if len(cum_r) else 0.0
-    lijn_kleur = C_GREEN if eindstand >= 0 else C_RED
-    fill_alpha  = "rgba(0,230,118,0.10)" if eindstand >= 0 else "rgba(255,45,85,0.10)"
+    lijn_kleur = "#00ff41" if eindstand >= 0 else "#ff1133"
+    fill_alpha  = "rgba(0,255,65,0.12)" if eindstand >= 0 else "rgba(255,17,51,0.12)"
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -2344,7 +2344,7 @@ def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure
         x=["WIN", "LOSS"],
         y=[w, l],
         marker=dict(
-            color=[C_GREEN, C_RED],
+            color=["#00ff41", "#ff1133"],
             line=dict(width=0),
         ),
         text=[f"{w}", f"{l}"],
@@ -2368,7 +2368,7 @@ def chart_setup_perf(df: pd.DataFrame, title: str = "Setup Performance") -> go.F
         .sort_values("n", ascending=False)
         .head(10)
     )
-    colors = [C_GREEN if v >= 0 else C_RED for v in grouped["avg_r"]]
+    colors = ["#00ff41" if v >= 0 else "#ff1133" for v in grouped["avg_r"]]
     fig = go.Figure(go.Bar(
         x=grouped["setup_type"],
         y=grouped["avg_r"],
@@ -2387,7 +2387,7 @@ def chart_daily_r(df: pd.DataFrame, title: str = "Dagresultaten") -> go.Figure:
     if work.empty:
         return empty_fig("Dagresultaten — wacht op WIN/LOSS data")
     grouped = work.groupby("day", dropna=False)["pnl_r"].sum().reset_index()
-    colors  = [C_GREEN if v >= 0 else C_RED for v in grouped["pnl_r"]]
+    colors  = ["#00ff41" if v >= 0 else "#ff1133" for v in grouped["pnl_r"]]
     fig = go.Figure(go.Bar(
         x=grouped["day"],
         y=grouped["pnl_r"],
@@ -2424,8 +2424,8 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
     # Kleur: groen als >50%, rood als <50%, neutraal grijs als geen data
     # Grijs als geen trades, kleur pas als er echte data is
     has_data = (win + loss) > 0.01 and (n_trades != 0)
-    kleur_win  = C_GREEN  if has_data and win  >= 50 else (C_GREEN  if has_data else TXT_DIM)
-    kleur_loss = C_RED    if has_data and loss > 0   else TXT_DIM
+    kleur_win  = "#00ff41" if has_data and win  >= 50 else ("#00ff41" if has_data else "#3a6a3a")
+    kleur_loss = "#ff1133" if has_data and loss > 0   else "#3a6a3a"
     track_color = "rgba(0,212,255,0.04)"
 
     # ── Kleur systeem — intensiteit schaalt met win rate ──────────
@@ -2570,7 +2570,7 @@ def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
         return empty_fig("Scoreboard — wacht op first trades")
     top = df.head(12).copy()
     top["label"] = top["setup_type"].astype(str) + " / " + top["market_regime"].astype(str)
-    colors = [C_GREEN if v >= 60 else C_YELLOW if v >= 45 else C_RED for v in top["win_rate"]]
+    colors = ["#00ff41" if v >= 60 else "#00e5ff" if v >= 45 else "#ff1133" for v in top["win_rate"]]
     fig = go.Figure(go.Bar(
         x=top["label"],
         y=top["win_rate"],
@@ -2594,7 +2594,7 @@ def chart_pending_scores(df: pd.DataFrame) -> go.Figure:
         return empty_fig("Signal Scores — geen actieve signalen")
     fig = go.Figure()
     min_s = MIN_SCORE_TO_TRADE
-    colors = [C_GREEN if s >= min_s else C_YELLOW if s >= min_s - 10 else C_RED for s in df["score"]]
+    colors = ["#00ff41" if s >= min_s else "#00e5ff" if s >= min_s - 10 else "#ff1133" for s in df["score"]]
     fig.add_trace(go.Bar(
         x=df["symbol"].astype(str) + " | " + df["setup_type"].astype(str),
         y=df["score"],
@@ -2634,11 +2634,11 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
         x=x, open=opens, high=highs, low=lows, close=closes,
-        increasing_line_color=C_GREEN,
-        decreasing_line_color=C_RED,
+        increasing_line_color="#00ff41",
+        decreasing_line_color="#ff1133",
         showlegend=False, name="Prijs",
-        increasing_fillcolor="rgba(0,230,118,0.30)",
-        decreasing_fillcolor="rgba(255,45,85,0.30)",
+        increasing_fillcolor="rgba(0,255,65,0.25)",
+        decreasing_fillcolor="rgba(255,17,51,0.20)",
     ))
     fig.add_hline(
         y=entry, line_width=2, line_color=C_CYAN,
@@ -4367,7 +4367,7 @@ def render_live_monitor() -> None:
             if risico > 0 and target > 0 and stop_l > 0:
                 span  = abs(target - stop_l)
                 r_pct = max(0.0, min(100.0, (huidig - stop_l) / span * 100 if (huidig > 0 and span > 0) else 50.0))
-            balk_css  = ("var(--win)" if r_pct >= 50 else "var(--warn)" if r_pct >= 25 else "var(--loss)")
+            balk_css  = ("#00ff41" if r_pct >= 50 else "#00e5ff" if r_pct >= 25 else "#ff1133")
 
             # Score chip
             s_css   = C_WIN if score_v >= 90 else C_WARN if score_v >= 75 else TXT_DIM
@@ -4854,33 +4854,30 @@ def render_top_bar(
     btc_ema200   = safe_float(btc.get("ema200"))
 
     bot_chip_cls = {"active":"chip-green","paused":"chip-yellow","stopped":"chip-red"}.get(bot_type,"chip-gray")
-    btc_chip_cls = {"BULL":"chip-green","BEAR":"chip-red","RANGE":"chip-yellow"}.get(btc_regime,"chip-gray")
+    btc_chip_cls = {"BULL":"chip-green","BEAR":"chip-red","RANGE":"chip-blue"}.get(btc_regime,"chip-gray")
     pnl_cls      = "chip-green" if pnl_today >= 0 else "chip-red"
     pf_cls       = "chip-green" if pf30 >= 1.5 else "chip-red"
     cons_cls     = "chip-red"   if cons >= 3   else "chip-gray"
-    src_cls      = "chip-green" if source_mode == "DB_PRIORITY" else "chip-yellow"
-
     pnl_sign = "+" if pnl_today >= 0 else ""
-    db_ok    = "✅ DB" if db_ready() else "⚠️ DEMO"
+    db_ok    = "✅" if db_ready() else "⚠️"
 
     st.markdown(f"""
     <div class="topbar">
         <div class="brand">
             <div class="brand-mark"></div>
             <div>
-                <div class="brand-title">₿ Crypto AI Terminal</div>
-                <div class="brand-sub">⚡ Autonomous Trading System v3.0</div>
+                <div class="brand-title">₿ CRYPTO AI TERMINAL</div>
+                <div class="brand-sub">⚡ AUTONOMOUS TRADING SYSTEM V3.0</div>
             </div>
         </div>
         <div class="top-status-row">
             <span class="top-status-chip {bot_chip_cls}">{bot_emoji} {bot_label}</span>
-            <span class="top-status-chip {btc_chip_cls}">₿ BTC {btc_regime} {btc_strength:.0f}%</span>
-            <span class="top-status-chip chip-blue">💱 €{btc_close:,.0f} vs EMA200 €{btc_ema200:,.0f}</span>
-            <span class="top-status-chip {pnl_cls}">💶 Vandaag {pnl_sign}€{abs(pnl_today):.2f}</span>
-            <span class="top-status-chip {pf_cls}">📈 PF30d {pf30:.2f}</span>
-            <span class="top-status-chip {cons_cls}">📉 Streak {cons}x</span>
-            <span class="top-status-chip chip-blue">📂 Open {open_count}</span>
-            <span class="top-status-chip {src_cls}">{db_ok} | {source_mode}</span>
+            <span class="top-status-chip {btc_chip_cls}">₿ {btc_regime} {btc_strength:.0f}%  €{btc_close:,.0f}</span>
+            <span class="top-status-chip {pnl_cls}">P&L {pnl_sign}€{abs(pnl_today):.2f}</span>
+            <span class="top-status-chip {pf_cls}">PF {pf30:.2f}</span>
+            <span class="top-status-chip {cons_cls}">STREAK {cons}x</span>
+            <span class="top-status-chip chip-blue">OPEN {open_count}</span>
+            <span class="top-status-chip chip-gray">{db_ok} DB</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
