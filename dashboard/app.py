@@ -1137,7 +1137,7 @@ def build_trades_sql(kind: str, limit: int) -> str:
         outcome_u AS outcome,
         src_calc AS source,
         CASE
-            WHEN src_calc = 'SIM'    THEN 'SIM'
+            WHEN src_calc = 'SIM'THEN 'SIM'
             WHEN src_calc = 'SHADOW' THEN 'SHADOW'
             WHEN src_calc IN ('REAL','LIVE','REAL_REVIEW') THEN 'REAL'
             WHEN is_shadow_calc THEN 'SHADOW'
@@ -2750,9 +2750,9 @@ def call_claude(prompt: str, max_tokens: int = 400) -> str:
 def claude_btn(label: str, prompt: str, max_tokens: int = 400, key: str = "") -> None:
     """Claude AI analyse knop in het dashboard."""
     if not ANTHROPIC_API_KEY:
-        st.caption("  ANTHROPIC_API_KEY niet ingesteld")
+        st.caption(" ANTHROPIC_API_KEY niet ingesteld")
         return
-    if st.button(f"  {label}", key=key or f"claude_{label[:20]}", use_container_width=True):
+    if st.button(f" {label}", key=key or f"claude_{label[:20]}", use_container_width=True):
         with st.spinner("Claude analyseert..."):
             result = call_claude(prompt, max_tokens)
             if result:
@@ -3141,7 +3141,7 @@ def render_coach_monitor_page() -> None:
     #  TABS 
     tab_dag, tab_events, tab_config, tab_anom, tab_regime, tab_files, tab_analyses = st.tabs([
         " Dagboek", " Events", " Config Log", " Anomalien",
-        " Regime Log", " Bestanden", "  Analyses",
+        " Regime Log", " Bestanden", " Analyses",
     ])
 
     #  DAGBOEK 
@@ -3178,7 +3178,7 @@ def render_coach_monitor_page() -> None:
             st.info("Geen events in deze periode.")
         else:
             ernst_kleuren = {
-                "KRITIEK": "", "HOOG": "", "MEDIUM": " ", "INFO": "",
+                "KRITIEK": "", "HOOG": "", "MEDIUM": "", "INFO": "",
             }
             # Filter op ernst
             with col_f:
@@ -3248,7 +3248,7 @@ def render_coach_monitor_page() -> None:
             a2.metric("Open", len(open_anom), delta=f"-{len(opgelost)} opgelost" if not opgelost.empty else None)
             a3.metric("Kritiek", len(anom_df[anom_df.get("ernst","") == "KRITIEK"]) if "ernst" in anom_df.columns else 0)
 
-            ernst_map = {"KRITIEK":"","HOOG":"","MEDIUM":" ","LAAG":""}
+            ernst_map = {"KRITIEK":"","HOOG":"","MEDIUM":"","LAAG":""}
             for _, row in anom_df.iterrows():
                 ernst  = str(row.get("ernst","MEDIUM"))
                 emoji  = ernst_map.get(ernst,"")
@@ -3383,7 +3383,7 @@ def render_coin_cluster_widget() -> None:
         cluster_info = [
             (" STAR",   clusters.get("STAR",   []), "#00e5ff", "Prioriteer"),
             (" STABLE", clusters.get("STABLE", []), "#00ff41", "Houd bij"),
-            ("  WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
+            (" WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
             (" ZOMBIE", clusters.get("ZOMBIE", []), "#ff1144", "Blacklist"),
         ]
         cols = st.columns(4)
@@ -3581,7 +3581,7 @@ def render_shadow_live_brug_widget() -> None:
         gezond    = data.get("brug_gezond", True)
         discr     = data.get("discrepanties", [])
         status_kleur = "#00ff41" if gezond else "#ff1144"
-        status_txt   = " GEZOND" if gezond else f"  {len(discr)} DISCREPANTIES"
+        status_txt   = " GEZOND" if gezond else f" {len(discr)} DISCREPANTIES"
 
         s_wr = safe_float(shadow.get("wr"))
         l_wr = safe_float(live.get("wr"))
@@ -3607,12 +3607,12 @@ def render_shadow_live_brug_widget() -> None:
             f'</div>'
             f'<div style="margin-top:8px;text-align:center;font-size:12px;color:{diff_kleur};">'
             f'Verschil: {diff:+.1f}% '
-            f'{" OK" if abs(diff) <= 10 else "  GROOT"}</div>'
+            f'{" OK" if abs(diff) <= 10 else " GROOT"}</div>'
         )
         if discr:
             html += '<div style="margin-top:8px;font-size:11px;color:#ff9100;">'
             for d in discr[:2]:
-                html += f'<div>  {d.get("setup","?")}: {d.get("reden","")}</div>'
+                html += f'<div> {d.get("setup","?")}: {d.get("reden","")}</div>'
             html += '</div>'
         html += '</div>'
         st.markdown(html, unsafe_allow_html=True)
@@ -3779,7 +3779,7 @@ def render_health_page() -> None:
                 label= f"{uren:.1f}u" if uren < 48 else f"{uren/24:.1f}d"
                 st.markdown(
                     f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
-                    f'<div style="font-size:22px;color:{kleur};">{"" if ok else " "}</div>'
+                    f'<div style="font-size:22px;color:{kleur};">{"" if ok else ""}</div>'
                     f'<div style="font-size:12px;color:{kleur};">{label} oud</div>'
                     f'<div style="font-size:10px;color:#555;">max {check["max_uren"]}u</div></div>',
                     unsafe_allow_html=True)
@@ -4046,7 +4046,7 @@ def render_controls_page() -> None:
         "TRADES":  (" Trades",   "wa_trades"),
         "RAPPORT": (" Rapport",  "wa_rapport"),
         "HEALTH":  (" Health",   "wa_health"),
-        "ANALYSE": ("  Analyse",  "wa_analyse"),
+        "ANALYSE": (" Analyse",  "wa_analyse"),
     }
     for i, (cmd, (label, key)) in enumerate(commando_labels.items()):
         with wa_cols[i]:
@@ -4054,7 +4054,7 @@ def render_controls_page() -> None:
                 if _send_whatsapp_command(cmd):
                     st.success(f" {cmd} verstuurd")
                 else:
-                    st.warning("  Twilio niet geconfigureerd")
+                    st.warning(" Twilio niet geconfigureerd")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -4073,7 +4073,7 @@ def render_controls_page() -> None:
                 st.success(" Cooldown lijst geleegd")
 
     with ec3:
-        with st.expander("  Reset Drawdown Pause", expanded=False):
+        with st.expander(" Reset Drawdown Pause", expanded=False):
             st.warning("Dit heft de drawdown bescherming tijdelijk op.")
             if st.button("Reset Drawdown", key="reset_dd"):
                 if _set_bot_state_key("drawdown_paused","false"):
@@ -4429,7 +4429,7 @@ def render_live_monitor() -> None:
                     f'<div style="background:rgba(255,17,51,0.15);border:1px solid var(--loss);'
                     f'border-radius:8px;padding:6px 10px;margin-bottom:8px;'
                     f'font-size:11px;color:var(--loss);font-weight:900;">'
-                    f'  STOP ALARM  prijs is {stop_dist:.2f}% boven stop ({format_price(stop_l)})'
+                    f' STOP ALARM  prijs is {stop_dist:.2f}% boven stop ({format_price(stop_l)})'
                     f'</div>'
                 )
 
@@ -4902,7 +4902,7 @@ def render_top_bar(
     pf_cls       = "chip-green" if pf30 >= 1.5 else "chip-red"
     cons_cls     = "chip-red"   if cons >= 3   else "chip-gray"
     pnl_sign = "+" if pnl_today >= 0 else ""
-    db_ok    = "" if db_ready() else " "
+    db_ok    = "" if db_ready() else ""
 
     st.markdown(f"""
     <div class="topbar">
@@ -5012,7 +5012,7 @@ def render_dashboard(
     with c4:
         pf = summary_real["profit_factor"]
         pf_color = "green" if pf >= 1.5 else "red"
-        st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", " OK" if pf >= 1.5 else "  Laag", pf_color), unsafe_allow_html=True)
+        st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", " OK" if pf >= 1.5 else " Laag", pf_color), unsafe_allow_html=True)
     with c5:
         st.markdown(metric_card("Expectancy", f"{summary_real['expectancy']:.3f} R", "Per live trade", "purple"), unsafe_allow_html=True)
     with c6:
@@ -5121,7 +5121,7 @@ def render_dashboard(
 
     # Claude AI knoppen
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("###   Claude AI Analyses")
+    st.markdown("### Claude AI Analyses")
     ck1, ck2, ck3 = st.columns(3, gap="small")
     with ck1:
         claude_btn("Analyseer 30d performance", f"""
@@ -5179,7 +5179,7 @@ def render_trade_page(
             st.markdown(metric_card("Netto EUR", format_money(summary["total_r"] * MAX_PER_TRADE_EUR / 0.5 if summary["total_eur"] == 0 else summary["total_eur"]).replace("+",""), f"R: {format_r(summary['total_r'])}", "orange"), unsafe_allow_html=True)
         else:
             st.markdown(metric_card("Totale R", format_r(summary["total_r"]), "SIM  geen echt geld", "orange"), unsafe_allow_html=True)
-    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', " OK" if summary["profit_factor"] >= 1.5 else "  Laag", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
+    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', " OK" if summary["profit_factor"] >= 1.5 else " Laag", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
     with m5: st.markdown(metric_card("Max Drawdown", f'{summary["max_dd"]:.2f} R', "", "red"), unsafe_allow_html=True)
 
     #  CHARTS 
@@ -5302,7 +5302,7 @@ def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snap_mode: st
             except Exception as e:
                 st.error(f" Bitvavo API fout: {e}")
         else:
-            st.warning("  BITVAVO_API_KEY en BITVAVO_API_SECRET niet ingesteld in Render.")
+            st.warning(" BITVAVO_API_KEY en BITVAVO_API_SECRET niet ingesteld in Render.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5620,7 +5620,7 @@ def render_service_monitor_widget() -> None:
     Bot systeem draait ALTIJD  dit toont per service:
     
      ACTIEF     laatste heartbeat < drempel
-      TRAAG     heartbeat net buiten drempel
+     TRAAG     heartbeat net buiten drempel
      OFFLINE   geen heartbeat / te oud
      ONBEKEND  nooit gelopen of geen data
 
@@ -5633,7 +5633,7 @@ def render_service_monitor_widget() -> None:
      regime_labeler.py     Cron Job (0 */6 * * *)
      build_btc_regime.py   Cron Job (0 */4 * * *)
      history_fetcher.py    Cron Job (0 */2 * * *)
-      ai_coach.py           Cron Job (0 8 * * *)
+     ai_coach.py           Cron Job (0 8 * * *)
     """
     st.markdown("#### Render Services Monitor")
     st.caption(
@@ -5669,7 +5669,7 @@ def render_service_monitor_widget() -> None:
         elif min_geleden <= drempel_ok:
             return "", f"{min_geleden:.0f}m geleden", "#00ff41"
         elif min_geleden <= drempel_warn:
-            return " ", f"{min_geleden:.0f}m geleden", "#00e5ff"
+            return "", f"{min_geleden:.0f}m geleden", "#00e5ff"
         else:
             return "", f"{min_geleden:.0f}m geleden", "#ff1144"
 
@@ -5821,7 +5821,7 @@ def render_service_monitor_widget() -> None:
     if candles_n == 0:
         e7, t7, k7 = "", "Candles tabel leeg!", "#ff1144"
     elif not candles_ok:
-        e7, t7, k7 = " ", f"{candles_oud:.1f}u oud", "#00e5ff"
+        e7, t7, k7 = "", f"{candles_oud:.1f}u oud", "#00e5ff"
     else:
         e7, t7, k7 = "", f"{candles_oud:.1f}u oud", "#00ff41"
     services.append({
@@ -5839,7 +5839,7 @@ def render_service_monitor_widget() -> None:
     e8, t8, k8 = _status_chip(c_min, 1500, 2880)  # 25u ok, 48u warn
     services.append({
         "naam":     "ai_coach.py",
-        "type":     "  Cron Job",
+        "type":     " Cron Job",
         "schedule": "0 8 * * *",
         "emoji":    e8,
         "txt":      t8,
@@ -5856,10 +5856,10 @@ def render_service_monitor_widget() -> None:
     # Overall status banner
     if n_err > 0:
         overall_kleur = "#ff1144"
-        overall_txt   = f"  {n_err} SERVICE(S) OFFLINE"
+        overall_txt   = f" {n_err} SERVICE(S) OFFLINE"
     elif n_warn > 0:
         overall_kleur = "#00e5ff"
-        overall_txt   = f"  {n_warn} SERVICE(S) TRAAG"
+        overall_txt   = f" {n_warn} SERVICE(S) TRAAG"
     else:
         overall_kleur = "#00ff41"
         overall_txt   = f" ALLE {n_ok} SERVICES ACTIEF"
@@ -6074,7 +6074,7 @@ def render_scanner_status_widget() -> None:
         scan_str = f"{mins} min geleden"
         scan_cls = "chip-yellow"
     else:
-        scan_str = f"{mins} min geleden  "
+        scan_str = f"{mins} min geleden "
         scan_cls = "chip-red"
 
     active_chip = (
@@ -6788,12 +6788,12 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
 
     if diff > 10:
         st.warning(
-            f"  **Edge decay gedetecteerd**  verschil {diff:.1f}%\n\n"
+            f" **Edge decay gedetecteerd**  verschil {diff:.1f}%\n\n"
             f"**Mogelijke oorzaken:** Marktverandering | Fees niet in sim | Score drempel te laag\n\n"
             f"**Actie:** Verhoog MIN_SCORE_TO_TRADE | Stuur HEALTH via WhatsApp"
         )
     elif diff > 5:
-        st.warning(f"  Lichte edge decay ({diff:.1f}%)  blijf monitoren.")
+        st.warning(f" Lichte edge decay ({diff:.1f}%)  blijf monitoren.")
     else:
         st.success(f" Geen significante edge decay  strategie presteert consistent live.")
 
@@ -6935,7 +6935,7 @@ def coach_antwoord(vraag: str, context: Dict[str, Any], history: List[Dict]) -> 
 
     laatste_trades_txt = "\n".join(
         f"   {t}" for t in context.get("laatste_trades", [])
-    ) or "  Geen recente trades"
+    ) or "Geen recente trades"
 
     live_trading_aan  = context.get("live_trading_aan", False)
     live_trading_label = "AAN   koopt echt met {:.2f} per trade".format(context.get("max_per_trade", 0.50)) if live_trading_aan else "UIT   scanner draait, shadow/sim trades, GEEN echt geld"
@@ -6949,7 +6949,7 @@ Je spreekt ALTIJD Nederlands en geeft concrete, directe adviezen.
 
 
   ARCHITECTUUR  NOOIT VERWARREN, ALTIJD ONTHOUDEN            
- 
+
                                                                
   ONDERDEEL 1: BOT SYSTEEM  DRAAIT 24/7, NOOIT UIT           
    
@@ -7444,7 +7444,7 @@ def _get_pnl_today_light() -> float:
         return 0.0
     result = run_scalar("""
     SELECT COALESCE(SUM(
-        CASE WHEN UPPER(outcome)='WIN'  THEN  ABS(COALESCE(pnl_eur,0))
+        CASE WHEN UPPER(outcome)='WIN'THEN  ABS(COALESCE(pnl_eur,0))
              WHEN UPPER(outcome)='LOSS' THEN -ABS(COALESCE(pnl_eur,0))
              ELSE 0 END
     ),0)
@@ -7713,7 +7713,7 @@ def render_twilio_dagmeter_widget() -> None:
         emoji = ""
     elif count < 45:
         kleur = "#00e5ff"
-        emoji = " "
+        emoji = ""
     else:
         kleur = "#ff1133"
         emoji = ""
@@ -7881,7 +7881,7 @@ def render_coin_clusters_widget() -> None:
     cluster_config = [
         ("STAR",   "", "#00e5ff", "Beste performers"),
         ("STABLE", "", "#22c55e", "Solide"),
-        ("WEAK",   " ", "#94a3b8", "Underperform"),
+        ("WEAK",   "", "#94a3b8", "Underperform"),
         ("ZOMBIE", "", "#ff1133", "Blacklist"),
     ]
 
@@ -8043,7 +8043,7 @@ def render_shadow_live_widget() -> None:
     verschil  = shadow_wr - live_wr
 
     kleur_diff = "#22c55e" if abs(verschil) <= 10 else "#ff1133"
-    status     = " Consistent" if abs(verschil) <= 10 else "  Discrepantie"
+    status     = " Consistent" if abs(verschil) <= 10 else " Discrepantie"
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
