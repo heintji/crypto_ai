@@ -1068,7 +1068,7 @@ def build_trades_sql(kind: str, limit: int) -> str:
     result_r  = first("result_r", "pnl_r", "r_multiple", "realized_r")
     pnl_eur_c = first("pnl_eur", "result_eur", "realized_pnl_eur", "profit_eur", "net_pnl_eur")
 
-    pnl_r_expr   = f'"{result_r}"::double precision'  if result_r  else "NULL::double precision"
+    pnl_r_expr   = f'"{result_r}"::double precision'if result_r  else "NULL::double precision"
     pnl_eur_expr = f'"{pnl_eur_c}"::double precision' if pnl_eur_c else "NULL::double precision"
 
     kind_u = kind.upper()
@@ -4125,8 +4125,8 @@ def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             wins = vals[vals >= 0]
             loss = vals[vals < 0]
             c1,c2,c3,c4 = st.columns(4)
-            c1.metric("Gem Win R",  f"{wins.mean():.2f}R"  if not wins.empty  else "")
-            c2.metric("Gem Loss R", f"{loss.mean():.2f}R"  if not loss.empty  else "")
+            c1.metric("Gem Win R",  f"{wins.mean():.2f}R"if not wins.empty  else "")
+            c2.metric("Gem Loss R", f"{loss.mean():.2f}R"if not loss.empty  else "")
             c3.metric(" 2R trades", f"{(vals>=2).sum()}")
             c4.metric("Expectancy",  f"{(wins.mean()*(len(wins)/len(vals)) - abs(loss.mean())*(len(loss)/len(vals))):.3f}R" if len(vals)>0 else "")
 
@@ -4403,8 +4403,8 @@ def render_live_monitor() -> None:
 
             # Kleuren & R-balk
             pnl_pos   = float_pnl >= 0
-            pnl_css   = "var(--win)"  if pnl_pos  else "var(--loss)"
-            pct_css   = "var(--win)"  if pct_chg >= 0 else "var(--loss)"
+            pnl_css   = "var(--win)"if pnl_pos  else "var(--loss)"
+            pct_css   = "var(--win)"if pct_chg >= 0 else "var(--loss)"
             tc_cls    = "tc-win"      if pnl_pos  else "tc-loss"
             r_pct     = 50.0
             if risico > 0 and target > 0 and stop_l > 0:
@@ -4494,12 +4494,12 @@ def render_live_monitor() -> None:
                 f'    <span style="color:var(--win);">TARGET  {format_price(target)} </span>'
                 f'  </div>'
                 f'  <div style="height:12px;background:rgba(255,255,255,0.05);border-radius:999px;'
-                f'      overflow:hidden;position:relative;border:1px solid rgba(0,229,255,0.08);">'
+                f'overflow:hidden;position:relative;border:1px solid rgba(0,229,255,0.08);">'
                 f'    <div style="position:absolute;left:calc(50% - 1px);top:0;width:2px;height:100%;'
-                f'        background:var(--live);opacity:0.5;"></div>'
+                f'background:var(--live);opacity:0.5;"></div>'
                 f'    <div style="height:100%;width:{r_pct:.1f}%;'
-                f'        background:linear-gradient(90deg,{balk_css}88,{balk_css});'
-                f'        border-radius:999px;box-shadow:0 0 8px {balk_css}66;"></div>'
+                f'background:linear-gradient(90deg,{balk_css}88,{balk_css});'
+                f'border-radius:999px;box-shadow:0 0 8px {balk_css}66;"></div>'
                 f'  </div>'
                 f'  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:2px;">'
                 f'    <span>-1R verlies</span>'
@@ -4601,7 +4601,7 @@ def render_live_monitor() -> None:
             stp_v   = safe_str(row.get("setup_type"))
             pnl_r_v = safe_float(row.get("pnl_r"))
             pnl_e_v = safe_float(row.get("pnl_eur"))
-            tc_v    = "tc-win"   if out_v == "WIN" else "tc-loss"
+            tc_v    = "tc-win"if out_v == "WIN" else "tc-loss"
             pk_v    = "var(--win)" if out_v == "WIN" else "var(--loss)"
             em_v    = "" if out_v == "WIN" else ""
             tijd_v  = format_dt(row.get("closed_at") or row.get("_datetime_raw"))
@@ -4627,7 +4627,7 @@ def render_live_monitor() -> None:
 # NAVIGATIE HELPERS
 # ============================================================
 PAGE_NAMES = {
-    "live_monitor": "[>>] LIVE MONITOR",
+    "live_monitor": "LIVE MONITOR",
     "dashboard":   " Dashboard",
     "coach":       " AI Coach",
     "positions":   " Open Posities",
@@ -4644,7 +4644,7 @@ PAGE_NAMES = {
     "portfolio":   " Portfolio",
     "signals":     " Pre-BUY Signals",
     "scoreboard":  " Scoreboard",
-    "regime":      "[BR] BTC REGIME",
+    "regime":      "BTC REGIME",
     "settings":    " Instellingen",
     "help":        " Help & Debug",
 }
@@ -4685,7 +4685,7 @@ def render_sidebar() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="nav-header"> Overzicht</div>', unsafe_allow_html=True)
-    nav_btn("[>>] LIVE MONITOR", "live_monitor")
+    nav_btn("LIVE MONITOR", "live_monitor")
     nav_btn(" Dashboard", "dashboard")
     nav_btn(" AI Coach", "coach")
     nav_btn(" Open Posities", "positions")
@@ -4710,7 +4710,7 @@ def render_sidebar() -> None:
     nav_btn(" Portfolio", "portfolio")
     nav_btn(" Pre-BUY Signals", "signals")
     nav_btn(" Scoreboard", "scoreboard")
-    nav_btn("[BR] BTC REGIME", "regime")
+    nav_btn("BTC REGIME", "regime")
     nav_btn(" Instellingen", "settings")
     nav_btn(" Help & Debug", "help")
 
@@ -4900,7 +4900,7 @@ def render_top_bar(
     btc_chip_cls = {"BULL":"chip-green","BEAR":"chip-red","RANGE":"chip-blue"}.get(btc_regime,"chip-gray")
     pnl_cls      = "chip-green" if pnl_today >= 0 else "chip-red"
     pf_cls       = "chip-green" if pf30 >= 1.5 else "chip-red"
-    cons_cls     = "chip-red"   if cons >= 3   else "chip-gray"
+    cons_cls     = "chip-red"if cons >= 3   else "chip-gray"
     pnl_sign = "+" if pnl_today >= 0 else ""
     db_ok    = "" if db_ready() else ""
 
