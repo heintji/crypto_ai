@@ -82,8 +82,8 @@ MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           o
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES")         or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   or "2")
-TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START")            or "8")
-TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END")              or "22")
+TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START")            or "0")
+TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END")              or "24")
 
 # Fee + slippage — identiek aan alle bestanden
 BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")

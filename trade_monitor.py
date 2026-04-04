@@ -1568,7 +1568,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         # ── Daily PnL check — INFORMATIEF ────────────────
         wins_v, losses_v, daily_pnl = get_daily_pnl(conn)
         daily_stop = float(get_bot_state(conn, "daily_stop_loss_eur", str(DAILY_STOP_LOSS_EUR)) or DAILY_STOP_LOSS_EUR)
-    if daily_pnl <= -daily_stop and bot_active:
+        if daily_pnl <= -daily_stop and bot_active:
             log(f"ℹ️ Dagbudget bereikt: €{daily_pnl:.2f} — bot gaat door")
             wins_7, losses_7, pnl_7 = get_rolling_stats(conn, 7)
             t7   = wins_7 + losses_7
