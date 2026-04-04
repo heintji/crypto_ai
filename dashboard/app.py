@@ -2,31 +2,31 @@ from __future__ import annotations
 import calendar
 # app.py
 # ============================================================
-# Crypto AI Terminal — Streamlit Dashboard v3.0
-# Cyber Neon Command Center — Professioneel & Uitgebreid
+# Crypto AI Terminal â Streamlit Dashboard v3.0
+# Cyber Neon Command Center â Professioneel & Uitgebreid
 # ============================================================
 #
 # WAT DIT BESTAND DOET:
-# ─────────────────────────────────────────────────────────────
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # Dit is het visuele controlecentrum van de gehele bot.
 # Volledig herschreven voor een professionelere uitstraling
 # met betere navigatie, meer data en Claude AI integratie.
 #h
 # PAGINA'S:
-# ─────────────────────────────────────────────────────────────
-# 1. dashboard     → Overzicht: hero metrics + equity curve
-# 2. live          → Live Performance: alleen REAL trades
-# 3. sim           → Simulator: alleen SIM trades
-# 4. shadow        → Shadow Review: alleen SHADOW trades
-# 5. portfolio     → Portfolio: Bitvavo assets + snapshot
-# 6. signals       → Pre-BUY Signals: actieve scanner signals
-# 7. scoreboard    → Experience Scoreboard: win rates
-# 8. regime        → BTC Regime + Markt overzicht
-# 9. settings      → Bot instellingen + WhatsApp commands
-# 10. help         → Data mapping + debug + uitleg
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# 1. dashboard     â Overzicht: hero metrics + equity curve
+# 2. live          â Live Performance: alleen REAL trades
+# 3. sim           â Simulator: alleen SIM trades
+# 4. shadow        â Shadow Review: alleen SHADOW trades
+# 5. portfolio     â Portfolio: Bitvavo assets + snapshot
+# 6. signals       â Pre-BUY Signals: actieve scanner signals
+# 7. scoreboard    â Experience Scoreboard: win rates
+# 8. regime        â BTC Regime + Markt overzicht
+# 9. settings      â Bot instellingen + WhatsApp commands
+# 10. help         â Data mapping + debug + uitleg
 #
 # DATA BRONNEN:
-# ─────────────────────────────────────────────────────────────
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 # - public.experience_trades    (REAL, SIM, SHADOW trades)
 # - public.experience_scoreboard (win rates per setup/regime)
 # - public.pending_approvals    (Pre-BUY signals van scanner)
@@ -41,32 +41,32 @@ import calendar
 # - Bitvavo API (live portfolio als snapshot ontbreekt)
 #
 # BUGS GEFIXED vs origineel:
-# ─────────────────────────────────────────────────────────────
-# ✅ with main_col / right_col buiten scope → crash opgelost
-# ✅ Dubbele page routing verwijderd
-# ✅ Witte knoppen → donker gestijld
-# ✅ HMAC digestmod= fix in Bitvavo signing
-# ✅ Demo data alleen als DB leeg is
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# â with main_col / right_col buiten scope â crash opgelost
+# â Dubbele page routing verwijderd
+# â Witte knoppen â donker gestijld
+# â HMAC digestmod= fix in Bitvavo signing
+# â Demo data alleen als DB leeg is
 #
 # NIEUWE FEATURES vs origineel:
-# ─────────────────────────────────────────────────────────────
-# ✅ Bot status widget in top balk (ACTIEF/GEPAUZEERD/GESTOPT)
-# ✅ BTC regime live display in top balk
-# ✅ Profit Factor per periode
-# ✅ Consecutive losses waarschuwing
-# ✅ Coin blacklist pagina
-# ✅ Pre-BUY Signals pagina (was niet aanwezig)
-# ✅ Experience Scoreboard pagina
-# ✅ BTC Regime pagina
-# ✅ Bot Settings pagina
-# ✅ Claude AI analyse knoppen per pagina
-# ✅ WhatsApp command shortcuts in Settings
-# ✅ Dagelijkse activiteit grafiek
-# ✅ R/R ratio display per trade
-# ✅ Cooldown coins display
-# ✅ Edge decay pagina uitgebreid
-# ✅ Auto-refresh optie
-# ─────────────────────────────────────────────────────────────
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# â Bot status widget in top balk (ACTIEF/GEPAUZEERD/GESTOPT)
+# â BTC regime live display in top balk
+# â Profit Factor per periode
+# â Consecutive losses waarschuwing
+# â Coin blacklist pagina
+# â Pre-BUY Signals pagina (was niet aanwezig)
+# â Experience Scoreboard pagina
+# â BTC Regime pagina
+# â Bot Settings pagina
+# â Claude AI analyse knoppen per pagina
+# â WhatsApp command shortcuts in Settings
+# â Dagelijkse activiteit grafiek
+# â R/R ratio display per trade
+# â Cooldown coins display
+# â Edge decay pagina uitgebreid
+# â Auto-refresh optie
+# âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 
 import hashlib
@@ -92,358 +92,401 @@ ATR_MULTIPLIER    = float(os.getenv('ATR_MULTIPLIER', '1.6'))
 
 
 # ============================================================
-# PAGINA CONFIGURATIE — altijd als eerste
+# PAGINA CONFIGURATIE â altijd als eerste
 # ============================================================
 st.set_page_config(
     page_title="Crypto AI Terminal",
-    page_icon="🤖",
+    page_icon="ð¤",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ============================================================
-# CYBER NEON CSS — injectie na set_page_config
+# CYBER NEON CSS â injectie na set_page_config
 # ============================================================
 st.markdown("""<style>
 :root {
-    --bg:#000000; --bg2:#020208; --panel:#050510; --card:#07070f;
-    --border:rgba(0,255,65,0.12); --grid:rgba(0,255,65,0.05); --zero:rgba(0,255,65,0.20);
-    --txt:#a0ffb0; --txt-hi:#ffffff; --muted:#3a6a3a;
+    --bg:#000000; --bg2:#000500; --panel:#000800; --card:#000a00;
+    --border:rgba(0,255,65,0.18); --grid:rgba(0,255,65,0.07); --zero:rgba(0,255,65,0.25);
+    --txt:#00ff41; --txt-hi:#ffffff; --muted:#00aa28;
     --win:#00ff41; --loss:#ff1133; --live:#00e5ff;
     --shadow:#00e5ff; --sim:#00e5ff; --warn:#00e5ff; --info:#00e5ff;
-    --gwin:rgba(0,255,65,0.15); --gloss:rgba(255,17,51,0.15); --glive:rgba(0,229,255,0.15);
     --gold:#00e5ff; --btc:#f7931a; --matrix:#00ff41; --scan:#00ff41;
+    --gwin:rgba(0,255,65,0.15); --gloss:rgba(255,17,51,0.15); --glive:rgba(0,229,255,0.12);
 }
-
-/* ── MATRIX SCANLINE EFFECT ─────────────────────────────── */
 .stApp {
-    background:#000000;
+    background:#000000 !important;
     color:var(--txt);
     font-family:'Courier New',Courier,monospace;
     background-image:
-        linear-gradient(rgba(0,255,65,0.03) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(0,255,65,0.03) 1px, transparent 1px);
-    background-size:30px 30px;
+        linear-gradient(rgba(0,255,65,0.04) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(0,255,65,0.04) 1px,transparent 1px);
+    background-size:28px 28px;
 }
 .stApp::after {
-    content:"";
-    position:fixed;
-    top:0;left:0;right:0;bottom:0;
-    background:repeating-linear-gradient(
-        0deg,
-        transparent,
-        transparent 2px,
-        rgba(0,0,0,0.08) 2px,
-        rgba(0,0,0,0.08) 4px
-    );
-    pointer-events:none;
-    z-index:9999;
+    content:"";position:fixed;top:0;left:0;right:0;bottom:0;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px);
+    pointer-events:none;z-index:9998;
 }
+header[data-testid="stHeader"]{background:transparent!important;}
+section[data-testid="stSidebar"]{display:none!important;}
+.block-container{max-width:1880px;padding-top:0.3rem;padding-bottom:1rem;}
+.stMarkdown p,.stMarkdown li,.stMarkdown span{color:var(--txt)!important;}
+p,li{color:var(--txt)!important;}
+h1,h2,h3,h4{color:var(--win)!important;text-shadow:0 0 12px rgba(0,255,65,0.4);}
+.stCaption{color:var(--muted)!important;font-size:10px!important;}
 
-header[data-testid="stHeader"]{background:transparent;}
-section[data-testid="stSidebar"]{display:none;}
-.block-container{max-width:1880px;padding-top:0.4rem;padding-bottom:1rem;}
-
-/* ── SHELL / MAIN CONTAINER ──────────────────────────────── */
-.shell{
-    background:rgba(0,0,0,0.95);
-    border:1px solid rgba(0,255,65,0.15);
-    border-radius:0;
-    box-shadow:0 0 40px rgba(0,255,65,0.05), inset 0 0 40px rgba(0,0,0,0.5);
-    padding:14px;
-}
-
-/* ── PANELS ─────────────────────────────────────────────── */
+/* ── PANELS ───────────────────────────────────────────── */
 .panel,.panel-tight{
-    background:rgba(0,5,0,0.9);
-    border:1px solid rgba(0,255,65,0.10);
-    border-radius:0;
-    box-shadow:0 0 20px rgba(0,255,65,0.03);
-    position:relative;
+    background:rgba(0,8,0,0.97);border:1px solid rgba(0,255,65,0.15);
+    border-radius:0;box-shadow:0 0 20px rgba(0,255,65,0.04);position:relative;
 }
 .panel::before,.panel-tight::before{
-    content:"";
-    position:absolute;
-    top:0;left:0;right:0;height:1px;
-    background:linear-gradient(90deg,transparent,var(--matrix),var(--btc),var(--matrix),transparent);
+    content:"";position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,#00ff41,#f7931a,#00ff41,transparent);
 }
-.panel{padding:14px;} .panel-tight{padding:10px 12px;}
+.panel{padding:14px;}.panel-tight{padding:10px 12px;}
 
-/* ── METRIC CARDS ────────────────────────────────────────── */
+/* ── METRIC CARDS ──────────────────────────────────────── */
 .metric-card{
-    background:rgba(0,10,0,0.95);
-    border:1px solid rgba(0,255,65,0.10);
-    border-radius:0;
-    padding:12px;
-    min-height:80px;
-    position:relative;
-    overflow:hidden;
+    background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.12);
+    border-radius:0;padding:12px;min-height:80px;position:relative;overflow:hidden;
     transition:border-color 0.2s,box-shadow 0.2s;
 }
 .metric-card::before{
-    content:"";position:absolute;top:0;left:0;right:0;height:1px;
-    background:rgba(0,255,65,0.3);
+    content:"";position:absolute;top:0;left:0;right:0;height:1px;background:rgba(0,255,65,0.4);
 }
-.metric-card:hover{border-color:rgba(0,255,65,0.25);box-shadow:0 0 15px rgba(0,255,65,0.08);}
-.metric-card.green-accent{border-top:2px solid var(--win);box-shadow:0 0 15px rgba(0,255,65,0.10);}
-.metric-card.red-accent{border-top:2px solid var(--loss);box-shadow:0 0 15px rgba(255,17,51,0.10);}
-.metric-card.blue-accent{border-top:2px solid var(--live);}
-.metric-card.orange-accent,.metric-card.purple-accent{border-top:2px solid var(--btc);}
-
+.metric-card:hover{border-color:rgba(0,255,65,0.35);box-shadow:0 0 20px rgba(0,255,65,0.10);}
+.metric-card.green-accent{border-top:2px solid #00ff41;box-shadow:0 0 15px rgba(0,255,65,0.12);}
+.metric-card.red-accent{border-top:2px solid #ff1133;box-shadow:0 0 15px rgba(255,17,51,0.12);}
+.metric-card.blue-accent{border-top:2px solid #00e5ff;box-shadow:0 0 15px rgba(0,229,255,0.10);}
+.metric-card.orange-accent,.metric-card.purple-accent{border-top:2px solid #00e5ff;}
 .metric-value{
-    color:var(--txt-hi);
-    font-size:20px;line-height:1.1;font-weight:900;
-    margin-bottom:4px;
-    letter-spacing:-0.01em;
-    text-shadow:0 0 15px currentColor;
+    color:#ffffff;font-size:22px;line-height:1.1;font-weight:900;
+    margin-bottom:4px;text-shadow:0 0 18px rgba(0,255,65,0.6);
 }
 .metric-delta{font-size:11px;font-weight:700;margin-bottom:3px;}
 .metric-label{color:var(--muted);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.10em;}
 
-/* ── ACCENT COLORS ─────────────────────────────────────── */
-.accent-blue{color:var(--live)!important;text-shadow:0 0 10px rgba(0,229,255,0.5);}
-.accent-green{color:var(--win)!important;text-shadow:0 0 10px rgba(0,255,65,0.5);}
-.accent-red{color:var(--loss)!important;text-shadow:0 0 10px rgba(255,17,51,0.5);}
-.accent-purple{color:var(--shadow)!important;}
-.accent-yellow{color:var(--warn)!important;}
-.accent-orange{color:var(--btc)!important;}
+/* ── ACCENT KLEUREN ────────────────────────────────────── */
+.accent-blue{color:#00e5ff!important;text-shadow:0 0 12px rgba(0,229,255,0.7)!important;}
+.accent-green{color:#00ff41!important;text-shadow:0 0 12px rgba(0,255,65,0.7)!important;}
+.accent-red{color:#ff1133!important;text-shadow:0 0 12px rgba(255,17,51,0.7)!important;}
+.accent-purple{color:#00e5ff!important;text-shadow:0 0 12px rgba(0,229,255,0.5)!important;}
+.accent-yellow{color:#00e5ff!important;}
+.accent-orange{color:#00e5ff!important;}
 
-/* ── TOP BAR ─────────────────────────────────────────────── */
+/* ── TOP BAR ───────────────────────────────────────────── */
 .topbar{
     display:flex;justify-content:space-between;align-items:center;
     gap:12px;padding:4px 2px 10px 2px;
-    border-bottom:1px solid rgba(0,255,65,0.10);margin-bottom:10px;
+    border-bottom:1px solid rgba(0,255,65,0.15);margin-bottom:10px;
 }
 .brand{display:flex;align-items:center;gap:12px;}
 .brand-mark{
     width:14px;height:36px;
-    background:linear-gradient(180deg,var(--btc),var(--matrix));
+    background:linear-gradient(180deg,#f7931a,#00ff41);
     clip-path:polygon(0 0,100% 0,100% 60%,60% 60%,60% 100%,0 100%);
-    box-shadow:0 0 15px rgba(247,147,26,0.5);
+    box-shadow:0 0 18px rgba(0,255,65,0.6);
 }
-.brand-title{font-size:20px;font-weight:900;letter-spacing:0.05em;color:var(--matrix);text-shadow:0 0 20px rgba(0,255,65,0.5);}
+.brand-title{font-size:20px;font-weight:900;letter-spacing:0.05em;color:#00ff41;text-shadow:0 0 25px rgba(0,255,65,0.8);}
 .brand-sub{font-size:10px;color:var(--muted);letter-spacing:0.15em;text-transform:uppercase;margin-top:1px;}
 .top-status-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .top-status-chip{
-    display:inline-flex;align-items:center;gap:4px;
-    padding:3px 8px;
-    border-radius:0;
-    font-size:10px;font-weight:900;
-    letter-spacing:0.08em;text-transform:uppercase;
-    font-family:'Courier New',monospace;
-    border:1px solid;
+    display:inline-flex;align-items:center;gap:4px;padding:3px 8px;
+    border-radius:0;font-size:10px;font-weight:900;letter-spacing:0.08em;
+    text-transform:uppercase;font-family:'Courier New',monospace;border:1px solid;
 }
-.chip-green{background:rgba(0,255,65,0.08);color:var(--win);border-color:rgba(0,255,65,0.25);}
-.chip-red{background:rgba(255,17,51,0.08);color:var(--loss);border-color:rgba(255,17,51,0.25);}
-.chip-yellow{background:rgba(0,229,255,0.08);color:var(--live);border-color:rgba(0,229,255,0.25);}
-.chip-blue{background:rgba(0,229,255,0.08);color:var(--live);border-color:rgba(0,229,255,0.25);}
-.chip-orange{background:rgba(0,229,255,0.08);color:var(--live);border-color:rgba(0,229,255,0.25);}
-.chip-purple{background:rgba(0,229,255,0.08);color:var(--live);border-color:rgba(0,229,255,0.25);}
-.chip-gray{background:rgba(0,255,65,0.03);color:var(--muted);border-color:rgba(0,255,65,0.06);}
+.chip-green{background:rgba(0,255,65,0.12);color:#00ff41;border-color:rgba(0,255,65,0.40);text-shadow:0 0 8px rgba(0,255,65,0.6);}
+.chip-red{background:rgba(255,17,51,0.12);color:#ff1133;border-color:rgba(255,17,51,0.40);text-shadow:0 0 8px rgba(255,17,51,0.6);}
+.chip-yellow{background:rgba(0,229,255,0.10);color:#00e5ff;border-color:rgba(0,229,255,0.35);}
+.chip-blue{background:rgba(0,229,255,0.10);color:#00e5ff;border-color:rgba(0,229,255,0.35);text-shadow:0 0 8px rgba(0,229,255,0.5);}
+.chip-orange{background:rgba(0,229,255,0.10);color:#00e5ff;border-color:rgba(0,229,255,0.35);}
+.chip-purple{background:rgba(0,229,255,0.10);color:#00e5ff;border-color:rgba(0,229,255,0.35);}
+.chip-gray{background:rgba(0,255,65,0.05);color:var(--muted);border-color:rgba(0,255,65,0.10);}
 
-/* ── NAVIGATION ──────────────────────────────────────────── */
-.nav-header{color:var(--matrix);font-size:10px;font-weight:900;text-transform:uppercase;margin-bottom:6px;letter-spacing:0.10em;border-bottom:1px solid rgba(0,255,65,0.10);padding-bottom:3px;}
+/* ── NAVIGATIE ─────────────────────────────────────────── */
+.nav-header{color:#00ff41;font-size:10px;font-weight:900;text-transform:uppercase;
+    margin-bottom:6px;letter-spacing:0.10em;border-bottom:1px solid rgba(0,255,65,0.15);padding-bottom:3px;
+    text-shadow:0 0 8px rgba(0,255,65,0.5);}
 .nav-caption{color:var(--muted);font-size:10px;line-height:1.5;margin-bottom:8px;}
-.page-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:0;background:rgba(0,255,65,0.06);border:1px solid rgba(0,255,65,0.15);color:var(--matrix);font-size:10px;font-weight:900;margin-bottom:10px;letter-spacing:0.08em;text-transform:uppercase;}
+.page-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:0;
+    background:rgba(0,255,65,0.10);border:1px solid rgba(0,255,65,0.30);
+    color:#00ff41;font-size:10px;font-weight:900;margin-bottom:10px;
+    letter-spacing:0.08em;text-transform:uppercase;text-shadow:0 0 8px rgba(0,255,65,0.5);}
 
-/* ACTIVE NAV BUTTON */
 .nav-button-active div.stButton>button{
-    background:rgba(0,255,65,0.10)!important;
-    border-color:rgba(0,255,65,0.30)!important;
-    color:var(--matrix)!important;
-    box-shadow:0 0 12px rgba(0,255,65,0.15)!important;
-    text-shadow:0 0 8px rgba(0,255,65,0.5)!important;
+    background:rgba(0,255,65,0.14)!important;border-color:rgba(0,255,65,0.50)!important;
+    color:#00ff41!important;box-shadow:0 0 16px rgba(0,255,65,0.25)!important;
+    text-shadow:0 0 10px rgba(0,255,65,0.8)!important;
 }
 
-/* ── BUTTONS ─────────────────────────────────────────────── */
+/* ── BUTTONS ───────────────────────────────────────────── */
 div.stButton>button,div.stFormSubmitButton>button,div.stDownloadButton>button{
-    width:100%;
-    background:rgba(0,5,0,0.9)!important;
-    color:var(--txt)!important;
-    border:1px solid rgba(0,255,65,0.12)!important;
-    border-radius:0!important;
-    font-weight:700!important;
-    font-family:'Courier New',monospace!important;
-    font-size:11px!important;
-    letter-spacing:0.06em!important;
-    text-transform:uppercase!important;
-    min-height:34px!important;
-    transition:all 0.12s!important;
+    width:100%;background:rgba(0,8,0,0.95)!important;color:#00ff41!important;
+    border:1px solid rgba(0,255,65,0.20)!important;border-radius:0!important;
+    font-weight:700!important;font-family:'Courier New',monospace!important;
+    font-size:11px!important;letter-spacing:0.06em!important;
+    text-transform:uppercase!important;min-height:34px!important;transition:all 0.12s!important;
 }
 div.stButton>button:hover{
-    background:rgba(0,255,65,0.08)!important;
-    color:var(--matrix)!important;
-    border-color:rgba(0,255,65,0.35)!important;
-    box-shadow:0 0 12px rgba(0,255,65,0.12)!important;
-    text-shadow:0 0 8px rgba(0,255,65,0.4)!important;
+    background:rgba(0,255,65,0.12)!important;color:#00ff41!important;
+    border-color:rgba(0,255,65,0.60)!important;
+    box-shadow:0 0 18px rgba(0,255,65,0.20)!important;
+    text-shadow:0 0 10px rgba(0,255,65,0.8)!important;
 }
 
-/* ── TRADE CARDS ─────────────────────────────────────────── */
-.tc{background:rgba(0,5,0,0.95);border:1px solid rgba(0,255,65,0.08);border-radius:0;padding:10px 12px;margin-bottom:5px;font-size:12px;line-height:1.6;}
-.tc-win{border-left:2px solid var(--win);}
-.tc-loss{border-left:2px solid var(--loss);}
-.tc-open{border-left:2px solid var(--live);}
-.tc-shad{border-left:2px solid var(--live);}
-.tc-pend{border-left:2px solid var(--live);}
+/* ── TRADE CARDS ───────────────────────────────────────── */
+.tc{background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.10);
+    border-radius:0;padding:10px 12px;margin-bottom:5px;font-size:12px;line-height:1.6;color:#00ff41;}
+.tc-win{border-left:3px solid #00ff41;box-shadow:-4px 0 12px rgba(0,255,65,0.20);}
+.tc-loss{border-left:3px solid #ff1133;box-shadow:-4px 0 12px rgba(255,17,51,0.20);}
+.tc-open{border-left:3px solid #00e5ff;box-shadow:-4px 0 12px rgba(0,229,255,0.15);}
+.tc-shad{border-left:3px solid #00e5ff;}
+.tc-pend{border-left:3px solid #00e5ff;}
 
-/* ── STATUS BADGES ───────────────────────────────────────── */
-.status-ok{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;background:rgba(0,255,65,0.10);color:var(--win);border:1px solid rgba(0,255,65,0.25);}
-.status-warn{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;background:rgba(0,229,255,0.08);color:var(--live);border:1px solid rgba(0,229,255,0.25);}
-.status-bad{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;background:rgba(255,17,51,0.10);color:var(--loss);border:1px solid rgba(255,17,51,0.25);}
+/* ── STATUS BADGES ─────────────────────────────────────── */
+.status-ok{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;
+    background:rgba(0,255,65,0.15);color:#00ff41;border:1px solid rgba(0,255,65,0.50);
+    text-shadow:0 0 6px rgba(0,255,65,0.6);}
+.status-warn{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;
+    background:rgba(0,229,255,0.10);color:#00e5ff;border:1px solid rgba(0,229,255,0.40);}
+.status-bad{display:inline-block;padding:2px 6px;border-radius:0;font-size:9px;font-weight:900;
+    background:rgba(255,17,51,0.15);color:#ff1133;border:1px solid rgba(255,17,51,0.50);
+    text-shadow:0 0 6px rgba(255,17,51,0.6);}
 
-/* ── REGIME BADGES ───────────────────────────────────────── */
-.regime-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:0;font-size:11px;font-weight:900;letter-spacing:0.06em;}
-.regime-bull{background:rgba(0,255,65,0.10);color:var(--win);border:1px solid rgba(0,255,65,0.30);}
-.regime-bear{background:rgba(255,17,51,0.10);color:var(--loss);border:1px solid rgba(255,17,51,0.30);}
-.regime-range{background:rgba(0,229,255,0.08);color:var(--live);border:1px solid rgba(0,229,255,0.25);}
-.regime-unkown{background:rgba(0,255,65,0.03);color:var(--muted);border:1px solid rgba(0,255,65,0.08);}
+/* ── REGIME BADGES ─────────────────────────────────────── */
+.regime-badge{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;
+    border-radius:0;font-size:11px;font-weight:900;letter-spacing:0.06em;}
+.regime-bull{background:rgba(0,255,65,0.15);color:#00ff41;border:1px solid rgba(0,255,65,0.50);
+    text-shadow:0 0 8px rgba(0,255,65,0.6);}
+.regime-bear{background:rgba(255,17,51,0.15);color:#ff1133;border:1px solid rgba(255,17,51,0.50);
+    text-shadow:0 0 8px rgba(255,17,51,0.6);}
+.regime-range{background:rgba(0,229,255,0.10);color:#00e5ff;border:1px solid rgba(0,229,255,0.40);}
+.regime-unkown{background:rgba(0,255,65,0.04);color:var(--muted);border:1px solid rgba(0,255,65,0.10);}
 
-/* ── SCANNER CARDS ───────────────────────────────────────── */
-.scanner-card{background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.10);border-radius:0;padding:12px;margin-bottom:8px;}
-.scanner-title{color:var(--matrix);font-size:12px;font-weight:900;margin-bottom:5px;letter-spacing:0.05em;}
-.scanner-row{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid rgba(0,255,65,0.05);}
-.scanner-key{color:var(--muted);font-size:11px;} .scanner-val{color:var(--txt-hi);font-size:11px;font-weight:700;}
-
-/* ── SIGNAL CARDS ────────────────────────────────────────── */
-.signal-card{background:rgba(0,229,255,0.02);border:1px solid rgba(0,229,255,0.12);border-radius:0;padding:11px;margin-bottom:5px;}
-.signal-symbol{color:var(--matrix);font-size:13px;font-weight:900;letter-spacing:0.05em;}
-.signal-score{color:var(--win);font-size:12px;font-weight:900;text-shadow:0 0 8px rgba(0,255,65,0.4);}
+/* ── SIGNAL CARDS ──────────────────────────────────────── */
+.signal-card{background:rgba(0,229,255,0.03);border:1px solid rgba(0,229,255,0.18);
+    border-radius:0;padding:11px;margin-bottom:5px;}
+.signal-symbol{color:#00ff41;font-size:13px;font-weight:900;letter-spacing:0.05em;
+    text-shadow:0 0 10px rgba(0,255,65,0.6);}
+.signal-score{color:#00ff41;font-size:12px;font-weight:900;text-shadow:0 0 10px rgba(0,255,65,0.6);}
 .signal-details{color:var(--muted);font-size:11px;margin-top:3px;}
 
-/* ── WIN/LOSS BAR ────────────────────────────────────────── */
-.winloss-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid rgba(0,255,65,0.08);background:rgba(0,5,0,0.95);margin-bottom:8px;flex-wrap:wrap;}
-.winloss-source{display:flex;align-items:center;gap:6px;padding:5px 10px;background:rgba(0,255,65,0.03);border:1px solid rgba(0,255,65,0.08);min-width:160px;}
+/* ── WIN/LOSS BAR ──────────────────────────────────────── */
+.winloss-bar{display:flex;align-items:center;gap:8px;padding:8px 12px;
+    border:1px solid rgba(0,255,65,0.12);background:rgba(0,8,0,0.98);margin-bottom:8px;flex-wrap:wrap;}
+.winloss-source{display:flex;align-items:center;gap:6px;padding:5px 10px;
+    background:rgba(0,255,65,0.05);border:1px solid rgba(0,255,65,0.12);min-width:160px;}
 .winloss-label{color:var(--muted);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;}
-.winloss-pct-w{color:var(--win);font-size:14px;font-weight:900;text-shadow:0 0 8px rgba(0,255,65,0.4);}
-.winloss-pct-l{color:var(--loss);font-size:14px;font-weight:900;text-shadow:0 0 8px rgba(255,17,51,0.4);}
+.winloss-pct-w{color:#00ff41;font-size:14px;font-weight:900;text-shadow:0 0 12px rgba(0,255,65,0.7);}
+.winloss-pct-l{color:#ff1133;font-size:14px;font-weight:900;text-shadow:0 0 12px rgba(255,17,51,0.7);}
 .winloss-count{color:var(--muted);font-size:10px;}
-.winloss-divider{width:1px;height:24px;background:rgba(0,255,65,0.10);}
+.winloss-divider{width:1px;height:24px;background:rgba(0,255,65,0.15);}
 
-/* ── FLOAT CARDS ─────────────────────────────────────────── */
-.float-card{background:rgba(0,5,0,0.95);border:1px solid rgba(0,255,65,0.08);border-radius:0;padding:10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;}
-.float-left{color:var(--txt-hi);font-size:12px;font-weight:800;} .float-right{font-size:12px;font-weight:900;text-align:right;}
-.float-green{color:var(--win);text-shadow:0 0 8px rgba(0,255,65,0.4);} .float-red{color:var(--loss);text-shadow:0 0 8px rgba(255,17,51,0.4);}
+/* ── FLOAT CARDS ───────────────────────────────────────── */
+.float-card{background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.10);
+    border-radius:0;padding:10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;}
+.float-left{color:#ffffff;font-size:12px;font-weight:800;}
+.float-right{font-size:12px;font-weight:900;text-align:right;}
+.float-green{color:#00ff41;text-shadow:0 0 10px rgba(0,255,65,0.6);}
+.float-red{color:#ff1133;text-shadow:0 0 10px rgba(255,17,51,0.6);}
 .float-sub{color:var(--muted);font-size:10px;margin-top:2px;}
 
-/* ── BUDGET BAR ──────────────────────────────────────────── */
-.budget-bar{height:6px;border-radius:0;background:rgba(0,255,65,0.05);overflow:hidden;margin:5px 0;border:1px solid rgba(0,255,65,0.08);}
-.budget-fill-safe{height:100%;background:linear-gradient(90deg,var(--win),var(--live));box-shadow:0 0 6px rgba(0,255,65,0.4);}
-.budget-fill-warn{height:100%;background:linear-gradient(90deg,var(--loss),#880000);box-shadow:0 0 6px rgba(255,17,51,0.4);}
+/* ── BUDGET BAR ────────────────────────────────────────── */
+.budget-bar{height:6px;border-radius:0;background:rgba(0,255,65,0.06);
+    overflow:hidden;margin:5px 0;border:1px solid rgba(0,255,65,0.10);}
+.budget-fill-safe{height:100%;background:linear-gradient(90deg,#00ff41,#00e5ff);
+    box-shadow:0 0 8px rgba(0,255,65,0.6);}
+.budget-fill-warn{height:100%;background:linear-gradient(90deg,#ff1133,#880000);
+    box-shadow:0 0 8px rgba(255,17,51,0.5);}
 .pf-bar{height:4px;border-radius:0;background:rgba(0,255,65,0.05);overflow:hidden;margin-top:3px;}
-.pf-fill{height:100%;background:linear-gradient(90deg,var(--win),var(--live));box-shadow:0 0 5px rgba(0,255,65,0.4);}
+.pf-fill{height:100%;background:linear-gradient(90deg,#00ff41,#00e5ff);box-shadow:0 0 6px rgba(0,255,65,0.5);}
 
-/* ── SCORE ROWS ──────────────────────────────────────────── */
-.score-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;margin-bottom:3px;background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.06);}
-.score-left{color:var(--txt-hi);font-size:11px;font-weight:800;} .score-right{color:var(--txt);font-size:11px;font-weight:700;text-align:right;}
+/* ── SCORE ROWS ────────────────────────────────────────── */
+.score-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;
+    margin-bottom:3px;background:rgba(0,255,65,0.03);border:1px solid rgba(0,255,65,0.08);}
+.score-left{color:#ffffff;font-size:11px;font-weight:800;}
+.score-right{color:#00ff41;font-size:11px;font-weight:700;text-align:right;}
 
-/* ── LIST ROWS ───────────────────────────────────────────── */
-.list-row{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.05);}
-.list-left{color:var(--txt-hi);font-size:11px;font-weight:700;} .list-right{color:var(--matrix);font-size:11px;font-weight:700;text-align:right;}
+/* ── LIST ROWS ─────────────────────────────────────────── */
+.list-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.07);}
+.list-left{color:#ffffff;font-size:11px;font-weight:700;}
+.list-right{color:#00ff41;font-size:11px;font-weight:700;text-align:right;text-shadow:0 0 6px rgba(0,255,65,0.4);}
 
-/* ── HOLDINGS ────────────────────────────────────────────── */
-.holding-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.05);}
-.holding-symbol{color:var(--matrix);font-size:12px;font-weight:900;letter-spacing:0.05em;} .holding-sub{color:var(--muted);font-size:10px;}
-.holding-value{color:var(--txt-hi);font-size:12px;font-weight:900;text-align:right;} .holding-share{color:var(--live);font-size:10px;font-weight:700;text-align:right;}
+/* ── HOLDINGS ──────────────────────────────────────────── */
+.holding-row{display:flex;align-items:center;justify-content:space-between;gap:10px;
+    padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.07);}
+.holding-symbol{color:#00ff41;font-size:12px;font-weight:900;letter-spacing:0.05em;
+    text-shadow:0 0 8px rgba(0,255,65,0.5);}
+.holding-sub{color:var(--muted);font-size:10px;}
+.holding-value{color:#ffffff;font-size:12px;font-weight:900;text-align:right;}
+.holding-share{color:#00e5ff;font-size:10px;font-weight:700;text-align:right;}
 
-/* ── COIN ROWS ───────────────────────────────────────────── */
-.coin-row{display:flex;justify-content:space-between;align-items:center;padding:7px 8px;margin-bottom:3px;background:rgba(0,5,0,0.95);border:1px solid rgba(0,255,65,0.06);}
-.coin-row-black{border-left:2px solid var(--loss);}
-.coin-row-cool{border-left:2px solid var(--live);}
-.coin-row-white{border-left:2px solid var(--win);}
-.coin-name{color:var(--matrix);font-size:11px;font-weight:800;letter-spacing:0.05em;} .coin-stats{color:var(--muted);font-size:10px;}
+/* ── COIN ROWS ─────────────────────────────────────────── */
+.coin-row{display:flex;justify-content:space-between;align-items:center;padding:7px 8px;
+    margin-bottom:3px;background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.08);}
+.coin-row-black{border-left:3px solid #ff1133;}
+.coin-row-cool{border-left:3px solid #00e5ff;}
+.coin-row-white{border-left:3px solid #00ff41;}
+.coin-name{color:#00ff41;font-size:11px;font-weight:800;letter-spacing:0.05em;
+    text-shadow:0 0 6px rgba(0,255,65,0.4);}
+.coin-stats{color:var(--muted);font-size:10px;}
 
-/* ── HERO CARD ───────────────────────────────────────────── */
-.hero-card{background:rgba(0,5,0,0.98);border:1px solid rgba(0,255,65,0.10);border-radius:0;padding:16px;overflow:hidden;min-height:100%;position:relative;}
-.hero-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--matrix),var(--btc),var(--matrix),transparent);}
-.hero-main-amount{font-size:28px;font-weight:900;color:var(--matrix);line-height:1;margin-bottom:5px;text-shadow:0 0 20px rgba(0,255,65,0.4);}
-.hero-stat-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.05);}
-.hero-stat-label{font-size:12px;color:var(--txt);font-weight:700;} .hero-stat-value{font-size:13px;color:var(--matrix);font-weight:900;text-align:right;text-shadow:0 0 10px rgba(0,255,65,0.3);}
+/* ── HERO CARD ─────────────────────────────────────────── */
+.hero-card{background:rgba(0,8,0,0.99);border:1px solid rgba(0,255,65,0.15);
+    border-radius:0;padding:16px;overflow:hidden;min-height:100%;position:relative;}
+.hero-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;
+    background:linear-gradient(90deg,transparent,#00ff41,#f7931a,#00ff41,transparent);}
+.hero-main-amount{font-size:28px;font-weight:900;color:#00ff41;line-height:1;
+    margin-bottom:5px;text-shadow:0 0 25px rgba(0,255,65,0.7);}
+.hero-stat-row{display:flex;justify-content:space-between;align-items:center;
+    padding:8px 0;border-bottom:1px solid rgba(0,255,65,0.07);}
+.hero-stat-label{font-size:12px;color:#a0ffb0;font-weight:700;}
+.hero-stat-value{font-size:13px;color:#00ff41;font-weight:900;text-align:right;
+    text-shadow:0 0 10px rgba(0,255,65,0.5);}
 .hero-stat-badge{display:inline-block;padding:2px 6px;border-radius:0;font-size:10px;font-weight:900;margin-left:6px;}
-.hero-stat-badge.green{background:rgba(0,255,65,0.10);color:var(--win);border:1px solid rgba(0,255,65,0.25);} 
-.hero-stat-badge.red{background:rgba(255,17,51,0.10);color:var(--loss);border:1px solid rgba(255,17,51,0.25);} 
-.hero-stat-badge.blue{background:rgba(0,229,255,0.10);color:var(--live);border:1px solid rgba(0,229,255,0.25);}
+.hero-stat-badge.green{background:rgba(0,255,65,0.15);color:#00ff41;border:1px solid rgba(0,255,65,0.50);}
+.hero-stat-badge.red{background:rgba(255,17,51,0.15);color:#ff1133;border:1px solid rgba(255,17,51,0.50);}
+.hero-stat-badge.blue{background:rgba(0,229,255,0.10);color:#00e5ff;border:1px solid rgba(0,229,255,0.40);}
 
-/* ── DOMINANCE ───────────────────────────────────────────── */
-.dominance-pill{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;border-radius:0;margin-bottom:12px;font-size:11px;font-weight:900;letter-spacing:0.06em;border:1px solid;}
-.dominance-pill.green{color:var(--matrix);background:rgba(0,255,65,0.06);border-color:rgba(0,255,65,0.20);box-shadow:0 0 15px rgba(0,255,65,0.08);}
-.dominance-pill.red{color:var(--loss);background:rgba(255,17,51,0.06);border-color:rgba(255,17,51,0.20);box-shadow:0 0 15px rgba(255,17,51,0.08);}
+/* ── DOMINANCE PILL ────────────────────────────────────── */
+.dominance-pill{display:inline-flex;align-items:center;gap:5px;padding:6px 12px;
+    border-radius:0;margin-bottom:12px;font-size:11px;font-weight:900;letter-spacing:0.06em;border:1px solid;}
+.dominance-pill.green{color:#00ff41;background:rgba(0,255,65,0.10);border-color:rgba(0,255,65,0.40);
+    box-shadow:0 0 18px rgba(0,255,65,0.15);text-shadow:0 0 8px rgba(0,255,65,0.6);}
+.dominance-pill.red{color:#ff1133;background:rgba(255,17,51,0.10);border-color:rgba(255,17,51,0.40);
+    box-shadow:0 0 18px rgba(255,17,51,0.15);text-shadow:0 0 8px rgba(255,17,51,0.6);}
 
-/* ── BOT STATUS BAR ──────────────────────────────────────── */
-.bot-status-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid rgba(0,255,65,0.10);background:rgba(0,10,0,0.95);margin-bottom:10px;}
-.pulse-dot{width:7px;height:7px;border-radius:0;background:var(--win);box-shadow:0 0 0 0 rgba(0,255,65,0.4);animation:pulse-matrix 2s infinite;display:inline-block;}
-@keyframes pulse-matrix{0%{box-shadow:0 0 0 0 rgba(0,255,65,0.4);}70%{box-shadow:0 0 0 8px rgba(0,255,65,0);}100%{box-shadow:0 0 0 0 rgba(0,255,65,0);}}
+/* ── BOT STATUS BAR ────────────────────────────────────── */
+.bot-status-bar{display:flex;align-items:center;gap:8px;padding:6px 10px;
+    border:1px solid rgba(0,255,65,0.15);background:rgba(0,8,0,0.98);margin-bottom:10px;}
+.pulse-dot{width:8px;height:8px;border-radius:0;background:#00ff41;display:inline-block;
+    box-shadow:0 0 0 0 rgba(0,255,65,0.6);animation:pulse-matrix 1.5s infinite;}
+@keyframes pulse-matrix{
+    0%{box-shadow:0 0 0 0 rgba(0,255,65,0.6);}
+    70%{box-shadow:0 0 0 10px rgba(0,255,65,0);}
+    100%{box-shadow:0 0 0 0 rgba(0,255,65,0);}
+}
 
-/* ── NEON TEXT ───────────────────────────────────────────── */
-.neon-win{color:var(--win)!important;text-shadow:0 0 10px rgba(0,255,65,0.5);}
-.neon-loss{color:var(--loss)!important;text-shadow:0 0 10px rgba(255,17,51,0.5);}
-.neon-live{color:var(--live)!important;text-shadow:0 0 10px rgba(0,229,255,0.5);}
-.neon-shadow{color:var(--live)!important;text-shadow:0 0 10px rgba(0,229,255,0.4);}
-.neon-warn{color:var(--live)!important;text-shadow:0 0 8px rgba(0,229,255,0.5);}
+/* ── NEON TEXT ─────────────────────────────────────────── */
+.neon-win{color:#00ff41!important;text-shadow:0 0 12px rgba(0,255,65,0.8)!important;}
+.neon-loss{color:#ff1133!important;text-shadow:0 0 12px rgba(255,17,51,0.8)!important;}
+.neon-live{color:#00e5ff!important;text-shadow:0 0 12px rgba(0,229,255,0.7)!important;}
+.neon-shadow{color:#00e5ff!important;text-shadow:0 0 12px rgba(0,229,255,0.7)!important;}
+.neon-warn{color:#00e5ff!important;text-shadow:0 0 10px rgba(0,229,255,0.6)!important;}
 
-/* ── CHAT ────────────────────────────────────────────────── */
-.chat-container{display:flex;flex-direction:column;gap:10px;max-height:500px;overflow-y:auto;padding:12px;background:rgba(0,5,0,0.98);border:1px solid rgba(0,255,65,0.10);border-radius:0;margin-bottom:10px;}
-.chat-msg-user{display:flex;justify-content:flex-end;} .chat-msg-coach{display:flex;justify-content:flex-start;align-items:flex-start;gap:8px;}
-.chat-bubble-user{background:rgba(0,255,65,0.08);border:1px solid rgba(0,255,65,0.20);border-radius:0;padding:8px 12px;color:var(--matrix);font-size:12px;line-height:1.5;max-width:75%;}
-.chat-bubble-coach{background:rgba(0,5,0,0.99);border:1px solid rgba(0,229,255,0.15);border-radius:0;padding:10px 12px;color:var(--txt);font-size:12px;line-height:1.6;max-width:82%;white-space:pre-wrap;}
-.chat-avatar-coach{width:28px;height:28px;border-radius:0;background:linear-gradient(135deg,var(--matrix),var(--live));display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;box-shadow:0 0 10px rgba(0,255,65,0.3);}
+/* ── SECTION ELEMENTS ──────────────────────────────────── */
+.section-title{color:#00ff41;font-size:16px;font-weight:900;margin-bottom:6px;
+    letter-spacing:0.02em;text-shadow:0 0 18px rgba(0,255,65,0.6);}
+.section-subtitle{color:var(--muted);font-size:11px;line-height:1.6;margin-bottom:10px;}
+.section-shell{background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.08);
+    border-radius:0;padding:12px;margin:8px 0;}
+.divider{height:1px;background:rgba(0,255,65,0.12);margin:8px 0 10px 0;}
+.section-divider-subtle{height:1px;
+    background:linear-gradient(90deg,transparent,rgba(0,255,65,0.15),transparent);margin:10px 2px;}
+.small-muted{color:var(--muted);font-size:10px;line-height:1.55;}
+
+/* ── CHAT ──────────────────────────────────────────────── */
+.chat-container{display:flex;flex-direction:column;gap:10px;max-height:500px;overflow-y:auto;
+    padding:12px;background:rgba(0,8,0,0.99);border:1px solid rgba(0,255,65,0.15);
+    border-radius:0;margin-bottom:10px;}
+.chat-msg-user{display:flex;justify-content:flex-end;}
+.chat-msg-coach{display:flex;justify-content:flex-start;align-items:flex-start;gap:8px;}
+.chat-bubble-user{background:rgba(0,255,65,0.10);border:1px solid rgba(0,255,65,0.30);
+    border-radius:0;padding:8px 12px;color:#00ff41;font-size:12px;line-height:1.5;max-width:75%;}
+.chat-bubble-coach{background:rgba(0,8,0,0.99);border:1px solid rgba(0,229,255,0.20);
+    border-radius:0;padding:10px 12px;color:#a0ffb0;font-size:12px;line-height:1.6;
+    max-width:82%;white-space:pre-wrap;}
+.chat-avatar-coach{width:28px;height:28px;border-radius:0;
+    background:linear-gradient(135deg,#00ff41,#00e5ff);display:flex;
+    align-items:center;justify-content:center;font-size:14px;flex-shrink:0;
+    box-shadow:0 0 15px rgba(0,255,65,0.5);}
 .chat-time{color:var(--muted);font-size:9px;margin-top:3px;text-align:right;}
 .chat-empty{text-align:center;padding:30px 20px;color:var(--muted);font-size:12px;}
 
-/* ── INPUTS ──────────────────────────────────────────────── */
-[data-testid="stTextInput"] input,[data-testid="stSelectbox"] div[data-baseweb="select"]>div{background:rgba(0,10,0,0.95)!important;color:var(--matrix)!important;border-radius:0!important;border:1px solid rgba(0,255,65,0.15)!important;}
-[data-testid="stDataFrame"]{border:1px solid rgba(0,255,65,0.10)!important;border-radius:0!important;}
-pre,code,.stCodeBlock{background:#000500!important;color:var(--matrix)!important;border-radius:0!important;border:1px solid rgba(0,255,65,0.15)!important;}
+/* ── INPUTS ────────────────────────────────────────────── */
+[data-testid="stTextInput"] input,
+[data-testid="stSelectbox"] div[data-baseweb="select"]>div{
+    background:rgba(0,10,0,0.98)!important;color:#00ff41!important;
+    border-radius:0!important;border:1px solid rgba(0,255,65,0.25)!important;
+}
+[data-testid="stDataFrame"]{border:1px solid rgba(0,255,65,0.12)!important;border-radius:0!important;}
+pre,code,.stCodeBlock{background:#000500!important;color:#00ff41!important;
+    border-radius:0!important;border:1px solid rgba(0,255,65,0.20)!important;}
+[data-testid="stSlider"] div[role="slider"]{background:#00ff41!important;}
 
-/* ── MISC ────────────────────────────────────────────────── */
-.filter-card{background:rgba(0,5,0,0.95);border:1px solid rgba(0,255,65,0.08);border-radius:0;padding:10px;margin-bottom:8px;}
-.trade-note{background:rgba(0,5,0,0.95);border:1px solid rgba(0,255,65,0.10);border-radius:0;padding:10px;color:var(--txt);font-size:11px;line-height:1.65;}
-p,li,span{color:#5a8a5a!important;} .stCaption{color:var(--muted)!important;font-size:10px!important;}
+/* ── MISC ──────────────────────────────────────────────── */
+.filter-card{background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.10);
+    border-radius:0;padding:10px;margin-bottom:8px;}
+.trade-note{background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.12);
+    border-radius:0;padding:10px;color:#00ff41;font-size:11px;line-height:1.65;}
+.fee-card{background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.12);
+    border-radius:0;padding:12px;margin-bottom:7px;}
+.top-trade-card{background:rgba(0,8,0,0.98);border:1px solid rgba(0,255,65,0.10);
+    border-radius:0;padding:9px 10px;margin-bottom:4px;
+    display:flex;justify-content:space-between;align-items:center;}
+.top-trade-left{color:#ffffff;font-size:11px;font-weight:800;}
+.top-trade-right{font-size:12px;font-weight:900;}
+.top-trade-sub{color:var(--muted);font-size:9px;margin-top:2px;}
+.scanner-card{background:rgba(0,255,65,0.03);border:1px solid rgba(0,255,65,0.12);
+    border-radius:0;padding:12px;margin-bottom:8px;}
+.scanner-title{color:#00ff41;font-size:12px;font-weight:900;margin-bottom:5px;
+    letter-spacing:0.05em;text-shadow:0 0 8px rgba(0,255,65,0.5);}
+.scanner-row{display:flex;justify-content:space-between;padding:5px 0;
+    border-bottom:1px solid rgba(0,255,65,0.06);}
+.scanner-key{color:var(--muted);font-size:11px;}
+.scanner-val{color:#ffffff;font-size:11px;font-weight:700;}
 .tiny-button div.stButton>button{min-height:30px!important;border-radius:0!important;font-size:10px!important;}
-.trade-button div.stButton>button{text-align:left!important;min-height:38px!important;font-size:11px!important;border-radius:0!important;}
+.trade-button div.stButton>button{text-align:left!important;min-height:38px!important;
+    font-size:11px!important;border-radius:0!important;}
 
-/* ── SECTION ELEMENTS ────────────────────────────────────── */
-.section-title{color:var(--matrix);font-size:16px;font-weight:900;margin-bottom:6px;letter-spacing:0.02em;text-shadow:0 0 15px rgba(0,255,65,0.3);}
-.section-subtitle{color:var(--muted);font-size:11px;line-height:1.6;margin-bottom:10px;}
-.section-shell{background:rgba(0,255,65,0.01);border:1px solid rgba(0,255,65,0.06);border-radius:0;padding:12px;margin:8px 0;}
-.divider{height:1px;background:rgba(0,255,65,0.08);margin:8px 0 10px 0;}
-.section-divider-subtle{height:1px;background:linear-gradient(90deg,transparent,rgba(0,255,65,0.10),transparent);margin:10px 2px;}
-.small-muted{color:var(--muted);font-size:10px;line-height:1.55;}
-.fee-card{background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.10);border-radius:0;padding:12px;margin-bottom:7px;}
-.top-trade-card{background:rgba(0,5,0,0.98);border:1px solid rgba(0,255,65,0.08);border-radius:0;padding:9px 10px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;}
-.top-trade-left{color:var(--txt-hi);font-size:11px;font-weight:800;} .top-trade-right{font-size:12px;font-weight:900;} .top-trade-sub{color:var(--muted);font-size:9px;margin-top:2px;}
-.activity-card{background:rgba(0,255,65,0.02);border:1px solid rgba(0,255,65,0.08);border-radius:0;padding:9px;margin-bottom:7px;}
-.activity-title{font-size:11px;font-weight:900;margin-bottom:2px;color:var(--matrix);}
-.activity-sub{color:var(--txt);font-size:10px;line-height:1.45;} .activity-time{color:var(--muted);font-size:9px;margin-top:3px;}
-
-/* ── CALENDAR ────────────────────────────────────────────── */
+/* ── CALENDAR ──────────────────────────────────────────── */
 .cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-top:6px;}
-.cal-day{aspect-ratio:1;border-radius:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:700;cursor:default;min-height:26px;}
-.cal-win{background:rgba(0,255,65,0.20);color:var(--win);}
-.cal-loss{background:rgba(255,17,51,0.15);color:var(--loss);}
-.cal-flat{background:rgba(0,255,65,0.03);color:var(--muted);} .cal-empty{background:transparent;}
+.cal-day{aspect-ratio:1;border-radius:0;display:flex;align-items:center;
+    justify-content:center;font-size:8px;font-weight:700;cursor:default;min-height:26px;}
+.cal-win{background:rgba(0,255,65,0.25);color:#00ff41;text-shadow:0 0 6px rgba(0,255,65,0.6);}
+.cal-loss{background:rgba(255,17,51,0.20);color:#ff1133;text-shadow:0 0 6px rgba(255,17,51,0.6);}
+.cal-flat{background:rgba(0,255,65,0.04);color:var(--muted);}
+.cal-empty{background:transparent;}
 .cal-header{color:var(--muted);font-size:9px;font-weight:700;text-align:center;padding:2px 0;}
 
-/* ── TRADE CHIP ──────────────────────────────────────────── */
+/* ── TRADE CHIP ────────────────────────────────────────── */
 .trade-chip-row{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:7px;}
-.trade-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:0;border:1px solid rgba(0,255,65,0.12);background:rgba(0,255,65,0.03);color:var(--txt);font-size:10px;font-weight:900;letter-spacing:0.04em;}
+.trade-chip{display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:0;
+    border:1px solid rgba(0,255,65,0.20);background:rgba(0,255,65,0.06);
+    color:#00ff41;font-size:10px;font-weight:900;letter-spacing:0.04em;}
 
-/* ── CORR ROW ────────────────────────────────────────────── */
-.corr-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(0,255,65,0.05);}
-.corr-label{color:var(--txt-hi);font-size:11px;font-weight:800;width:75px;flex-shrink:0;}
-.corr-bar-wrap{flex:1;height:6px;background:rgba(0,255,65,0.05);border-radius:0;overflow:hidden;}
+/* ── CORR ROW ──────────────────────────────────────────── */
+.corr-row{display:flex;align-items:center;gap:10px;padding:7px 0;
+    border-bottom:1px solid rgba(0,255,65,0.07);}
+.corr-label{color:#ffffff;font-size:11px;font-weight:800;width:75px;flex-shrink:0;}
+.corr-bar-wrap{flex:1;height:6px;background:rgba(0,255,65,0.06);border-radius:0;overflow:hidden;}
 .corr-bar-fill{height:100%;}
-.corr-pct{color:var(--matrix);font-size:11px;font-weight:900;width:44px;text-align:right;flex-shrink:0;}
+.corr-pct{color:#00ff41;font-size:11px;font-weight:900;width:44px;text-align:right;
+    flex-shrink:0;text-shadow:0 0 6px rgba(0,255,65,0.5);}
 .corr-count{color:var(--muted);font-size:10px;width:60px;text-align:right;flex-shrink:0;}
 
-/* ── STREAK ──────────────────────────────────────────────── */
+/* ── STREAK ────────────────────────────────────────────── */
 .streak-row{display:flex;align-items:center;gap:3px;margin-bottom:5px;flex-wrap:wrap;}
-.streak-dot-w{width:12px;height:12px;border-radius:0;background:var(--win);display:inline-block;box-shadow:0 0 5px rgba(0,255,65,0.4);}
-.streak-dot-l{width:12px;height:12px;border-radius:0;background:var(--loss);display:inline-block;box-shadow:0 0 5px rgba(255,17,51,0.4);}
+.streak-dot-w{width:12px;height:12px;border-radius:0;background:#00ff41;display:inline-block;
+    box-shadow:0 0 8px rgba(0,255,65,0.7);}
+.streak-dot-l{width:12px;height:12px;border-radius:0;background:#ff1133;display:inline-block;
+    box-shadow:0 0 8px rgba(255,17,51,0.7);}
+
+/* ── ACTIVITY ──────────────────────────────────────────── */
+.activity-card{background:rgba(0,255,65,0.03);border:1px solid rgba(0,255,65,0.10);
+    border-radius:0;padding:9px;margin-bottom:7px;}
+.activity-title{font-size:11px;font-weight:900;margin-bottom:2px;color:#00ff41;
+    text-shadow:0 0 6px rgba(0,255,65,0.4);}
+.activity-sub{color:#a0ffb0;font-size:10px;line-height:1.45;}
+.activity-time{color:var(--muted);font-size:9px;margin-top:3px;}
 </style>""", unsafe_allow_html=True)
 
 
 # ============================================================
-# SESSION STATE — alle keys geïnitialiseerd bij opstarten
+# SESSION STATE â alle keys geÃ¯nitialiseerd bij opstarten
 # Streamlit crasht als je een key gebruikt die niet bestaat.
 # Elke st.session_state.xxx die in de code gebruikt wordt
 # MOET hier gedefinieerd staan met een default waarde.
@@ -476,7 +519,7 @@ for _k, _v in SESSION_DEFAULTS.items():
 
 
 # ============================================================
-# CONFIGURATIE — via Render Environment Variables
+# CONFIGURATIE â via Render Environment Variables
 # ============================================================
 API_KEY              = (os.getenv("BITVAVO_API_KEY", "") or "").strip().strip('"\'')
 API_SECRET           = (os.getenv("BITVAVO_API_SECRET", "") or "").strip().strip('"\'')
@@ -498,7 +541,7 @@ HISTORY_LIMIT    = int(os.getenv("DASH_HISTORY_LIMIT", "100000"))
 PENDING_LIMIT    = int(os.getenv("DASH_PENDING_LIMIT", "1000"))
 SCOREBOARD_LIMIT = int(os.getenv("DASH_SCOREBOARD_LIMIT", "500"))
 
-# Bot limieten (voor display — identiek aan alle andere bestanden)
+# Bot limieten (voor display â identiek aan alle andere bestanden)
 MAX_PER_TRADE_EUR       = float(os.getenv("MAX_PER_TRADE_EUR", "0.50"))
 MAX_REAL_TRADES_PER_DAY = int(os.getenv("MAX_REAL_TRADES_PER_DAY", "10"))
 MAX_OPEN_REAL_TRADES    = int(os.getenv("MAX_OPEN_REAL_TRADES", "5"))
@@ -511,44 +554,44 @@ BOT_STATE_TABLE         = "public.bot_state"
 
 
 # ================================================================
-# KLEURENPALET — Cyber Neon Design System v1.0
+# KLEURENPALET â Cyber Neon Design System v1.0
 # ================================================================
 # ENIGE bron van alle kleuren in dit dashboard.
-# Gebruik ALTIJD deze constanten — nooit losse hex codes.
+# Gebruik ALTIJD deze constanten â nooit losse hex codes.
 #
 # SEMANTISCH SYSTEEM:
-#   WIN / positief / omhoog  →  C_WIN    (electric green)
-#   LOSS / negatief / omlaag →  C_LOSS   (neon red)
-#   Open / primair / live    →  C_LIVE   (electric cyan)
-#   Shadow trades            →  C_SHADOW (electric purple)
-#   Simulator trades         →  C_SIM    (neon orange)
-#   Waarschuwing / RANGE     →  C_WARN   (electric yellow)
-#   Info / neutraal          →  C_INFO   (deep blue)
-#   BTC BULL regime          →  C_BULL   (= C_WIN)
-#   BTC BEAR regime          →  C_BEAR   (= C_LOSS)
-#   BTC RANGE regime         →  C_RANGE  (= C_WARN)
+#   WIN / positief / omhoog  â  C_WIN    (electric green)
+#   LOSS / negatief / omlaag â  C_LOSS   (neon red)
+#   Open / primair / live    â  C_LIVE   (electric cyan)
+#   Shadow trades            â  C_SHADOW (electric purple)
+#   Simulator trades         â  C_SIM    (neon orange)
+#   Waarschuwing / RANGE     â  C_WARN   (electric yellow)
+#   Info / neutraal          â  C_INFO   (deep blue)
+#   BTC BULL regime          â  C_BULL   (= C_WIN)
+#   BTC BEAR regime          â  C_BEAR   (= C_LOSS)
+#   BTC RANGE regime         â  C_RANGE  (= C_WARN)
 #
 # LAYOUT:
-#   Achtergrond diepste      →  BG_DEEP
-#   Achtergrond panel        →  BG_PANEL
-#   Achtergrond card         →  BG_CARD
-#   Border standaard         →  BORDER
-#   Tekst hoofd              →  TXT_MAIN
-#   Tekst dimmed             →  TXT_DIM
-#   Grid lijnen              →  GRID
-#   Nul-lijn                 →  ZEROLINE
+#   Achtergrond diepste      â  BG_DEEP
+#   Achtergrond panel        â  BG_PANEL
+#   Achtergrond card         â  BG_CARD
+#   Border standaard         â  BORDER
+#   Tekst hoofd              â  TXT_MAIN
+#   Tekst dimmed             â  TXT_DIM
+#   Grid lijnen              â  GRID
+#   Nul-lijn                 â  ZEROLINE
 # ================================================================
 
-# ── Semantische kleuren ──────────────────────────────────────
-C_WIN    = "#00ff41"   # electric green  — WIN, positief, omhoog
-C_LOSS   = "#ff1133"   # neon red        — LOSS, negatief, omlaag
-C_LIVE   = "#00e5ff"   # electric cyan   — live trades, primair, open
-C_SHADOW = "#00e5ff"   # electric purple — shadow trades
-C_SIM    = "#ff6b00"   # neon orange     — simulator trades
-C_WARN   = "#00e5ff"   # electric yellow — waarschuwing, RANGE regime
-C_INFO   = "#3d8bff"   # deep blue       — algemene info
+# ââ Semantische kleuren ââââââââââââââââââââââââââââââââââââââ
+C_WIN    = "#00ff41"   # electric green  â WIN, positief, omhoog
+C_LOSS   = "#ff1133"   # neon red        â LOSS, negatief, omlaag
+C_LIVE   = "#00e5ff"   # electric cyan   â live trades, primair, open
+C_SHADOW = "#00e5ff"   # electric purple â shadow trades
+C_SIM    = "#ff6b00"   # neon orange     â simulator trades
+C_WARN   = "#00e5ff"   # electric yellow â waarschuwing, RANGE regime
+C_INFO   = "#3d8bff"   # deep blue       â algemene info
 
-# ── Alias voor backwards-compat (worden niet meer uitgebreid) ─
+# ââ Alias voor backwards-compat (worden niet meer uitgebreid) â
 C_GREEN  = C_WIN
 C_RED    = C_LOSS
 C_CYAN   = C_LIVE
@@ -557,12 +600,12 @@ C_ORANGE = C_SIM
 C_YELLOW = C_WARN
 C_BLUE   = C_INFO
 
-# ── Regime kleuren ───────────────────────────────────────────
+# ââ Regime kleuren âââââââââââââââââââââââââââââââââââââââââââ
 C_BULL   = C_WIN      # BTC / coin BULL regime
 C_BEAR   = C_LOSS     # BTC / coin BEAR regime
 C_RANGE  = C_WARN     # BTC / coin RANGE regime
 
-# ── Alpha varianten (rgba strings, direct bruikbaar in CSS/Plotly) ─
+# ââ Alpha varianten (rgba strings, direct bruikbaar in CSS/Plotly) â
 WIN_A10  = "rgba(0,255,65,0.10)"
 WIN_A20  = "rgba(0,255,65,0.20)"
 WIN_A35  = "rgba(0,255,65,0.35)"
@@ -574,7 +617,7 @@ LIVE_A20 = "rgba(0,229,255,0.20)"
 SHAD_A10 = "rgba(191,95,255,0.10)"
 WARN_A10 = "rgba(0,229,255,0.10)"
 
-# ── Layout kleuren ───────────────────────────────────────────
+# ââ Layout kleuren âââââââââââââââââââââââââââââââââââââââââââ
 BG_DEEP  = "#010109"             # diepste achtergrond
 BG_PANEL = "rgba(10,10,20,0.98)" # panel achtergrond
 BG_CARD  = "rgba(8,8,16,0.99)"   # card achtergrond
@@ -587,7 +630,7 @@ TXT_MAIN = "#e8f0ff"    # hoofd tekst kleur
 TXT_DIM  = "#4e5a7a"    # gedimd / muted tekst
 TXT_HIGH = "#ffffff"    # highlight tekst (titels)
 
-# ── Lookup dictionaries ──────────────────────────────────────
+# ââ Lookup dictionaries ââââââââââââââââââââââââââââââââââââââ
 COLORS_BY_OUTCOME = {
     "WIN":  C_WIN,
     "LOSS": C_LOSS,
@@ -608,7 +651,7 @@ COLORS_BY_TYPE = {
     "SIM":    C_SIM,
 }
 
-# ── Neon glow helpers (tekst-shadow CSS strings) ─────────────
+# ââ Neon glow helpers (tekst-shadow CSS strings) âââââââââââââ
 GLOW_WIN  = f"0 0 10px {WIN_A20}, 0 0 20px {WIN_A10}"
 GLOW_LOSS = f"0 0 10px {LOSS_A20}, 0 0 20px {LOSS_A10}"
 GLOW_LIVE = f"0 0 10px {LIVE_A20}, 0 0 20px {LIVE_A10}"
@@ -658,7 +701,7 @@ def safe_str(x: Any, default: str = "") -> str:
 def format_money(v: Any) -> str:
     val = safe_float(v)
     sign = "+" if val > 0 else ""
-    return f"{sign}€{abs(val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return f"{sign}â¬{abs(val):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def format_r(v: Any) -> str:
@@ -725,7 +768,7 @@ def get_status_badge(status: str) -> str:
 def regime_badge_html(regime: str) -> str:
     r = safe_str(regime).upper()
     cls = {"BULL": "regime-bull", "BEAR": "regime-bear", "RANGE": "regime-range"}.get(r, "regime-unkown")
-    emoji = {"BULL": "🟢", "BEAR": "🔴", "RANGE": "🟡"}.get(r, "⚪")
+    emoji = {"BULL": "ð¢", "BEAR": "ð´", "RANGE": "ð¡"}.get(r, "âª")
     return f'<span class="regime-badge {cls}">{emoji} {r}</span>'
 
 
@@ -781,7 +824,7 @@ def downsample(df: pd.DataFrame, max_pts: int = 1000) -> pd.DataFrame:
 
 
 # ============================================================
-# DATABASE — sslmode="require" identiek aan alle bestanden
+# DATABASE â sslmode="require" identiek aan alle bestanden
 # ============================================================
 def db_ready() -> bool:
     return bool(DATABASE_URL)
@@ -864,7 +907,7 @@ def sql_col(cols: List[str], name: str, cast: str = "text") -> str:
 
 
 # ============================================================
-# BOT STATE — leest actuele bot status
+# BOT STATE â leest actuele bot status
 # ============================================================
 @st.cache_data(ttl=15, show_spinner=False)
 def get_bot_state_val(key: str, default: str = "") -> str:
@@ -881,21 +924,21 @@ def get_bot_status() -> Tuple[str, str, str]:
     Geeft (label, emoji, status_type) terug voor de top balk.
 
     ARCHITECTUUR:
-    - Bot systeem (scanner, coach, monitor) draait 24/7 op Render — ALTIJD aan.
+    - Bot systeem (scanner, coach, monitor) draait 24/7 op Render â ALTIJD aan.
     - "bot_active" in DB = ALLEEN de live trading schakelaar:
-        false → bot draait, scanner scant, maar GEEN echte euro-trades
-        true  → bot koopt ook echt met echte euros op Bitvavo
+        false â bot draait, scanner scant, maar GEEN echte euro-trades
+        true  â bot koopt ook echt met echte euros op Bitvavo
     """
     active = get_bot_state_val("bot_active", "false").lower() == "true"
     paused = get_bot_state_val("bot_paused", "false").lower() == "true"
 
     if not active:
-        # Bot systeem draait gewoon — alleen live trading UIT
-        return "LIVE TRADING UIT", "🟡", "stopped"
+        # Bot systeem draait gewoon â alleen live trading UIT
+        return "LIVE TRADING UIT", "ð¡", "stopped"
     if paused:
         reason = get_bot_state_val("bot_paused_reason", "onbekend")
         until  = get_bot_state_val("bot_paused_until", "")
-        label  = f"GEPAUZEERD — {reason}"
+        label  = f"GEPAUZEERD â {reason}"
         if until:
             try:
                 until_dt = datetime.fromisoformat(until)
@@ -904,8 +947,8 @@ def get_bot_status() -> Tuple[str, str, str]:
                     label += f" ({mins}m)"
             except Exception:
                 pass
-        return label, "⏸️", "paused"
-    return "LIVE TRADING AAN", "🟢", "active"
+        return label, "â¸ï¸", "paused"
+    return "LIVE TRADING AAN", "ð¢", "active"
 
 
 # ============================================================
@@ -915,7 +958,7 @@ def get_bot_status() -> Tuple[str, str, str]:
 def get_btc_regime() -> Dict[str, Any]:
     """
     Laadt BTC regime. Geverifieerd schema: open_time, regime, ema200, close.
-    GEEN strength/pct_from_ema/ts_utc kolommen — worden berekend.
+    GEEN strength/pct_from_ema/ts_utc kolommen â worden berekend.
     """
     if not table_exists("btc_regime_4h"):
         return {"regime": "UNKNOWN", "strength": 0.0, "close": 0.0, "ema200": 0.0, "pct_from_ema": 0.0}
@@ -928,7 +971,7 @@ def get_btc_regime() -> Dict[str, Any]:
     row = dict(df.iloc[0])
     close  = float(row.get("close")  or 0.0)
     ema200 = float(row.get("ema200") or 0.0)
-    # strength en pct_from_ema worden berekend — bestaan niet als kolom
+    # strength en pct_from_ema worden berekend â bestaan niet als kolom
     strength    = round(abs((close - ema200) / ema200 * 100), 2) if ema200 else 0.0
     pct_from_ema = round((close - ema200) / ema200 * 100, 2) if ema200 else 0.0
     return {
@@ -942,7 +985,7 @@ def get_btc_regime() -> Dict[str, Any]:
 
 
 # ============================================================
-# TRADE DATA — laden en normaliseren
+# TRADE DATA â laden en normaliseren
 # ============================================================
 def empty_trade_df() -> pd.DataFrame:
     return pd.DataFrame(columns=[
@@ -1129,7 +1172,7 @@ def load_shadow_trades() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def get_winrate_totals() -> dict:
-    """Win/loss aantallen direct uit DB — snel zonder alle trades te laden."""
+    """Win/loss aantallen direct uit DB â snel zonder alle trades te laden."""
     result = {}
     for bron, where in [
         ("ALL",    "UPPER(COALESCE(source,'')) IN ('REAL','LIVE','SHADOW','SIM')"),
@@ -1265,7 +1308,7 @@ def load_market_regime_overview() -> pd.DataFrame:
 
 
 def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str]:
-    """Laadt alle trade data — met fallback naar demo data als DB leeg is."""
+    """Laadt alle trade data â met fallback naar demo data als DB leeg is."""
     real_df   = load_real_trades()
     sim_df    = load_sim_trades()
     shadow_df = load_shadow_trades()
@@ -1291,9 +1334,9 @@ def get_all_trade_data() -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.D
 
 
 def _demo_trades() -> pd.DataFrame:
-    """Fallback demo data — alleen als DB leeg is."""
-    # Demo data — realistisch voor Fase 1 (€0.50 per trade, max 2.5R)
-    # Win = +€0.88 (+1.75R), Loss = -€0.50 (-1.0R)
+    """Fallback demo data â alleen als DB leeg is."""
+    # Demo data â realistisch voor Fase 1 (â¬0.50 per trade, max 2.5R)
+    # Win = +â¬0.88 (+1.75R), Loss = -â¬0.50 (-1.0R)
     rows = [
         {"trade_id":"r1","symbol":"ETHUSDT","setup_type":"BREAKOUT","timeframe":"4H","regime":"BULL","label":"A","score":91,"chance":78,"confidence":83,"entry":3412.0,"stop":3374.0,"target":3509.0,"pnl_r":1.75,"pnl_eur":0.88,"outcome":"WIN","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-15T09:10:00Z","closed_at":"2026-03-15T13:40:00Z"},
         {"trade_id":"r2","symbol":"SOLUSDT","setup_type":"TREND_PULLBACK","timeframe":"4H","regime":"BULL","label":"B","score":84,"chance":71,"confidence":72,"entry":142.50,"stop":139.20,"target":150.80,"pnl_r":-1.0,"pnl_eur":-0.50,"outcome":"LOSS","source":"REAL","trade_type":"REAL","is_shadow":False,"created_at":"2026-03-16T08:20:00Z","closed_at":"2026-03-16T11:15:00Z"},
@@ -1408,7 +1451,7 @@ def get_daily_pnl_today(df: pd.DataFrame) -> float:
 
 
 # ============================================================
-# NIEUWE DATA FUNCTIES — alle ontbrekende metrics
+# NIEUWE DATA FUNCTIES â alle ontbrekende metrics
 # ============================================================
 def get_overall_winloss(df: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -1561,7 +1604,7 @@ def get_scanner_status() -> Dict[str, Any]:
 def get_dagbudget_status(real_df: pd.DataFrame) -> Dict[str, Any]:
     """
     Berekent hoeveel van het dagbudget gebruikt is.
-    Dagbudget = DAILY_STOP_LOSS_EUR (€5.00 standaard).
+    Dagbudget = DAILY_STOP_LOSS_EUR (â¬5.00 standaard).
     """
     today = now_utc().strftime("%Y-%m-%d")
     work  = real_df[
@@ -1602,7 +1645,7 @@ def get_blacklist_cooldown_coins() -> Dict[str, List[Dict]]:
     if not table_exists("experience_trades"):
         return {"blacklist":[], "cooldown":[], "whitelist":[]}
 
-    # Blacklist — slechte performers
+    # Blacklist â slechte performers
     df_bl = run_query("""
     SELECT COALESCE(coin,'?') AS coin, COUNT(*) AS n,
            COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
@@ -1616,7 +1659,7 @@ def get_blacklist_cooldown_coins() -> Dict[str, List[Dict]]:
     ORDER BY win_rate ASC LIMIT 20
     """)
 
-    # Cooldown — verlies in laatste 24u
+    # Cooldown â verlies in laatste 24u
     df_cd = run_query("""
     SELECT DISTINCT ON (coin) coin,
            MAX(exit_time) AS last_loss,
@@ -1631,7 +1674,7 @@ def get_blacklist_cooldown_coins() -> Dict[str, List[Dict]]:
     LIMIT 30
     """)
 
-    # Whitelist — goede performers
+    # Whitelist â goede performers
     df_wl = run_query("""
     SELECT COALESCE(coin,'?') AS coin, COUNT(*) AS n,
            COUNT(*) FILTER (WHERE UPPER(outcome)='WIN') AS wins,
@@ -1846,12 +1889,12 @@ def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float
 # NIEUWE GRAFIEKEN
 # ============================================================
 def chart_drawdown(df: pd.DataFrame, title: str = "Drawdown") -> go.Figure:
-    """Drawdown grafiek — toont wanneer en hoe diep de drawdowns waren."""
+    """Drawdown grafiek â toont wanneer en hoe diep de drawdowns waren."""
     if df.empty:
-        return empty_fig("Drawdown — wacht op eerste trade")
+        return empty_fig("Drawdown â wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Drawdown — wacht op WIN/LOSS data")
+        return empty_fig("Drawdown â wacht op WIN/LOSS data")
     if "_datetime_raw" in work.columns:
         work = work.sort_values("_datetime_raw")
     pnl  = pd.to_numeric(work["pnl_r"], errors="coerce").fillna(0.0)
@@ -1879,7 +1922,7 @@ def chart_rolling_winrate(df: pd.DataFrame, window: int = 20) -> go.Figure:
     """Rolling win rate trend grafiek."""
     rwr = get_rolling_winrate(df, window)
     if rwr.empty:
-        return empty_fig(f"Rolling Win Rate — min {window} trades nodig")
+        return empty_fig(f"Rolling Win Rate â min {window} trades nodig")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=rwr["_datetime_raw"],
@@ -1908,7 +1951,7 @@ def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
     """Trade frequentie per dag."""
     freq = get_trade_frequency(df)
     if freq.empty:
-        return empty_fig("Frequentie — wacht op eerste trade")
+        return empty_fig("Frequentie â wacht op eerste trade")
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=freq["day"],
@@ -1935,7 +1978,7 @@ def chart_trade_frequency(df: pd.DataFrame) -> go.Figure:
 
 
 def chart_btc_correlation_bar(df: pd.DataFrame) -> go.Figure:
-    """Win rate per marktregime — BTC correlatie grafiek."""
+    """Win rate per marktregime â BTC correlatie grafiek."""
     corr = get_btc_correlation(df)
     if corr.empty:
         return empty_fig("Geen regime data")
@@ -1971,7 +2014,7 @@ def chart_hold_time_bar(df: pd.DataFrame) -> go.Figure:
 
 
 def chart_pnl_histogram(df: pd.DataFrame) -> go.Figure:
-    """P&L histogram — verdeling van trade uitkomsten in euro."""
+    """P&L histogram â verdeling van trade uitkomsten in euro."""
     if df.empty:
         return empty_fig("Geen data")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
@@ -2049,39 +2092,39 @@ def render_filters(df: pd.DataFrame, include_trade_type: bool = True) -> pd.Data
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
         st.session_state.search_text = st.text_input(
-            "🔍 Zoeken", value=st.session_state.search_text,
+            "ð Zoeken", value=st.session_state.search_text,
             placeholder="coin, setup, id...",
         )
     with c2:
         opts = ["ALLES","7D","30D","90D","180D","365D"]
         idx  = opts.index(st.session_state.global_days_filter) if st.session_state.global_days_filter in opts else 0
-        st.session_state.global_days_filter = st.selectbox("📅 Periode", opts, index=idx)
+        st.session_state.global_days_filter = st.selectbox("ð Periode", opts, index=idx)
     with c3:
         setups = ["ALLES"] + sorted(df["setup_type"].dropna().astype(str).unique().tolist()) if not df.empty else ["ALLES"]
         cur = st.session_state.global_setup_filter if st.session_state.global_setup_filter in setups else "ALLES"
-        st.session_state.global_setup_filter = st.selectbox("⚡ Setup", setups, index=setups.index(cur))
+        st.session_state.global_setup_filter = st.selectbox("â¡ Setup", setups, index=setups.index(cur))
     with c4:
         symbols = ["ALLES"] + sorted(df["symbol"].dropna().astype(str).unique().tolist()) if not df.empty else ["ALLES"]
         cur = st.session_state.global_symbol_filter if st.session_state.global_symbol_filter in symbols else "ALLES"
-        st.session_state.global_symbol_filter = st.selectbox("🪙 Coin", symbols, index=symbols.index(cur))
+        st.session_state.global_symbol_filter = st.selectbox("ðª Coin", symbols, index=symbols.index(cur))
 
     c5, c6, c7, c8 = st.columns(4, gap="small")
     with c5:
         regimes = ["ALLES"] + sorted(df["regime"].dropna().astype(str).unique().tolist()) if not df.empty else ["ALLES"]
         cur = st.session_state.global_regime_filter if st.session_state.global_regime_filter in regimes else "ALLES"
-        st.session_state.global_regime_filter = st.selectbox("🌍 Regime", regimes, index=regimes.index(cur))
+        st.session_state.global_regime_filter = st.selectbox("ð Regime", regimes, index=regimes.index(cur))
     with c6:
         outcomes = ["ALLES","WIN","LOSS"]
         cur = st.session_state.global_outcome_filter if st.session_state.global_outcome_filter in outcomes else "ALLES"
-        st.session_state.global_outcome_filter = st.selectbox("🎯 Uitkomst", outcomes, index=outcomes.index(cur))
+        st.session_state.global_outcome_filter = st.selectbox("ð¯ Uitkomst", outcomes, index=outcomes.index(cur))
     with c7:
         if include_trade_type:
             ttypes = ["ALLES","REAL","SIM","SHADOW"]
             cur = st.session_state.global_trade_type_filter if st.session_state.global_trade_type_filter in ttypes else "ALLES"
-            st.session_state.global_trade_type_filter = st.selectbox("📊 Type", ttypes, index=ttypes.index(cur))
+            st.session_state.global_trade_type_filter = st.selectbox("ð Type", ttypes, index=ttypes.index(cur))
     with c8:
         st.markdown('<div class="tiny-button" style="margin-top:24px;">', unsafe_allow_html=True)
-        if st.button("🔄 Reset", key="filter_reset_btn", use_container_width=True):
+        if st.button("ð Reset", key="filter_reset_btn", use_container_width=True):
             for k in ["search_text","global_days_filter","global_trade_type_filter",
                       "global_setup_filter","global_regime_filter","global_outcome_filter","global_symbol_filter"]:
                 st.session_state[k] = SESSION_DEFAULTS.get(k, "ALLES")
@@ -2103,7 +2146,7 @@ def render_filters(df: pd.DataFrame, include_trade_type: bool = True) -> pd.Data
 
 
 # ============================================================
-# BITVAVO API — met correcte HMAC signing
+# BITVAVO API â met correcte HMAC signing
 # ============================================================
 def bitvavo_request(method: str, path: str, body: str = "") -> Any:
     if not API_KEY or not API_SECRET:
@@ -2235,13 +2278,13 @@ def prepare_assets_df(snapshot: dict) -> pd.DataFrame:
 # ============================================================
 def empty_fig(msg: str = "Geen data", height: int = 300) -> go.Figure:
     """
-    Lege grafiek — GEEN kleur, GEEN glow, puur neutraal.
+    Lege grafiek â GEEN kleur, GEEN glow, puur neutraal.
     Kleur verschijnt pas zodra echte trade data beschikbaar is.
     """
     fig = go.Figure()
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0.97)",
         height=height,
         margin=dict(l=16, r=16, t=30, b=16),
         annotations=[dict(
@@ -2263,8 +2306,8 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0.95)",
-        font=dict(color=TXT_MAIN, family="Courier New, monospace", size=11),
+        plot_bgcolor="rgba(0,0,0,0.97)",
+        font=dict(color="#00ff41", family="Courier New, monospace", size=11),
         height=height,
         margin=dict(l=22, r=18, t=42, b=22),
         title=dict(
@@ -2280,13 +2323,13 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
             gridcolor="rgba(0,255,65,0.06)",
             zerolinecolor="rgba(0,255,65,0.20)",
             linecolor="rgba(0,229,255,0.10)",
-            tickfont=dict(color=TXT_DIM, size=10),
+            tickfont=dict(color="#00aa28", size=10),
         ),
         yaxis=dict(
             gridcolor="rgba(0,255,65,0.06)",
             zerolinecolor="rgba(0,255,65,0.20)",
             linecolor="rgba(0,229,255,0.10)",
-            tickfont=dict(color=TXT_DIM, size=10),
+            tickfont=dict(color="#00aa28", size=10),
             autorange=True,
         ),
     )
@@ -2295,10 +2338,10 @@ def style_fig(fig: go.Figure, height: int = 320, title: str = "") -> go.Figure:
 
 def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figure:
     if df.empty:
-        return empty_fig("Equity Curve — wacht op eerste trade")
+        return empty_fig("Equity Curve â wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Equity Curve — wacht op WIN/LOSS data")
+        return empty_fig("Equity Curve â wacht op WIN/LOSS data")
     if "_datetime_raw" in work.columns:
         work = work.sort_values("_datetime_raw")
     cum_r   = pd.to_numeric(work["pnl_r"],   errors="coerce").fillna(0.0).cumsum()
@@ -2333,10 +2376,10 @@ def chart_equity_curve(df: pd.DataFrame, title: str = "Equity Curve") -> go.Figu
 
 def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure:
     if df.empty:
-        return empty_fig("Win/Loss — wacht op eerste trade")
+        return empty_fig("Win/Loss â wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Win/Loss — wacht op WIN/LOSS data")
+        return empty_fig("Win/Loss â wacht op WIN/LOSS data")
     counts = work["outcome"].value_counts()
     w = safe_int(counts.get("WIN", 0))
     l = safe_int(counts.get("LOSS", 0))
@@ -2349,7 +2392,7 @@ def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure
         ),
         text=[f"{w}", f"{l}"],
         textposition="outside",
-        textfont=dict(color=TXT_MAIN, size=13),
+        textfont=dict(color="#00ff41", size=13),
         hovertemplate="%{x}: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 280, title)
@@ -2357,10 +2400,10 @@ def chart_win_loss_bar(df: pd.DataFrame, title: str = "Win / Loss") -> go.Figure
 
 def chart_setup_perf(df: pd.DataFrame, title: str = "Setup Performance") -> go.Figure:
     if df.empty:
-        return empty_fig("Setup Performance — wacht op eerste trade")
+        return empty_fig("Setup Performance â wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Setup Performance — wacht op WIN/LOSS data")
+        return empty_fig("Setup Performance â wacht op WIN/LOSS data")
     grouped = (
         work.groupby("setup_type", dropna=False)
         .agg(n=("trade_id","count"), avg_r=("pnl_r","mean"))
@@ -2382,10 +2425,10 @@ def chart_setup_perf(df: pd.DataFrame, title: str = "Setup Performance") -> go.F
 
 def chart_daily_r(df: pd.DataFrame, title: str = "Dagresultaten") -> go.Figure:
     if df.empty:
-        return empty_fig("Dagresultaten — wacht op eerste trade")
+        return empty_fig("Dagresultaten â wacht op eerste trade")
     work = df[df["outcome"].isin(["WIN","LOSS"])].copy()
     if work.empty:
-        return empty_fig("Dagresultaten — wacht op WIN/LOSS data")
+        return empty_fig("Dagresultaten â wacht op WIN/LOSS data")
     grouped = work.groupby("day", dropna=False)["pnl_r"].sum().reset_index()
     colors  = ["#00ff41" if v >= 0 else "#ff1133" for v in grouped["pnl_r"]]
     fig = go.Figure(go.Bar(
@@ -2401,7 +2444,7 @@ def chart_daily_r(df: pd.DataFrame, title: str = "Dagresultaten") -> go.Figure:
 
 def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.Figure:
     if df.empty:
-        return empty_fig("Regime Verdeling — wacht op markt data")
+        return empty_fig("Regime Verdeling â wacht op markt data")
     counts = df["regime"].value_counts().reset_index()
     counts.columns = ["regime","n"]
     colors = [COLORS_BY_REGIME.get(str(r).upper(), C_CYAN) for r in counts["regime"]]
@@ -2411,7 +2454,7 @@ def chart_regime_dist(df: pd.DataFrame, title: str = "Regime Verdeling") -> go.F
         marker=dict(color=colors, line=dict(width=0)),
         text=counts["n"],
         textposition="outside",
-        textfont=dict(color=TXT_MAIN, size=12),
+        textfont=dict(color="#00ff41", size=12),
         hovertemplate="Regime: <b>%{x}</b><br>Coins: <b>%{y}</b><extra></extra>",
     ))
     return style_fig(fig, 260, title)
@@ -2428,55 +2471,55 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
     kleur_loss = "#ff1133" if has_data and loss > 0   else "#3a6a3a"
     track_color = "rgba(0,229,255,0.04)"
 
-    # ── Kleur systeem — intensiteit schaalt met win rate ──────────
-    # 0%       → volledig grijs, geen kleur
-    # 0.1–5%   → zeer subtiele gedempte kleur (nauwelijks zichtbaar)
-    # 5–30%    → zwakke gedempte kleur
-    # 30–50%   → matige kleur (oranje/geel als waarschuwing)
-    # 50–60%   → groene kleur
-    # 60%+     → volle neon groene kleur
+    # ââ Kleur systeem â intensiteit schaalt met win rate ââââââââââ
+    # 0%       â volledig grijs, geen kleur
+    # 0.1â5%   â zeer subtiele gedempte kleur (nauwelijks zichtbaar)
+    # 5â30%    â zwakke gedempte kleur
+    # 30â50%   â matige kleur (oranje/geel als waarschuwing)
+    # 50â60%   â groene kleur
+    # 60%+     â volle neon groene kleur
     #
     # Kleur alpha schaalt ook: bij lage win rate zijn kleuren transparant
     if not has_data:
-        # Geen trades → volledig neutraal
+        # Geen trades â volledig neutraal
         kleur_win       = TXT_DIM
         kleur_loss      = "rgba(0,229,255,0.04)"
         win_kleur_html  = TXT_DIM
     elif win < 0.5:
-        # Vrijwel 0% → bijna grijs, alleen een heel klein zwak signaal
+        # Vrijwel 0% â bijna grijs, alleen een heel klein zwak signaal
         kleur_win       = "rgba(255,17,51,0.15)"
         kleur_loss      = "rgba(74,85,104,0.40)"
         win_kleur_html  = TXT_DIM
     elif win < 5:
-        # Heel laag → gedempte rode tint, tekst grijs
+        # Heel laag â gedempte rode tint, tekst grijs
         kleur_win       = "rgba(255,17,51,0.25)"
         kleur_loss      = "rgba(74,85,104,0.50)"
         win_kleur_html  = TXT_DIM
     elif win < 30:
-        # Laag → zwakke rode tint
-        alpha = 0.25 + (win / 30) * 0.35   # 0.25 → 0.60
+        # Laag â zwakke rode tint
+        alpha = 0.25 + (win / 30) * 0.35   # 0.25 â 0.60
         kleur_win       = f"rgba(255,17,51,{alpha:.2f})"
         kleur_loss      = f"rgba(255,17,51,{min(alpha + 0.15, 0.75):.2f})"
         win_kleur_html  = C_LOSS
     elif win < 50:
-        # Matig → groen voor win boog, rood voor loss
+        # Matig â groen voor win boog, rood voor loss
         kleur_win       = "rgba(0,255,65,0.70)"
         kleur_loss      = "rgba(255,17,51,0.50)"
         win_kleur_html  = C_WARN
     elif win < 60:
-        # Boven 50% → groen maar nog niet vol
+        # Boven 50% â groen maar nog niet vol
         kleur_win       = "rgba(0,255,65,0.70)"
         kleur_loss      = "rgba(255,17,51,0.25)"
         win_kleur_html  = C_WIN
     else:
-        # 60%+ → volle neon groene kleur
+        # 60%+ â volle neon groene kleur
         kleur_win       = C_WIN
         kleur_loss      = "rgba(255,17,51,0.20)"
         win_kleur_html  = C_WIN
 
     fig = go.Figure()
 
-    # Track ring (achtergrond) — altijd zichtbaar
+    # Track ring (achtergrond) â altijd zichtbaar
     fig.add_trace(go.Pie(
         values=[100],
         hole=0.78,
@@ -2497,32 +2540,32 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
         rotation=270,
         textinfo="none",
         marker=dict(
-            colors=[kleur_win, kleur_loss],
+            colors=["#00ff41", "#ff1133"],
             line=dict(width=0),
         ),
         showlegend=False,
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0.97)",
         height=200,
         margin=dict(l=0, r=0, t=0, b=0),
         showlegend=False,
         annotations=[
             dict(
-                text=f"<b>{win:.1f}%</b>" if has_data else "<b>–</b>",
+                text=f"<b>{win:.1f}%</b>" if has_data else "<b>â</b>",
                 x=0.5, y=0.58, showarrow=False,
                 font=dict(color=win_kleur_html, size=22, family="Courier New, monospace"),
             ),
             dict(
                 text=f"<b>{title}</b>",
                 x=0.5, y=0.42, showarrow=False,
-                font=dict(color=TXT_MAIN, size=13, family="Courier New, monospace"),
+                font=dict(color="#00ff41", size=13, family="Courier New, monospace"),
             ),
             dict(
                 text=f"{n_wins}W / {n_losses}L" if has_data else "geen data",
                 x=0.5, y=0.27, showarrow=False,
-                font=dict(color=TXT_DIM, size=11, family="Courier New, monospace"),
+                font=dict(color="#00aa28", size=11, family="Courier New, monospace"),
             ),
         ],
     )
@@ -2531,10 +2574,10 @@ def chart_donut(win_pct: float, net_eur: float, title: str = "Win Rate", n_trade
 
 def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
     if assets_df.empty:
-        return empty_fig("Portfolio — wacht op Bitvavo data")
+        return empty_fig("Portfolio â wacht op Bitvavo data")
     work = assets_df[assets_df["eur_value"] > 0].copy().head(9)
     if work.empty:
-        return empty_fig("Portfolio — geen assets met waarde")
+        return empty_fig("Portfolio â geen assets met waarde")
     PORTFOLIO_COLORS = [C_CYAN, C_GREEN, C_PURPLE, C_YELLOW, C_ORANGE, C_BLUE,
                         "#00e5ff", "#00e5ff", "#00e5ff"]
     fig = go.Figure(go.Pie(
@@ -2546,19 +2589,19 @@ def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
             colors=PORTFOLIO_COLORS[:len(work)],
             line=dict(width=0),
         ),
-        textfont=dict(color=TXT_MAIN, family="Courier New, monospace", size=11),
-        hovertemplate="<b>%{label}</b><br>€%{value:.2f}<br>%{percent}<extra></extra>",
+        textfont=dict(color="#00ff41", family="Courier New, monospace", size=11),
+        hovertemplate="<b>%{label}</b><br>â¬%{value:.2f}<br>%{percent}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TXT_MAIN, family="Courier New, monospace"),
+        plot_bgcolor="rgba(0,0,0,0.97)",
+        font=dict(color="#00ff41", family="Courier New, monospace"),
         margin=dict(l=16, r=16, t=40, b=16),
         height=320,
         showlegend=True,
         legend=dict(
             orientation="h", y=-0.08, x=0.5, xanchor="center",
-            font=dict(color=TXT_DIM, size=10),
+            font=dict(color="#00aa28", size=10),
             bgcolor="rgba(0,0,0,0)",
         ),
     )
@@ -2567,7 +2610,7 @@ def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
 
 def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
     if df.empty:
-        return empty_fig("Scoreboard — wacht op first trades")
+        return empty_fig("Scoreboard â wacht op first trades")
     top = df.head(12).copy()
     top["label"] = top["setup_type"].astype(str) + " / " + top["market_regime"].astype(str)
     colors = ["#00ff41" if v >= 60 else "#00e5ff" if v >= 45 else "#ff1133" for v in top["win_rate"]]
@@ -2577,7 +2620,7 @@ def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         text=top["n"].astype(int),
         textposition="outside",
-        textfont=dict(color=TXT_MAIN, size=11),
+        textfont=dict(color="#00ff41", size=11),
         hovertemplate="Setup/Regime: <b>%{x}</b><br>Win rate: <b>%{y:.1f}%%</b><br>N: %{text}<extra></extra>",
     ))
     fig.add_hline(
@@ -2591,7 +2634,7 @@ def chart_scoreboard_bar(df: pd.DataFrame) -> go.Figure:
 
 def chart_pending_scores(df: pd.DataFrame) -> go.Figure:
     if df.empty:
-        return empty_fig("Signal Scores — geen actieve signalen")
+        return empty_fig("Signal Scores â geen actieve signalen")
     fig = go.Figure()
     min_s = MIN_SCORE_TO_TRADE
     colors = ["#00ff41" if s >= min_s else "#00e5ff" if s >= min_s - 10 else "#ff1133" for s in df["score"]]
@@ -2601,7 +2644,7 @@ def chart_pending_scores(df: pd.DataFrame) -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         text=df["score"],
         textposition="outside",
-        textfont=dict(color=TXT_MAIN, size=12),
+        textfont=dict(color="#00ff41", size=12),
         hovertemplate="Coin: <b>%{x}</b><br>Score: <b>%{y}</b><extra></extra>",
     ))
     fig.add_hline(
@@ -2664,7 +2707,7 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
     fig.update_layout(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0.97)",
         height=320,
         margin=dict(l=8,r=8,t=36,b=8),
         title=dict(text=f"{safe_str(row.get('symbol'))} Trade Detail", font=dict(size=13,color="#fff")),
@@ -2675,7 +2718,7 @@ def chart_trade_detail(row: pd.Series) -> go.Figure:
 
 
 # ============================================================
-# CLAUDE AI — identiek aan alle andere bestanden
+# CLAUDE AI â identiek aan alle andere bestanden
 # ============================================================
 def call_claude(prompt: str, max_tokens: int = 400) -> str:
     if not ANTHROPIC_API_KEY:
@@ -2707,9 +2750,9 @@ def call_claude(prompt: str, max_tokens: int = 400) -> str:
 def claude_btn(label: str, prompt: str, max_tokens: int = 400, key: str = "") -> None:
     """Claude AI analyse knop in het dashboard."""
     if not ANTHROPIC_API_KEY:
-        st.caption("⚠️ ANTHROPIC_API_KEY niet ingesteld")
+        st.caption("â ï¸ ANTHROPIC_API_KEY niet ingesteld")
         return
-    if st.button(f"🧠 {label}", key=key or f"claude_{label[:20]}", use_container_width=True):
+    if st.button(f"ð§  {label}", key=key or f"claude_{label[:20]}", use_container_width=True):
         with st.spinner("Claude analyseert..."):
             result = call_claude(prompt, max_tokens)
             if result:
@@ -2719,7 +2762,7 @@ def claude_btn(label: str, prompt: str, max_tokens: int = 400, key: str = "") ->
 
 
 # ============================================================
-# ALARM BANNER — toont actieve alarmen boven elke pagina
+# ALARM BANNER â toont actieve alarmen boven elke pagina
 # ============================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def _load_actieve_alarmen() -> List[Dict]:
@@ -2750,15 +2793,15 @@ def render_alarm_banner() -> None:
 
     if kritiek:
         kleur = "#ff1144"
-        label = f"🔴 {len(kritiek)} KRITIEK ALARM{'EN' if len(kritiek)>1 else ''}"
+        label = f"ð´ {len(kritiek)} KRITIEK ALARM{'EN' if len(kritiek)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in kritiek[:3])
     elif hoog:
         kleur = "#00e5ff"
-        label = f"🟡 {len(hoog)} HOOG ALARM{'EN' if len(hoog)>1 else ''}"
+        label = f"ð¡ {len(hoog)} HOOG ALARM{'EN' if len(hoog)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in hoog[:3])
     else:
         kleur = "#0a1020"
-        label = f"⚪ {len(alarmen)} melding(en)"
+        label = f"âª {len(alarmen)} melding(en)"
         tekst = alarmen[0].get("omschrijving","")
 
     st.markdown(
@@ -2768,14 +2811,14 @@ def render_alarm_banner() -> None:
             <span style="color:rgba(255,255,255,0.85);overflow:hidden;
                 text-overflow:ellipsis;white-space:nowrap;">{tekst}</span>
             <span style="color:rgba(255,255,255,0.5);font-size:11px;
-                white-space:nowrap;margin-left:auto;">→ Monitor pagina voor details</span>
+                white-space:nowrap;margin-left:auto;">â Monitor pagina voor details</span>
         </div>""",
         unsafe_allow_html=True,
     )
 
 
 # ============================================================
-# DATA LOADERS — coach tabellen
+# DATA LOADERS â coach tabellen
 # ============================================================
 @st.cache_data(ttl=120, show_spinner=False)
 def load_coach_dagboek(n: int = 20) -> pd.DataFrame:
@@ -2861,7 +2904,7 @@ def load_coach_bestand_checksums() -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def load_trade_flow_7d() -> Dict:
-    """Laadt trade flow statistieken: signaal → live → gesloten."""
+    """Laadt trade flow statistieken: signaal â live â gesloten."""
     def sc(sql, default=0):
         v = run_scalar(sql)
         return int(v) if v is not None else default
@@ -2905,10 +2948,10 @@ def load_systeem_audit_score() -> int:
 
 
 # ============================================================
-# NIEUWE CHARTS — R-distributie, Score correlatie, Fee, Config
+# NIEUWE CHARTS â R-distributie, Score correlatie, Fee, Config
 # ============================================================
 def chart_r_distributie(df: pd.DataFrame) -> go.Figure:
-    """Histogram van R-multiples — toont of de bot consistent 2R+ haalt."""
+    """Histogram van R-multiples â toont of de bot consistent 2R+ haalt."""
     r_col = next((c for c in ["pnl_r","result_r"] if c in df.columns), None)
     if not r_col or df.empty:
         return empty_fig("Geen R-data")
@@ -2933,7 +2976,7 @@ def chart_r_distributie(df: pd.DataFrame) -> go.Figure:
 
 
 def chart_score_winrate_correlatie(df: pd.DataFrame) -> go.Figure:
-    """Toont win rate per score bucket — correleert score met uitkomst?"""
+    """Toont win rate per score bucket â correleert score met uitkomst?"""
     if df.empty or "score" not in df.columns or "outcome" not in df.columns:
         return empty_fig("Geen score data")
 
@@ -2965,11 +3008,11 @@ def chart_score_winrate_correlatie(df: pd.DataFrame) -> go.Figure:
     ))
     fig.add_hline(y=50, line_dash="dash", line_color="#7f8c8d", line_width=1,
                   annotation_text="50%")
-    return style_fig(fig, height=300, title="Score → Win Rate Correlatie")
+    return style_fig(fig, height=300, title="Score â Win Rate Correlatie")
 
 
 def chart_fee_impact(df: pd.DataFrame) -> go.Figure:
-    """Gestapelde bar: bruto winst vs fees vs netto — per maand."""
+    """Gestapelde bar: bruto winst vs fees vs netto â per maand."""
     if df.empty:
         return empty_fig("Geen data")
 
@@ -3005,7 +3048,7 @@ def chart_fee_impact(df: pd.DataFrame) -> go.Figure:
 
 
 def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
-    """Timeline van parameter wijzigingen — wanneer werd wat aangepast?"""
+    """Timeline van parameter wijzigingen â wanneer werd wat aangepast?"""
     if config_df.empty:
         return empty_fig("Geen config wijzigingen")
 
@@ -3027,12 +3070,12 @@ def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
             x=[ts], y=[param],
             mode="markers+text",
             marker=dict(size=12, color=kleur, symbol="diamond"),
-            text=[f"{oud}→{nieuw}"],
+            text=[f"{oud}â{nieuw}"],
             textposition="top center",
             textfont=dict(size=9),
             name=param,
             showlegend=False,
-            hovertemplate=f"<b>{param}</b><br>{oud} → {nieuw}<br>%{{x}}<extra></extra>",
+            hovertemplate=f"<b>{param}</b><br>{oud} â {nieuw}<br>%{{x}}<extra></extra>",
         ))
 
     fig.update_layout(showlegend=False)
@@ -3040,7 +3083,7 @@ def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
 
 
 def chart_trade_flow_funnel(flow: Dict) -> go.Figure:
-    """Funnel chart: signalen → goedgekeurd → live → gesloten."""
+    """Funnel chart: signalen â goedgekeurd â live â gesloten."""
     labels = ["Signalen", "Goedgekeurd", "Live trades", "Gesloten"]
     values = [
         flow.get("signalen", 0),
@@ -3088,25 +3131,25 @@ def chart_audit_gauge(score: int) -> go.Figure:
 
 # ============================================================
 # PAGINA: COACH MONITOR
-# Dashboard van alle coach activiteit — dagboek, events, config
+# Dashboard van alle coach activiteit â dagboek, events, config
 # ============================================================
 def render_coach_monitor_page() -> None:
     render_alarm_banner()
-    st.markdown('<div class="section-title">📋 Coach Monitor</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð Coach Monitor</div>', unsafe_allow_html=True)
     st.caption("Volledig overzicht van alle coach activiteit, beslissingen en wijzigingen.")
 
-    # ── TABS ─────────────────────────────────────────────────
+    # ââ TABS âââââââââââââââââââââââââââââââââââââââââââââââââ
     tab_dag, tab_events, tab_config, tab_anom, tab_regime, tab_files, tab_analyses = st.tabs([
-        "📖 Dagboek", "⚡ Events", "⚙️ Config Log", "🔬 Anomalieën",
-        "🔀 Regime Log", "📁 Bestanden", "🧠 Analyses",
+        "ð Dagboek", "â¡ Events", "âï¸ Config Log", "ð¬ AnomalieÃ«n",
+        "ð Regime Log", "ð Bestanden", "ð§  Analyses",
     ])
 
-    # ── DAGBOEK ──────────────────────────────────────────────
+    # ââ DAGBOEK ââââââââââââââââââââââââââââââââââââââââââââââ
     with tab_dag:
-        st.markdown("**Coach run history** — elke analyse run met samenvatting en beslissingen.")
+        st.markdown("**Coach run history** â elke analyse run met samenvatting en beslissingen.")
         df = load_coach_dagboek(30)
         if df.empty:
-            st.info("Nog geen dagboek entries — coach heeft nog niet gedraaid.")
+            st.info("Nog geen dagboek entries â coach heeft nog niet gedraaid.")
         else:
             for _, row in df.iterrows():
                 datum     = str(row.get("datum",""))
@@ -3114,16 +3157,16 @@ def render_coach_monitor_page() -> None:
                 besliss   = str(row.get("beslissingen",""))
                 anom      = str(row.get("anomalieen",""))
                 duur      = float(row.get("run_duur_sec",0) or 0)
-                with st.expander(f"📅 {datum} | {sam} | {duur:.0f}s", expanded=False):
+                with st.expander(f"ð {datum} | {sam} | {duur:.0f}s", expanded=False):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown("**Beslissingen:**")
-                        st.text(besliss if besliss and besliss != "Geen aanpassingen" else "— geen —")
+                        st.text(besliss if besliss and besliss != "Geen aanpassingen" else "â geen â")
                     with col2:
-                        st.markdown("**Anomalieën:**")
-                        st.text(anom if anom and anom != "Geen" else "— geen —")
+                        st.markdown("**AnomalieÃ«n:**")
+                        st.text(anom if anom and anom != "Geen" else "â geen â")
 
-    # ── EVENTS ───────────────────────────────────────────────
+    # ââ EVENTS âââââââââââââââââââââââââââââââââââââââââââââââ
     with tab_events:
         col_u, col_f = st.columns([3,1])
         with col_u:
@@ -3135,7 +3178,7 @@ def render_coach_monitor_page() -> None:
             st.info("Geen events in deze periode.")
         else:
             ernst_kleuren = {
-                "KRITIEK": "🔴", "HOOG": "🟡", "MEDIUM": "🟠", "INFO": "⚪",
+                "KRITIEK": "ð´", "HOOG": "ð¡", "MEDIUM": "ð ", "INFO": "âª",
             }
             # Filter op ernst
             with col_f:
@@ -3150,7 +3193,7 @@ def render_coach_monitor_page() -> None:
                 etype  = str(row.get("event_type",""))
                 omschr = str(row.get("omschrijving",""))
                 ernst  = str(row.get("ernst","INFO"))
-                emoji  = ernst_kleuren.get(ernst,"⚪")
+                emoji  = ernst_kleuren.get(ernst,"âª")
                 st.markdown(
                     f'<div style="font-size:12px;padding:4px 8px;border-left:3px solid #333;margin:2px 0;">'
                     f'{emoji} <b style="color:#aaa;">{ts}</b> '
@@ -3161,9 +3204,9 @@ def render_coach_monitor_page() -> None:
                     unsafe_allow_html=True,
                 )
 
-    # ── CONFIG LOG ───────────────────────────────────────────
+    # ââ CONFIG LOG âââââââââââââââââââââââââââââââââââââââââââ
     with tab_config:
-        st.markdown("**Alle parameter wijzigingen** — wanneer, wat, door wie.")
+        st.markdown("**Alle parameter wijzigingen** â wanneer, wat, door wie.")
         config_df = load_coach_config_log(30)
         if config_df.empty:
             st.info("Nog geen config wijzigingen gelogd.")
@@ -3189,13 +3232,13 @@ def render_coach_monitor_page() -> None:
             )
 
             csv = config_df.to_csv(index=False)
-            st.download_button("⬇️ Download config log", csv, "config_log.csv", "text/csv")
+            st.download_button("â¬ï¸ Download config log", csv, "config_log.csv", "text/csv")
 
-    # ── ANOMALIEËN ───────────────────────────────────────────
+    # ââ ANOMALIEÃN âââââââââââââââââââââââââââââââââââââââââââ
     with tab_anom:
         anom_df = load_coach_anomalieen(14)
         if anom_df.empty:
-            st.success("✅ Geen anomalieën gedetecteerd in de afgelopen 14 dagen.")
+            st.success("â Geen anomalieÃ«n gedetecteerd in de afgelopen 14 dagen.")
         else:
             open_anom = anom_df[anom_df.get("opgelost",False) == False] if "opgelost" in anom_df.columns else anom_df
             opgelost  = anom_df[anom_df.get("opgelost",False) == True]  if "opgelost" in anom_df.columns else pd.DataFrame()
@@ -3205,17 +3248,17 @@ def render_coach_monitor_page() -> None:
             a2.metric("Open", len(open_anom), delta=f"-{len(opgelost)} opgelost" if not opgelost.empty else None)
             a3.metric("Kritiek", len(anom_df[anom_df.get("ernst","") == "KRITIEK"]) if "ernst" in anom_df.columns else 0)
 
-            ernst_map = {"KRITIEK":"🔴","HOOG":"🟡","MEDIUM":"🟠","LAAG":"⚪"}
+            ernst_map = {"KRITIEK":"ð´","HOOG":"ð¡","MEDIUM":"ð ","LAAG":"âª"}
             for _, row in anom_df.iterrows():
                 ernst  = str(row.get("ernst","MEDIUM"))
-                emoji  = ernst_map.get(ernst,"⚪")
+                emoji  = ernst_map.get(ernst,"âª")
                 type_  = str(row.get("type",""))
                 omschr = str(row.get("omschrijving",""))
                 waarde = float(row.get("waarde",0) or 0)
                 drempel= float(row.get("drempel",0) or 0)
                 opg    = bool(row.get("opgelost",False))
                 ts     = str(row.get("tijdstip",""))[:16]
-                status = "✅ Opgelost" if opg else "🔴 Open"
+                status = "â Opgelost" if opg else "ð´ Open"
 
                 st.markdown(
                     f'<div style="background:#1a1a2e;border-left:4px solid '
@@ -3228,7 +3271,7 @@ def render_coach_monitor_page() -> None:
                     unsafe_allow_html=True,
                 )
 
-    # ── REGIME LOG ───────────────────────────────────────────
+    # ââ REGIME LOG âââââââââââââââââââââââââââââââââââââââââââ
     with tab_regime:
         regime_df = load_coach_regime_log(60)
         if regime_df.empty:
@@ -3247,27 +3290,27 @@ def render_coach_monitor_page() -> None:
                     f'border-bottom:1px solid #222;font-size:13px;">'
                     f'<span style="color:#888;width:110px;">{ts}</span>'
                     f'<span style="color:{kleur_oud};font-weight:bold;">{oud}</span>'
-                    f'<span style="color:#555;">→</span>'
+                    f'<span style="color:#555;">â</span>'
                     f'<span style="color:{kleur_nieuw};font-weight:bold;">{nieuw}</span>'
-                    f'<span style="color:#888;margin-left:auto;">BTC: €{btc:,.0f}</span>'
+                    f'<span style="color:#888;margin-left:auto;">BTC: â¬{btc:,.0f}</span>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
 
-    # ── BESTANDEN ────────────────────────────────────────────
+    # ââ BESTANDEN ââââââââââââââââââââââââââââââââââââââââââââ
     with tab_files:
         files_df = load_coach_bestand_checksums()
         if files_df.empty:
-            st.info("Nog geen bestand checksums — coach heeft nog niet gedraaid.")
+            st.info("Nog geen bestand checksums â coach heeft nog niet gedraaid.")
         else:
-            st.markdown("**Code bestand versies** — coach detecteert automatisch deploys.")
+            st.markdown("**Code bestand versies** â coach detecteert automatisch deploys.")
             for _, row in files_df.iterrows():
                 naam     = str(row.get("bestandsnaam",""))
                 regels   = int(row.get("regels",0) or 0)
                 checksum = str(row.get("checksum",""))[:8]
                 bijgew   = str(row.get("bijgewerkt",""))[:16]
                 verand   = bool(row.get("verandering_gedetecteerd",False))
-                badge    = '🟡 Gewijzigd' if verand else '✅ Ongewijzigd'
+                badge    = 'ð¡ Gewijzigd' if verand else 'â Ongewijzigd'
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:12px;padding:6px 0;'
                     f'border-bottom:1px solid #222;font-size:13px;">'
@@ -3280,7 +3323,7 @@ def render_coach_monitor_page() -> None:
                     unsafe_allow_html=True,
                 )
 
-    # ── ANALYSES ────────────────────────────────────────────
+    # ââ ANALYSES ââââââââââââââââââââââââââââââââââââââââââââ
     with tab_analyses:
         an_df = load_coach_analyses(10)
         if an_df.empty:
@@ -3295,7 +3338,7 @@ def render_coach_monitor_page() -> None:
                 aanp  = str(row.get("aanpassingen",""))
                 advies= str(row.get("claude_advies",""))
                 with st.expander(
-                    f"📅 {datum} | {n} trades | {wr:.1f}% WR | PF {pf:.2f} | {dagen}d",
+                    f"ð {datum} | {n} trades | {wr:.1f}% WR | PF {pf:.2f} | {dagen}d",
                     expanded=False
                 ):
                     if aanp and aanp.strip():
@@ -3311,17 +3354,17 @@ def render_coach_monitor_page() -> None:
 # ============================================================
 
 # ============================================================
-# v3.0 — COIN CLUSTER WIDGET
+# v3.0 â COIN CLUSTER WIDGET
 # ============================================================
 def render_coin_cluster_widget() -> None:
     """
     Toont de coin prestatie clusters uit ai_coach.py.
-    STAR → beste coins (prioriteer)
-    STABLE → solide performers
-    WEAK → underperformers
-    ZOMBIE → structureel verliesgevend (blacklist)
+    STAR â beste coins (prioriteer)
+    STABLE â solide performers
+    WEAK â underperformers
+    ZOMBIE â structureel verliesgevend (blacklist)
     """
-    st.markdown("**🏷️ Coin Clusters (ai_coach)**")
+    st.markdown("**ð·ï¸ Coin Clusters (ai_coach)**")
     try:
         conn = get_db_conn()
         if conn is None:
@@ -3333,15 +3376,15 @@ def render_coin_cluster_widget() -> None:
             )
             row = cur.fetchone()
         if not row or not row[0]:
-            st.caption("Nog geen cluster data — ai_coach nog niet gedraaid")
+            st.caption("Nog geen cluster data â ai_coach nog niet gedraaid")
             return
 
         clusters = json.loads(row[0])
         cluster_info = [
-            ("⭐ STAR",   clusters.get("STAR",   []), "#00e5ff", "Prioriteer"),
-            ("✅ STABLE", clusters.get("STABLE", []), "#00ff41", "Houd bij"),
-            ("⚠️ WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
-            ("💀 ZOMBIE", clusters.get("ZOMBIE", []), "#ff1144", "Blacklist"),
+            ("â­ STAR",   clusters.get("STAR",   []), "#00e5ff", "Prioriteer"),
+            ("â STABLE", clusters.get("STABLE", []), "#00ff41", "Houd bij"),
+            ("â ï¸ WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
+            ("ð ZOMBIE", clusters.get("ZOMBIE", []), "#ff1144", "Blacklist"),
         ]
         cols = st.columns(4)
         for i, (label, coins, kleur, tip) in enumerate(cluster_info):
@@ -3366,7 +3409,7 @@ def render_coin_cluster_widget() -> None:
 
 
 # ============================================================
-# v3.0 — KELLY CRITERION WIDGET
+# v3.0 â KELLY CRITERION WIDGET
 # ============================================================
 def render_kelly_widget() -> None:
     """
@@ -3374,7 +3417,7 @@ def render_kelly_widget() -> None:
     Berekend door ai_coach.py op basis van historische win rate en odds.
     Groen = edge positief. Rood = edge negatief.
     """
-    st.markdown("**📐 Kelly Criterion**")
+    st.markdown("**ð Kelly Criterion**")
     try:
         conn = get_db_conn()
         if conn is None:
@@ -3400,7 +3443,7 @@ def render_kelly_widget() -> None:
         n     = safe_int(data.get("n"))
 
         kleur_edge = "#00ff41" if edge else "#ff1144"
-        edge_txt   = "✅ POSITIEF" if edge else "❌ NEGATIEF"
+        edge_txt   = "â POSITIEF" if edge else "â NEGATIEF"
 
         st.markdown(
             f'<div style="background:#12121a;border:1px solid #1e1e2e;'
@@ -3411,7 +3454,7 @@ def render_kelly_widget() -> None:
             f'<div><div style="color:#4e5a7a;font-size:10px;">Half Kelly</div>'
             f'<div style="color:#00e5ff;font-size:18px;font-weight:900;">{half:.1f}%</div></div>'
             f'<div><div style="color:#4e5a7a;font-size:10px;">Aanbevolen/trade</div>'
-            f'<div style="color:#fff;font-size:16px;font-weight:700;">€{aanbv:.2f}</div></div>'
+            f'<div style="color:#fff;font-size:16px;font-weight:700;">â¬{aanbv:.2f}</div></div>'
             f'<div><div style="color:#4e5a7a;font-size:10px;">Win rate ({n} trades)</div>'
             f'<div style="color:#fff;font-size:16px;font-weight:700;">{wr:.1f}%</div></div>'
             f'</div>'
@@ -3425,14 +3468,14 @@ def render_kelly_widget() -> None:
 
 
 # ============================================================
-# v3.0 — SCAN EFFICIENCY WIDGET
+# v3.0 â SCAN EFFICIENCY WIDGET
 # ============================================================
 def render_scan_efficiency_widget() -> None:
     """
     Toont de scan efficiency van de laatste 7 dagen.
     Conversie ratio, aantal sessies, beste score, bottlenecks.
     """
-    st.markdown("**🔍 Scan Efficiency (7d)**")
+    st.markdown("**ð Scan Efficiency (7d)**")
     try:
         conn = get_db_conn()
         if conn is None:
@@ -3505,7 +3548,7 @@ def render_scan_efficiency_widget() -> None:
 
 
 # ============================================================
-# v3.0 — SHADOW vs LIVE BRUG WIDGET
+# v3.0 â SHADOW vs LIVE BRUG WIDGET
 # ============================================================
 def render_shadow_live_brug_widget() -> None:
     """
@@ -3513,7 +3556,7 @@ def render_shadow_live_brug_widget() -> None:
     Detecteert discrepanties die wijzen op edge decay of executieproblemen.
     Groen = gezond (verschil < 10%). Rood = discrepantie (> 10%).
     """
-    st.markdown("**🌉 Shadow ↔ Live Brug**")
+    st.markdown("**ð Shadow â Live Brug**")
     try:
         conn = get_db_conn()
         if conn is None:
@@ -3527,7 +3570,7 @@ def render_shadow_live_brug_widget() -> None:
             """)
             row = cur.fetchone()
         if not row or not row[0]:
-            st.caption("Nog geen brug analyse — ai_coach nog niet gedraaid")
+            st.caption("Nog geen brug analyse â ai_coach nog niet gedraaid")
             return
 
         data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
@@ -3538,7 +3581,7 @@ def render_shadow_live_brug_widget() -> None:
         gezond    = data.get("brug_gezond", True)
         discr     = data.get("discrepanties", [])
         status_kleur = "#00ff41" if gezond else "#ff1144"
-        status_txt   = "✅ GEZOND" if gezond else f"⚠️ {len(discr)} DISCREPANTIES"
+        status_txt   = "â GEZOND" if gezond else f"â ï¸ {len(discr)} DISCREPANTIES"
 
         s_wr = safe_float(shadow.get("wr"))
         l_wr = safe_float(live.get("wr"))
@@ -3552,24 +3595,24 @@ def render_shadow_live_brug_widget() -> None:
             f'margin-bottom:8px;">{status_txt}</div>'
             f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
             f'<div style="text-align:center;">'
-            f'<div style="color:#4e5a7a;font-size:10px;">🎭 Shadow WR</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">ð­ Shadow WR</div>'
             f'<div style="color:#00e5ff;font-size:20px;font-weight:900;">{s_wr:.1f}%</div>'
             f'<div style="color:#4e5a7a;font-size:10px;">{safe_int(shadow.get("n"))} trades</div>'
             f'</div>'
             f'<div style="text-align:center;">'
-            f'<div style="color:#4e5a7a;font-size:10px;">🔴 Live WR</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">ð´ Live WR</div>'
             f'<div style="color:#ffcc00;font-size:20px;font-weight:900;">{l_wr:.1f}%</div>'
             f'<div style="color:#4e5a7a;font-size:10px;">{safe_int(live.get("n"))} trades</div>'
             f'</div>'
             f'</div>'
             f'<div style="margin-top:8px;text-align:center;font-size:12px;color:{diff_kleur};">'
             f'Verschil: {diff:+.1f}% '
-            f'{"✅ OK" if abs(diff) <= 10 else "⚠️ GROOT"}</div>'
+            f'{"â OK" if abs(diff) <= 10 else "â ï¸ GROOT"}</div>'
         )
         if discr:
             html += '<div style="margin-top:8px;font-size:11px;color:#ff9100;">'
             for d in discr[:2]:
-                html += f'<div>⚠️ {d.get("setup","?")}: {d.get("reden","")}</div>'
+                html += f'<div>â ï¸ {d.get("setup","?")}: {d.get("reden","")}</div>'
             html += '</div>'
         html += '</div>'
         st.markdown(html, unsafe_allow_html=True)
@@ -3578,7 +3621,7 @@ def render_shadow_live_brug_widget() -> None:
 
 
 # ============================================================
-# v3.0 — PARAMETER ROLLBACK LOG WIDGET
+# v3.0 â PARAMETER ROLLBACK LOG WIDGET
 # ============================================================
 def render_param_rollback_widget() -> None:
     """
@@ -3586,7 +3629,7 @@ def render_param_rollback_widget() -> None:
     Wanneer heeft ai_coach een parameter teruggedraaid?
     Welke aanpassing werkte niet?
     """
-    st.markdown("**🔄 Parameter Rollback History**")
+    st.markdown("**ð Parameter Rollback History**")
     try:
         conn = get_db_conn()
         if conn is None:
@@ -3602,7 +3645,7 @@ def render_param_rollback_widget() -> None:
             rows = cur.fetchall()
         if not rows:
             st.markdown(
-                '<div style="color:#4e5a7a;font-size:12px;padding:8px;">Geen rollbacks — alle aanpassingen presteren goed ✅</div>',
+                '<div style="color:#4e5a7a;font-size:12px;padding:8px;">Geen rollbacks â alle aanpassingen presteren goed â</div>',
                 unsafe_allow_html=True,
             )
             return
@@ -3616,7 +3659,7 @@ def render_param_rollback_widget() -> None:
             rolled   = bool(r[6])
             wr_diff  = wr_na - wr_voor
             kleur    = "#ff1144" if rolled else "#00ff41"
-            status   = "🔄 GERESET" if rolled else "✅ GEHOUDEN"
+            status   = "ð GERESET" if rolled else "â GEHOUDEN"
             st.markdown(
                 f'<div style="background:#12121a;border-left:3px solid {kleur};'
                 f'border-radius:4px;padding:8px;margin-bottom:4px;font-size:11px;">'
@@ -3624,8 +3667,8 @@ def render_param_rollback_widget() -> None:
                 f'<b style="color:#ddd;">{param}</b>'
                 f'<span style="color:{kleur};">{status}</span></div>'
                 f'<div style="color:#4e5a7a;margin-top:2px;">'
-                f'{test_v} → terug naar {orig_v} | '
-                f'WR: {wr_voor:.1f}% → {wr_na:.1f}% ({wr_diff:+.1f}%)</div>'
+                f'{test_v} â terug naar {orig_v} | '
+                f'WR: {wr_voor:.1f}% â {wr_na:.1f}% ({wr_diff:+.1f}%)</div>'
                 f'<div style="color:#555;font-size:10px;">{ts} UTC</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -3636,10 +3679,10 @@ def render_param_rollback_widget() -> None:
 
 def render_health_page() -> None:
     render_alarm_banner()
-    st.markdown('<div class="section-title">🏥 Systeem Gezondheid</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð¥ Systeem Gezondheid</div>', unsafe_allow_html=True)
     st.caption("Realtime overzicht van de bot gezondheid, data versheid en trade flow.")
 
-    # ── AUDIT SCORE GAUGE ────────────────────────────────────
+    # ââ AUDIT SCORE GAUGE ââââââââââââââââââââââââââââââââââââ
     score = load_systeem_audit_score()
     col_gauge, col_flow, col_info = st.columns([1, 1.4, 1.6])
 
@@ -3659,11 +3702,11 @@ def render_health_page() -> None:
     with col_info:
         st.markdown("**Trade Flow (7d)**")
         items = [
-            ("📨 Signalen gegenereerd", flow["signalen"]),
-            ("✅ Goedgekeurd",           flow["goedgekeurd"]),
-            ("⏰ Verlopen",              flow["verlopen"]),
-            ("💶 Live trades",           flow["live"]),
-            ("🏁 Gesloten",             flow["gesloten"]),
+            ("ð¨ Signalen gegenereerd", flow["signalen"]),
+            ("â Goedgekeurd",           flow["goedgekeurd"]),
+            ("â° Verlopen",              flow["verlopen"]),
+            ("ð¶ Live trades",           flow["live"]),
+            ("ð Gesloten",             flow["gesloten"]),
         ]
         for label, val in items:
             st.markdown(
@@ -3678,14 +3721,14 @@ def render_health_page() -> None:
         kleur = "#00ff41" if conv >= 5 else "#ff1144" if conv < 2 else "#00e5ff"
         st.markdown(
             f'<div style="margin-top:8px;font-size:12px;color:{kleur};">'
-            f'Conversie: {conv:.1f}% signalen → live</div>',
+            f'Conversie: {conv:.1f}% signalen â live</div>',
             unsafe_allow_html=True,
         )
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── DATA VERSHEID ────────────────────────────────────────
-    st.markdown("**📡 Data Versheid**")
+    # ââ DATA VERSHEID ââââââââââââââââââââââââââââââââââââââââ
+    st.markdown("**ð¡ Data Versheid**")
     versheid_checks = [
         {
             "naam": "Candles (1H)",
@@ -3723,7 +3766,7 @@ def render_health_page() -> None:
                 if ts is None:
                     st.markdown(
                         f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
-                        f'<div style="font-size:22px;">❓</div><div style="font-size:10px;color:#555;">Geen data</div></div>',
+                        f'<div style="font-size:22px;">â</div><div style="font-size:10px;color:#555;">Geen data</div></div>',
                         unsafe_allow_html=True)
                     continue
                 if hasattr(ts, "tzinfo") and ts.tzinfo is None:
@@ -3736,20 +3779,20 @@ def render_health_page() -> None:
                 label= f"{uren:.1f}u" if uren < 48 else f"{uren/24:.1f}d"
                 st.markdown(
                     f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
-                    f'<div style="font-size:22px;color:{kleur};">{"✅" if ok else "⚠️"}</div>'
+                    f'<div style="font-size:22px;color:{kleur};">{"â" if ok else "â ï¸"}</div>'
                     f'<div style="font-size:12px;color:{kleur};">{label} oud</div>'
                     f'<div style="font-size:10px;color:#555;">max {check["max_uren"]}u</div></div>',
                     unsafe_allow_html=True)
             except Exception:
                 st.markdown(
                     f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
-                    f'<div style="font-size:22px;">❌</div></div>',
+                    f'<div style="font-size:22px;">â</div></div>',
                     unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── DB TABEL STATISTIEKEN ────────────────────────────────
-    st.markdown("**🗄️ Database Tabellen**")
+    # ââ DB TABEL STATISTIEKEN ââââââââââââââââââââââââââââââââ
+    st.markdown("**ðï¸ Database Tabellen**")
     tabellen = [
         "experience_trades","pending_approvals","bot_state","market_regime",
         "btc_regime_4h","candles","coach_memory","coach_events","coach_dagboek",
@@ -3759,28 +3802,28 @@ def render_health_page() -> None:
     for tabel in tabellen:
         if table_exists(tabel):
             n = run_scalar(f"SELECT COUNT(*) FROM public.{tabel}") or 0
-            tabel_data.append({"Tabel": tabel, "Records": int(n), "Status": "✅"})
+            tabel_data.append({"Tabel": tabel, "Records": int(n), "Status": "â"})
         else:
-            tabel_data.append({"Tabel": tabel, "Records": 0, "Status": "❌ Ontbreekt"})
+            tabel_data.append({"Tabel": tabel, "Records": 0, "Status": "â Ontbreekt"})
 
     tabel_df = pd.DataFrame(tabel_data)
     st.dataframe(tabel_df, hide_index=True, use_container_width=True)
 
-    # ── ALARMEN OVERZICHT ────────────────────────────────────
+    # ââ ALARMEN OVERZICHT ââââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("**🚨 Actieve Alarmen**")
+    st.markdown("**ð¨ Actieve Alarmen**")
     alarmen = _load_actieve_alarmen()
     if not alarmen:
-        st.success("✅ Geen actieve alarmen.")
+        st.success("â Geen actieve alarmen.")
     else:
         for a in alarmen:
             ernst = str(a.get("ernst","MEDIUM"))
             kleur = "#ff1144" if ernst=="KRITIEK" else "#00e5ff" if ernst=="HOOG" else "#555"
-            emoji = "🔴" if ernst=="KRITIEK" else "🟡"
+            emoji = "ð´" if ernst=="KRITIEK" else "ð¡"
             st.markdown(
                 f'<div style="background:#111;border-left:4px solid {kleur};'
                 f'padding:8px 12px;border-radius:4px;margin:4px 0;">'
-                f'{emoji} <b>{a.get("type","")}</b> — {a.get("omschrijving","")}'
+                f'{emoji} <b>{a.get("type","")}</b> â {a.get("omschrijving","")}'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -3833,26 +3876,26 @@ def _send_whatsapp_command(commando: str) -> bool:
 
 def render_controls_page() -> None:
     render_alarm_banner()
-    st.markdown('<div class="section-title">🎮 Bot Quick Controls</div>', unsafe_allow_html=True)
-    st.caption("Bestuur de bot direct vanuit het dashboard — geen WhatsApp nodig.")
+    st.markdown('<div class="section-title">ð® Bot Quick Controls</div>', unsafe_allow_html=True)
+    st.caption("Bestuur de bot direct vanuit het dashboard â geen WhatsApp nodig.")
 
-    # ── BOT STATUS + GROTE KNOPPEN ───────────────────────────
+    # ââ BOT STATUS + GROTE KNOPPEN âââââââââââââââââââââââââââ
     bot_actief_raw = get_bot_state_val("bot_active", "false").lower()
     bot_actief = bot_actief_raw == "true"
     bot_gepauz = get_bot_state_val("bot_paused", "false").lower() == "true"
 
-    # Bot SYSTEEM draait altijd — alleen live trading schakelaar verandert
+    # Bot SYSTEEM draait altijd â alleen live trading schakelaar verandert
     if bot_actief and not bot_gepauz:
-        status_label  = "🟢 LIVE TRADING AAN"
+        status_label  = "ð¢ LIVE TRADING AAN"
         status_sub    = "Bot koopt actief met echt geld op Bitvavo"
         status_kleur  = "#00ff41"
     elif bot_gepauz:
-        status_label  = "⏸️ LIVE TRADING GEPAUZEERD"
-        status_sub    = "Bot systeem draait — live trades tijdelijk geblokkeerd"
+        status_label  = "â¸ï¸ LIVE TRADING GEPAUZEERD"
+        status_sub    = "Bot systeem draait â live trades tijdelijk geblokkeerd"
         status_kleur  = "#00e5ff"
     else:
-        status_label  = "🟡 LIVE TRADING UIT"
-        status_sub    = "Bot systeem draait 24/7 — scanner actief — GEEN echte euro-trades"
+        status_label  = "ð¡ LIVE TRADING UIT"
+        status_sub    = "Bot systeem draait 24/7 â scanner actief â GEEN echte euro-trades"
         status_kleur  = "#00e5ff"
 
     st.markdown(
@@ -3861,8 +3904,8 @@ def render_controls_page() -> None:
         f'<div style="font-size:26px;font-weight:900;color:{status_kleur};font-family:Courier New,monospace;">{status_label}</div>'
         f'<div style="font-size:12px;color:#8090b0;margin-top:6px;">{status_sub}</div>'
         f'<div style="font-size:11px;color:#4a5568;margin-top:4px;">'
-        f'<span style="color:#00ff88;">✅ Bot systeem</span> draait altijd 24/7 op Render — '
-        f'scanner · coach · monitor · dashboard</div>'
+        f'<span style="color:#00ff88;">â Bot systeem</span> draait altijd 24/7 op Render â '
+        f'scanner Â· coach Â· monitor Â· dashboard</div>'
         f'<div style="font-size:10px;color:#4a5568;margin-top:2px;">Laatste check: {datetime.now(timezone.utc).strftime("%H:%M:%S UTC")}</div>'
         f'</div>',
         unsafe_allow_html=True,
@@ -3871,54 +3914,54 @@ def render_controls_page() -> None:
     btn_c1, btn_c2, btn_c3, btn_c4 = st.columns(4)
 
     with btn_c1:
-        if st.button("🟢 LIVE AAN", use_container_width=True, type="primary",
+        if st.button("ð¢ LIVE AAN", use_container_width=True, type="primary",
                      disabled=bot_actief and not bot_gepauz):
             if _set_bot_state_key("bot_active", "true") and _set_bot_state_key("bot_paused","false"):
                 _send_whatsapp_command("START")
-                st.success("✅ Live trading aangezet — bot koopt nu met echt geld")
+                st.success("â Live trading aangezet â bot koopt nu met echt geld")
                 st.rerun()
 
     with btn_c2:
-        if st.button("⏸️ PAUZEER", use_container_width=True, disabled=not bot_actief or bot_gepauz):
+        if st.button("â¸ï¸ PAUZEER", use_container_width=True, disabled=not bot_actief or bot_gepauz):
             if _set_bot_state_key("bot_paused", "true"):
-                st.warning("⏸️ Live trading gepauzeerd — bot systeem draait door")
+                st.warning("â¸ï¸ Live trading gepauzeerd â bot systeem draait door")
                 st.rerun()
 
     with btn_c3:
-        if st.button("⏩ HERVAT", use_container_width=True, disabled=not bot_gepauz):
+        if st.button("â© HERVAT", use_container_width=True, disabled=not bot_gepauz):
             if _set_bot_state_key("bot_paused", "false"):
-                st.success("▶️ Live trading hervat")
+                st.success("â¶ï¸ Live trading hervat")
                 st.rerun()
 
     with btn_c4:
-        if st.button("🟡 LIVE UIT", use_container_width=True,
+        if st.button("ð¡ LIVE UIT", use_container_width=True,
                      disabled=not bot_actief, type="secondary"):
             if _set_bot_state_key("bot_active", "false"):
                 _send_whatsapp_command("STOP")
-                st.info("🟡 Live trading uitgezet — bot systeem draait door, geen echte trades")
+                st.info("ð¡ Live trading uitgezet â bot systeem draait door, geen echte trades")
                 st.rerun()
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── PARAMETER SLIDERS ────────────────────────────────────
-    st.markdown("**⚙️ Parameters direct aanpassen**")
-    st.caption("Wijzigingen worden direct in bot_state opgeslagen én gelogd in coach_config_log.")
+    # ââ PARAMETER SLIDERS ââââââââââââââââââââââââââââââââââââ
+    st.markdown("**âï¸ Parameters direct aanpassen**")
+    st.caption("Wijzigingen worden direct in bot_state opgeslagen Ã©n gelogd in coach_config_log.")
 
     p1, p2 = st.columns(2)
     with p1:
         huidig_score = int(get_bot_state_val("min_score_to_trade","92") or "92")
-        nieuw_score  = st.slider("🎯 Min Score to Trade", 75, 99, huidig_score, 1,
+        nieuw_score  = st.slider("ð¯ Min Score to Trade", 75, 99, huidig_score, 1,
                                  key="ctrl_score")
         if nieuw_score != huidig_score:
             if st.button(f"Opslaan score={nieuw_score}", key="save_score"):
                 if _set_bot_state_key("min_score_to_trade", str(nieuw_score)):
-                    st.success(f"✅ Score drempel → {nieuw_score}")
+                    st.success(f"â Score drempel â {nieuw_score}")
                     st.cache_data.clear()
 
         huidig_start = int(get_bot_state_val("trading_hours_start","9") or "9")
         huidig_end   = int(get_bot_state_val("trading_hours_end","17") or "17")
         nieuw_start, nieuw_end = st.select_slider(
-            "⏰ Trading Uren (UTC)",
+            "â° Trading Uren (UTC)",
             options=list(range(0,25)),
             value=(huidig_start, huidig_end),
             key="ctrl_uren",
@@ -3928,117 +3971,117 @@ def render_controls_page() -> None:
                 ok = (_set_bot_state_key("trading_hours_start", str(nieuw_start)) and
                       _set_bot_state_key("trading_hours_end",   str(nieuw_end)))
                 if ok:
-                    st.success(f"✅ Trading uren → {nieuw_start}:00-{nieuw_end}:00 UTC")
+                    st.success(f"â Trading uren â {nieuw_start}:00-{nieuw_end}:00 UTC")
 
     with p2:
         huidig_atr = float(get_bot_state_val("atr_multiplier","1.6") or "1.6")
-        nieuw_atr  = st.slider("📏 ATR Multiplier (stop loss)", 0.8, 3.0, huidig_atr, 0.1,
+        nieuw_atr  = st.slider("ð ATR Multiplier (stop loss)", 0.8, 3.0, huidig_atr, 0.1,
                                 key="ctrl_atr")
         if abs(nieuw_atr - huidig_atr) > 0.05:
             if st.button(f"Opslaan ATR={nieuw_atr:.1f}", key="save_atr"):
                 if _set_bot_state_key("atr_multiplier", str(round(nieuw_atr,1))):
-                    st.success(f"✅ ATR multiplier → {nieuw_atr:.1f}")
+                    st.success(f"â ATR multiplier â {nieuw_atr:.1f}")
 
         huidig_size = float(get_bot_state_val("position_size_eur","0.5") or "0.5")
-        nieuw_size  = st.slider("💶 Positiegrootte (EUR)", 1.00, 25.00, max(1.0, huidig_size), 0.50,
-                                 format="€%.2f", key="ctrl_size")
+        nieuw_size  = st.slider("ð¶ Positiegrootte (EUR)", 1.00, 25.00, max(1.0, huidig_size), 0.50,
+                                 format="â¬%.2f", key="ctrl_size")
         if abs(nieuw_size - huidig_size) > 0.01:
-            if st.button(f"Opslaan positie=€{nieuw_size:.2f}", key="save_size"):
+            if st.button(f"Opslaan positie=â¬{nieuw_size:.2f}", key="save_size"):
                 if _set_bot_state_key("position_size_eur", str(round(nieuw_size,2))):
-                    st.success(f"✅ Positiegrootte → €{nieuw_size:.2f}")
+                    st.success(f"â Positiegrootte â â¬{nieuw_size:.2f}")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     p3, p4 = st.columns(2)
     with p3:
         huidig_max_trades = int(get_bot_state_val("max_trades_per_dag","10") or "10")
-        nieuw_max_trades = st.slider("📊 Max trades/dag", 1, 20, huidig_max_trades, 1, key="ctrl_max_trades")
+        nieuw_max_trades = st.slider("ð Max trades/dag", 1, 20, huidig_max_trades, 1, key="ctrl_max_trades")
         if nieuw_max_trades != huidig_max_trades:
             if st.button(f"Opslaan max={nieuw_max_trades}/dag", key="save_max_trades"):
                 if _set_bot_state_key("max_trades_per_dag", str(nieuw_max_trades)):
-                    st.success(f"✅ Max trades/dag → {nieuw_max_trades}")
+                    st.success(f"â Max trades/dag â {nieuw_max_trades}")
         huidig_max_open = int(get_bot_state_val("max_open_trades","5") or "5")
-        nieuw_max_open = st.slider("📂 Max open tegelijk", 1, 10, huidig_max_open, 1, key="ctrl_max_open")
+        nieuw_max_open = st.slider("ð Max open tegelijk", 1, 10, huidig_max_open, 1, key="ctrl_max_open")
         if nieuw_max_open != huidig_max_open:
             if st.button(f"Opslaan max_open={nieuw_max_open}", key="save_max_open"):
                 if _set_bot_state_key("max_open_trades", str(nieuw_max_open)):
-                    st.success(f"✅ Max open → {nieuw_max_open}")
+                    st.success(f"â Max open â {nieuw_max_open}")
         huidig_stop = float(get_bot_state_val("daily_stop_loss_eur","5.0") or "5.0")
-        nieuw_stop = st.slider("🛑 Daily stop loss", 1.0, 50.0, max(1.0,huidig_stop), 0.5, format="€%.1f", key="ctrl_stop")
+        nieuw_stop = st.slider("ð Daily stop loss", 1.0, 50.0, max(1.0,huidig_stop), 0.5, format="â¬%.1f", key="ctrl_stop")
         if abs(nieuw_stop - huidig_stop) > 0.1:
-            if st.button(f"Opslaan stop=€{nieuw_stop:.1f}", key="save_stop"):
+            if st.button(f"Opslaan stop=â¬{nieuw_stop:.1f}", key="save_stop"):
                 if _set_bot_state_key("daily_stop_loss_eur", str(round(nieuw_stop,1))):
-                    st.success(f"✅ Daily stop → €{nieuw_stop:.1f}")
+                    st.success(f"â Daily stop â â¬{nieuw_stop:.1f}")
     with p4:
         huidig_score_bull = int(get_bot_state_val("score_drempel_bull","85") or "85")
-        nieuw_score_bull = st.slider("🐂 Score BULL", 75, 99, huidig_score_bull, 1, key="ctrl_score_bull")
+        nieuw_score_bull = st.slider("ð Score BULL", 75, 99, huidig_score_bull, 1, key="ctrl_score_bull")
         if nieuw_score_bull != huidig_score_bull:
             if st.button(f"Opslaan score_bull={nieuw_score_bull}", key="save_score_bull"):
                 if _set_bot_state_key("score_drempel_bull", str(nieuw_score_bull)):
-                    st.success(f"✅ Score BULL → {nieuw_score_bull}")
+                    st.success(f"â Score BULL â {nieuw_score_bull}")
         huidig_score_range = int(get_bot_state_val("score_drempel_range","80") or "80")
-        nieuw_score_range = st.slider("📊 Score RANGE", 70, 99, huidig_score_range, 1, key="ctrl_score_range")
+        nieuw_score_range = st.slider("ð Score RANGE", 70, 99, huidig_score_range, 1, key="ctrl_score_range")
         if nieuw_score_range != huidig_score_range:
             if st.button(f"Opslaan score_range={nieuw_score_range}", key="save_score_range"):
                 if _set_bot_state_key("score_drempel_range", str(nieuw_score_range)):
-                    st.success(f"✅ Score RANGE → {nieuw_score_range}")
+                    st.success(f"â Score RANGE â {nieuw_score_range}")
         huidig_target = float(get_bot_state_val("atr_target_r","2.0") or "2.0")
-        nieuw_target = st.slider("🎯 Target R", 1.0, 5.0, huidig_target, 0.5, key="ctrl_target")
+        nieuw_target = st.slider("ð¯ Target R", 1.0, 5.0, huidig_target, 0.5, key="ctrl_target")
         if abs(nieuw_target - huidig_target) > 0.1:
             if st.button(f"Opslaan target={nieuw_target:.1f}R", key="save_target"):
                 if _set_bot_state_key("atr_target_r", str(round(nieuw_target,1))):
-                    st.success(f"✅ Target → {nieuw_target:.1f}R")
+                    st.success(f"â Target â {nieuw_target:.1f}R")
         huidig_cooldown = int(get_bot_state_val("coin_cooldown_hours","48") or "48")
-        nieuw_cooldown = st.slider("⏳ Cooldown (uur)", 1, 96, huidig_cooldown, 1, key="ctrl_cooldown")
+        nieuw_cooldown = st.slider("â³ Cooldown (uur)", 1, 96, huidig_cooldown, 1, key="ctrl_cooldown")
         if nieuw_cooldown != huidig_cooldown:
             if st.button(f"Opslaan cooldown={nieuw_cooldown}u", key="save_cooldown"):
                 if _set_bot_state_key("coin_cooldown_hours", str(nieuw_cooldown)):
-                    st.success(f"✅ Cooldown → {nieuw_cooldown}u")
+                    st.success(f"â Cooldown â {nieuw_cooldown}u")
 
-    # ── WHATSAPP COMMANDO'S ──────────────────────────────────
-    st.markdown("**📱 WhatsApp Commando's**")
+    # ââ WHATSAPP COMMANDO'S ââââââââââââââââââââââââââââââââââ
+    st.markdown("**ð± WhatsApp Commando's**")
     wa_cols = st.columns(5)
     commando_labels = {
-        "STATUS":  ("📊 Status",   "wa_status"),
-        "TRADES":  ("📋 Trades",   "wa_trades"),
-        "RAPPORT": ("📈 Rapport",  "wa_rapport"),
-        "HEALTH":  ("🏥 Health",   "wa_health"),
-        "ANALYSE": ("🧠 Analyse",  "wa_analyse"),
+        "STATUS":  ("ð Status",   "wa_status"),
+        "TRADES":  ("ð Trades",   "wa_trades"),
+        "RAPPORT": ("ð Rapport",  "wa_rapport"),
+        "HEALTH":  ("ð¥ Health",   "wa_health"),
+        "ANALYSE": ("ð§  Analyse",  "wa_analyse"),
     }
     for i, (cmd, (label, key)) in enumerate(commando_labels.items()):
         with wa_cols[i]:
             if st.button(label, key=key, use_container_width=True):
                 if _send_whatsapp_command(cmd):
-                    st.success(f"✅ {cmd} verstuurd")
+                    st.success(f"â {cmd} verstuurd")
                 else:
-                    st.warning("⚠️ Twilio niet geconfigureerd")
+                    st.warning("â ï¸ Twilio niet geconfigureerd")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── DAGBUDGET RESET / EMERGENCY ─────────────────────────
-    st.markdown("**🚨 Emergency Controls**")
+    # ââ DAGBUDGET RESET / EMERGENCY âââââââââââââââââââââââââ
+    st.markdown("**ð¨ Emergency Controls**")
     ec1, ec2, ec3 = st.columns(3)
 
     with ec1:
-        if st.button("🔄 Reset Dagbudget", use_container_width=True):
+        if st.button("ð Reset Dagbudget", use_container_width=True):
             if _set_bot_state_key("daily_pnl","0"):
-                st.success("✅ Dagbudget gereset naar €0")
+                st.success("â Dagbudget gereset naar â¬0")
 
     with ec2:
-        if st.button("🧹 Leeg Cooldown", use_container_width=True):
+        if st.button("ð§¹ Leeg Cooldown", use_container_width=True):
             if _set_bot_state_key("coin_cooldown","{}"):
-                st.success("✅ Cooldown lijst geleegd")
+                st.success("â Cooldown lijst geleegd")
 
     with ec3:
-        with st.expander("⚠️ Reset Drawdown Pause", expanded=False):
+        with st.expander("â ï¸ Reset Drawdown Pause", expanded=False):
             st.warning("Dit heft de drawdown bescherming tijdelijk op.")
             if st.button("Reset Drawdown", key="reset_dd"):
                 if _set_bot_state_key("drawdown_paused","false"):
-                    st.success("✅ Drawdown pause opgeheven")
+                    st.success("â Drawdown pause opgeheven")
 
-    # ── RECENTE WIJZIGINGEN ──────────────────────────────────
+    # ââ RECENTE WIJZIGINGEN ââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("**📋 Recente parameter wijzigingen**")
+    st.markdown("**ð Recente parameter wijzigingen**")
     recent_cfg = load_coach_config_log(2)  # 2 dagen
     if recent_cfg.empty:
         st.caption("Nog geen wijzigingen via dashboard gelogd.")
@@ -4053,7 +4096,7 @@ def render_controls_page() -> None:
                 f'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #1e1e1e;">'
                 f'<span style="color:#888;">{ts}</span> '
                 f'<b style="color:#ffcc00;">{param}</b>: '
-                f'<span style="color:#ff1144;">{oud}</span> → '
+                f'<span style="color:#ff1144;">{oud}</span> â '
                 f'<span style="color:#00ff88;">{nieuw}</span> '
                 f'<span style="color:#555;">[{bron}]</span>'
                 f'</div>',
@@ -4062,15 +4105,15 @@ def render_controls_page() -> None:
 
 
 # ============================================================
-# UITBREIDING ANALYSE PAGINA — R, Score correlatie, Fees
+# UITBREIDING ANALYSE PAGINA â R, Score correlatie, Fees
 # ============================================================
 def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     """Extra analyse tabs: R-distributie, Score correlatie, Fees, Config timeline."""
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("**🔬 Geavanceerde Analyse**")
+    st.markdown("**ð¬ Geavanceerde Analyse**")
 
     tab_r, tab_sc, tab_fee, tab_cfg = st.tabs([
-        "📐 R-Distributie", "📊 Score Correlatie", "💰 Fee Impact", "⚙️ Config Timeline",
+        "ð R-Distributie", "ð Score Correlatie", "ð° Fee Impact", "âï¸ Config Timeline",
     ])
 
     with tab_r:
@@ -4082,10 +4125,10 @@ def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             wins = vals[vals >= 0]
             loss = vals[vals < 0]
             c1,c2,c3,c4 = st.columns(4)
-            c1.metric("Gem Win R",  f"{wins.mean():.2f}R"  if not wins.empty  else "—")
-            c2.metric("Gem Loss R", f"{loss.mean():.2f}R"  if not loss.empty  else "—")
-            c3.metric("≥ 2R trades", f"{(vals>=2).sum()}")
-            c4.metric("Expectancy",  f"{(wins.mean()*(len(wins)/len(vals)) - abs(loss.mean())*(len(loss)/len(vals))):.3f}R" if len(vals)>0 else "—")
+            c1.metric("Gem Win R",  f"{wins.mean():.2f}R"  if not wins.empty  else "â")
+            c2.metric("Gem Loss R", f"{loss.mean():.2f}R"  if not loss.empty  else "â")
+            c3.metric("â¥ 2R trades", f"{(vals>=2).sum()}")
+            c4.metric("Expectancy",  f"{(wins.mean()*(len(wins)/len(vals)) - abs(loss.mean())*(len(loss)/len(vals))):.3f}R" if len(vals)>0 else "â")
 
     with tab_sc:
         st.plotly_chart(chart_score_winrate_correlatie(df),
@@ -4101,11 +4144,11 @@ def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             win_pnl  = pnl_sum[pnl_sum > 0].sum()
             fee_pct  = fee_sum / max(win_pnl, 0.001) * 100
             f1,f2,f3 = st.columns(3)
-            f1.metric("Totale fees", f"€{fee_sum:.4f}")
+            f1.metric("Totale fees", f"â¬{fee_sum:.4f}")
             f2.metric("Fees / bruto winst", f"{fee_pct:.1f}%",
                       delta="Te hoog" if fee_pct > 25 else "OK",
                       delta_color="inverse" if fee_pct > 25 else "normal")
-            f3.metric("Gem fee / trade", f"€{fee_sum/max(len(df),1):.4f}")
+            f3.metric("Gem fee / trade", f"â¬{fee_sum/max(len(df),1):.4f}")
         else:
             st.info("Fee data (fee_eur kolom) niet beschikbaar.")
 
@@ -4116,13 +4159,13 @@ def _render_extra_analyse_tabs(df: pd.DataFrame, real_df: pd.DataFrame) -> None:
         else:
             st.plotly_chart(chart_config_timeline(cfg_df),
                             use_container_width=True, config={"displayModeBar":False}, key="xcfg")
-            st.caption(f"{len(cfg_df)} wijzigingen in 90 dagen — elk punt = een parameter aanpassing.")
+            st.caption(f"{len(cfg_df)} wijzigingen in 90 dagen â elk punt = een parameter aanpassing.")
 
 
 
 
 # ============================================================
-# LIVE TRADE MONITOR — Realtime pagina
+# LIVE TRADE MONITOR â Realtime pagina
 # ============================================================
 
 
@@ -4133,15 +4176,15 @@ def render_live_monitor() -> None:
     Auto-refresh via timer in session_state.
     """
     st.markdown(
-        '<div class="page-chip">🔴 LIVE MONITOR — Realtime</div>',
+        '<div class="page-chip">ð´ LIVE MONITOR â Realtime</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Refresh controls ────────────────────────────────────
+    # ââ Refresh controls ââââââââââââââââââââââââââââââââââââ
     col_r1, col_r2, col_r3 = st.columns([2, 2, 4], gap="small")
     with col_r1:
         refresh_interval = st.selectbox(
-            "⏱ Interval",
+            "â± Interval",
             [10, 15, 30, 60],
             index=1,
             format_func=lambda x: f"Elke {x}s",
@@ -4149,14 +4192,14 @@ def render_live_monitor() -> None:
         )
     with col_r2:
         st.markdown('<div class="tiny-button" style="margin-top:24px;">', unsafe_allow_html=True)
-        if st.button("🔄 Nu verversen", key="live_monitor_btn", use_container_width=True):
+        if st.button("ð Nu verversen", key="live_monitor_btn", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
     with col_r3:
         st.markdown(
             f'<div style="color:var(--muted);font-size:11px;padding-top:28px;">'
-            f'⏰ Nu: {now_utc().strftime("%H:%M:%S")} UTC</div>',
+            f'â° Nu: {now_utc().strftime("%H:%M:%S")} UTC</div>',
             unsafe_allow_html=True,
         )
 
@@ -4176,7 +4219,7 @@ def render_live_monitor() -> None:
     )
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── Data ophalen ─────────────────────────────────────────
+    # ââ Data ophalen âââââââââââââââââââââââââââââââââââââââââ
     prices       = fetch_bitvavo_prices()
     btc          = get_btc_regime()
     btc_regime_v = safe_str(btc.get("regime"), "UNKNOWN")
@@ -4219,18 +4262,18 @@ def render_live_monitor() -> None:
 
     n_open = max(len(posities_json), len(open_db_df))
 
-    # ── Status balk ──────────────────────────────────────────
+    # ââ Status balk ââââââââââââââââââââââââââââââââââââââââââ
     st.markdown(
         f'<div class="bot-status-bar">'
         f'<span class="top-status-chip {bot_chip}">{bot_emoji} BOT: {bot_lbl}</span>'
-        f'<span class="top-status-chip {btc_chip}">₿ BTC: {btc_regime_v} {btc_sterkte:.0f}%</span>'
-        f'<span class="top-status-chip chip-gray">📍 {n_open} open trade{"s" if n_open != 1 else ""}</span>'
-        f'<span class="top-status-chip chip-gray">💰 Prijzen: {"✅ live" if prices else "❌ geen"}</span>'
+        f'<span class="top-status-chip {btc_chip}">â¿ BTC: {btc_regime_v} {btc_sterkte:.0f}%</span>'
+        f'<span class="top-status-chip chip-gray">ð {n_open} open trade{"s" if n_open != 1 else ""}</span>'
+        f'<span class="top-status-chip chip-gray">ð° Prijzen: {"â live" if prices else "â geen"}</span>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
-    # ── Dag statistieken ─────────────────────────────────────
+    # ââ Dag statistieken âââââââââââââââââââââââââââââââââââââ
     real_df = load_real_trades()
     dag     = get_dagbudget_status(real_df)
     pnl_t   = dag["pnl_today"]
@@ -4248,7 +4291,7 @@ def render_live_monitor() -> None:
         st.markdown(metric_card("PNL VANDAAG", format_money(pnl_t), accent="green" if pnl_t >= 0 else "red"), unsafe_allow_html=True)
     with mc5:
         st.markdown(
-            metric_card("BUDGET VRIJ", f"€{dag['ruimte']:.2f}", f"{bpct:.0f}% gebruikt",
+            metric_card("BUDGET VRIJ", f"â¬{dag['ruimte']:.2f}", f"{bpct:.0f}% gebruikt",
                         accent="green" if bpct < 50 else "red"),
             unsafe_allow_html=True,
         )
@@ -4259,8 +4302,8 @@ def render_live_monitor() -> None:
         unsafe_allow_html=True,
     )
 
-    # ── Open posities ────────────────────────────────────────
-    st.markdown('<div class="section-title">📍 Open Live Trades</div>', unsafe_allow_html=True)
+    # ââ Open posities ââââââââââââââââââââââââââââââââââââââââ
+    st.markdown('<div class="section-title">ð Open Live Trades</div>', unsafe_allow_html=True)
 
     alle: dict = {}
 
@@ -4300,7 +4343,7 @@ def render_live_monitor() -> None:
     if not alle:
         st.markdown(
             '<div class="tc tc-open" style="text-align:center;padding:32px 20px;">'
-            '<div style="font-size:32px;margin-bottom:10px;">📭</div>'
+            '<div style="font-size:32px;margin-bottom:10px;">ð­</div>'
             '<div style="color:var(--txt-hi);font-size:14px;font-weight:900;margin-bottom:6px;">'
             'Geen open live trades</div>'
             '<div style="color:var(--muted);font-size:12px;line-height:1.6;">'
@@ -4386,7 +4429,7 @@ def render_live_monitor() -> None:
                     f'<div style="background:rgba(255,17,51,0.15);border:1px solid var(--loss);'
                     f'border-radius:8px;padding:6px 10px;margin-bottom:8px;'
                     f'font-size:11px;color:var(--loss);font-weight:900;">'
-                    f'⚠️ STOP ALARM — prijs is {stop_dist:.2f}% boven stop ({format_price(stop_l)})'
+                    f'â ï¸ STOP ALARM â prijs is {stop_dist:.2f}% boven stop ({format_price(stop_l)})'
                     f'</div>'
                 )
 
@@ -4418,21 +4461,21 @@ def render_live_monitor() -> None:
                 f'  </div>'
                 f'  <div style="text-align:center;">'
                 f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Huidig</div>'
-                f'    <div style="color:var(--txt-hi);font-size:14px;font-weight:900;">{format_price(huidig) if huidig > 0 else "–"}</div>'
+                f'    <div style="color:var(--txt-hi);font-size:14px;font-weight:900;">{format_price(huidig) if huidig > 0 else "â"}</div>'
                 f'  </div>'
                 f'  <div style="text-align:center;">'
-                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Stop ▼</div>'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Stop â¼</div>'
                 f'    <div style="color:var(--loss);font-size:13px;font-weight:900;">{format_price(stop_l)}</div>'
                 f'    <div style="color:var(--muted);font-size:9px;">{stop_dist:.1f}% weg</div>'
                 f'  </div>'
                 f'  <div style="text-align:center;">'
-                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Target ▲</div>'
+                f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Target â²</div>'
                 f'    <div style="color:var(--win);font-size:13px;font-weight:900;">{format_price(target)}</div>'
                 f'    <div style="color:var(--muted);font-size:9px;">{target_r:.1f}R doel</div>'
                 f'  </div>'
                 f'  <div style="text-align:center;">'
                 f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Waarde</div>'
-                f'    <div style="color:var(--txt);font-size:12px;font-weight:900;">€{eur_val:.2f}</div>'
+                f'    <div style="color:var(--txt);font-size:12px;font-weight:900;">â¬{eur_val:.2f}</div>'
                 f'  </div>'
                 f'  <div style="text-align:center;">'
                 f'    <div style="color:var(--muted);font-size:9px;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:2px;">Qty</div>'
@@ -4446,9 +4489,9 @@ def render_live_monitor() -> None:
                 # R-progressie balk
                 f'<div>'
                 f'  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-bottom:3px;">'
-                f'    <span style="color:var(--loss);">◄ STOP  {format_price(stop_l)}</span>'
+                f'    <span style="color:var(--loss);">â STOP  {format_price(stop_l)}</span>'
                 f'    <span style="color:{balk_css};font-weight:900;font-size:10px;">{r_pct:.0f}% richting target</span>'
-                f'    <span style="color:var(--win);">TARGET  {format_price(target)} ►</span>'
+                f'    <span style="color:var(--win);">TARGET  {format_price(target)} âº</span>'
                 f'  </div>'
                 f'  <div style="height:12px;background:rgba(255,255,255,0.05);border-radius:999px;'
                 f'      overflow:hidden;position:relative;border:1px solid rgba(0,229,255,0.08);">'
@@ -4460,7 +4503,7 @@ def render_live_monitor() -> None:
                 f'  </div>'
                 f'  <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--muted);margin-top:2px;">'
                 f'    <span>-1R verlies</span>'
-                f'    <span style="color:var(--live);">▲ entry</span>'
+                f'    <span style="color:var(--live);">â² entry</span>'
                 f'    <span>+{target_r:.1f}R winst</span>'
                 f'  </div>'
                 f'</div>'
@@ -4468,14 +4511,14 @@ def render_live_monitor() -> None:
                 unsafe_allow_html=True,
             )
 
-    # ── Scanner ───────────────────────────────────────────────
+    # ââ Scanner âââââââââââââââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-title" style="font-size:15px;">⚡ Scanner Status</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:15px;">â¡ Scanner Status</div>', unsafe_allow_html=True)
 
-    laatste_scan = get_bot_state_val("laatste_scan_tijd", "–")
+    laatste_scan = get_bot_state_val("laatste_scan_tijd", "â")
     sessie_raw   = get_bot_state_val("laatste_scan_sessie", "{}")
     markt_txt    = get_bot_state_val("markt_beoordeling", "")
-    scanner_ver  = get_bot_state_val("scanner_versie", "–")
+    scanner_ver  = get_bot_state_val("scanner_versie", "â")
     try:
         ls = json.loads(sessie_raw)
     except Exception:
@@ -4488,16 +4531,16 @@ def render_live_monitor() -> None:
     with sc2:
         st.markdown(metric_card("PENDING",           str(scan_data["signals_pending"]), accent="purple"), unsafe_allow_html=True)
     with sc3:
-        st.markdown(metric_card("COINS GESCAND",     str(ls.get("gescand", "–")),       accent="blue"),   unsafe_allow_html=True)
+        st.markdown(metric_card("COINS GESCAND",     str(ls.get("gescand", "â")),       accent="blue"),   unsafe_allow_html=True)
     with sc4:
         fouten = ls.get("fouten", 0)
         st.markdown(metric_card("SCAN FOUTEN", str(fouten), accent="red" if fouten > 0 else "green"), unsafe_allow_html=True)
 
     st.markdown(
         f'<div class="scanner-card" style="margin-top:8px;">'
-        f'<div class="scanner-title">Laatste scan — {laatste_scan} (v{scanner_ver})</div>'
+        f'<div class="scanner-title">Laatste scan â {laatste_scan} (v{scanner_ver})</div>'
         f'<div class="scanner-row"><span class="scanner-key">Score drempel</span>'
-        f'<span class="scanner-val">{ls.get("score_drempel","–")} (BTC={ls.get("btc_regime","–")})</span></div>'
+        f'<span class="scanner-val">{ls.get("score_drempel","â")} (BTC={ls.get("btc_regime","â")})</span></div>'
         f'<div class="scanner-row"><span class="scanner-key">Duur</span>'
         f'<span class="scanner-val">{ls.get("duur_sec",0):.0f}s</span></div>'
         f'<div class="scanner-row"><span class="scanner-key">Live / Shadow</span>'
@@ -4536,9 +4579,9 @@ def render_live_monitor() -> None:
             unsafe_allow_html=True,
         )
 
-    # ── Gesloten vandaag ─────────────────────────────────────
+    # ââ Gesloten vandaag âââââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-title" style="font-size:15px;">📋 Gesloten vandaag</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:15px;">ð Gesloten vandaag</div>', unsafe_allow_html=True)
 
     today_str  = now_utc().strftime("%Y-%m-%d")
     today_df   = real_df[real_df["day"] == today_str].copy() if not real_df.empty else pd.DataFrame()
@@ -4560,7 +4603,7 @@ def render_live_monitor() -> None:
             pnl_e_v = safe_float(row.get("pnl_eur"))
             tc_v    = "tc-win"   if out_v == "WIN" else "tc-loss"
             pk_v    = "var(--win)" if out_v == "WIN" else "var(--loss)"
-            em_v    = "✅" if out_v == "WIN" else "❌"
+            em_v    = "â" if out_v == "WIN" else "â"
             tijd_v  = format_dt(row.get("closed_at") or row.get("_datetime_raw"))
             st.markdown(
                 f'<div class="tc {tc_v}" style="margin-bottom:6px;">'
@@ -4584,26 +4627,26 @@ def render_live_monitor() -> None:
 # NAVIGATIE HELPERS
 # ============================================================
 PAGE_NAMES = {
-    "live_monitor": "🔴 Live Monitor",
-    "dashboard":   "▸ Dashboard",
-    "coach":       "🤖 AI Coach",
-    "positions":   "📍 Open Posities",
-    "monitor":     "📋 Coach Monitor",
-    "health":      "🏥 Systeem Health",
-    "controls":    "🎮 Bot Controls",
-    "live":        "💶 Live Performance",
-    "sim":         "🔮 Simulator",
-    "shadow":      "🎭 Shadow Review",
-    "analyse":     "📐 Analyse",
-    "coins":       "🪙 Coin Analyse",
-    "kalender":    "🗓️ P&L Kalender",
-    "correlatie":  "🔗 BTC Correlatie",
-    "portfolio":   "💼 Portfolio",
-    "signals":     "⚡ Pre-BUY Signals",
-    "scoreboard":  "🏆 Scoreboard",
-    "regime":      "₿ BTC Regime",
-    "settings":    "⚙️ Instellingen",
-    "help":        "🔧 Help & Debug",
+    "live_monitor": "ð´ Live Monitor",
+    "dashboard":   "â¸ Dashboard",
+    "coach":       "ð¤ AI Coach",
+    "positions":   "ð Open Posities",
+    "monitor":     "ð Coach Monitor",
+    "health":      "ð¥ Systeem Health",
+    "controls":    "ð® Bot Controls",
+    "live":        "ð¶ Live Performance",
+    "sim":         "ð® Simulator",
+    "shadow":      "ð­ Shadow Review",
+    "analyse":     "ð Analyse",
+    "coins":       "ðª Coin Analyse",
+    "kalender":    "ðï¸ P&L Kalender",
+    "correlatie":  "ð BTC Correlatie",
+    "portfolio":   "ð¼ Portfolio",
+    "signals":     "â¡ Pre-BUY Signals",
+    "scoreboard":  "ð Scoreboard",
+    "regime":      "â¿ BTC Regime",
+    "settings":    "âï¸ Instellingen",
+    "help":        "ð§ Help & Debug",
 }
 
 
@@ -4622,7 +4665,7 @@ def render_sidebar() -> None:
     """Linker navigatie sidebar."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
     current_name = PAGE_NAMES.get(st.session_state.page, st.session_state.page)
-    st.markdown(f'<div class="page-chip">📍 {current_name}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="page-chip">ð {current_name}</div>', unsafe_allow_html=True)
     st.markdown('<div class="nav-header">Navigatie</div>', unsafe_allow_html=True)
     st.markdown('<div class="nav-caption">Actieve pagina heeft cyan highlight.</div>', unsafe_allow_html=True)
 
@@ -4630,51 +4673,51 @@ def render_sidebar() -> None:
     hk1, hk2 = st.columns(2, gap="small")
     with hk1:
         st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("🔄 Refresh", key="sidebar_refresh", use_container_width=True):
+        if st.button("ð Refresh", key="sidebar_refresh", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
     with hk2:
         st.markdown('<div class="tiny-button">', unsafe_allow_html=True)
-        if st.button("🐛 Debug", key="sidebar_debug", use_container_width=True):
+        if st.button("ð Debug", key="sidebar_debug", use_container_width=True):
             st.session_state.show_debug = not st.session_state.show_debug
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="nav-header">📊 Overzicht</div>', unsafe_allow_html=True)
-    nav_btn("🔴 Live Monitor", "live_monitor")
-    nav_btn("▸ Dashboard", "dashboard")
-    nav_btn("🤖 AI Coach", "coach")
-    nav_btn("📍 Open Posities", "positions")
+    st.markdown('<div class="nav-header">ð Overzicht</div>', unsafe_allow_html=True)
+    nav_btn("ð´ Live Monitor", "live_monitor")
+    nav_btn("â¸ Dashboard", "dashboard")
+    nav_btn("ð¤ AI Coach", "coach")
+    nav_btn("ð Open Posities", "positions")
 
-    st.markdown('<div class="nav-header" style="margin-top:8px;">🤖 Bot Beheer</div>', unsafe_allow_html=True)
-    nav_btn("🎮 Bot Controls", "controls")
-    nav_btn("🏥 Systeem Health", "health")
-    nav_btn("📋 Coach Monitor", "monitor")
+    st.markdown('<div class="nav-header" style="margin-top:8px;">ð¤ Bot Beheer</div>', unsafe_allow_html=True)
+    nav_btn("ð® Bot Controls", "controls")
+    nav_btn("ð¥ Systeem Health", "health")
+    nav_btn("ð Coach Monitor", "monitor")
 
-    st.markdown('<div class="nav-header" style="margin-top:8px;">📈 Trade Analyse</div>', unsafe_allow_html=True)
-    nav_btn("💶 Live Performance", "live")
-    nav_btn("🔮 Simulator", "sim")
-    nav_btn("🎭 Shadow Review", "shadow")
-    nav_btn("📐 Analyse & Drawdown", "analyse")
-    nav_btn("🪙 Coin Analyse", "coins")
+    st.markdown('<div class="nav-header" style="margin-top:8px;">ð Trade Analyse</div>', unsafe_allow_html=True)
+    nav_btn("ð¶ Live Performance", "live")
+    nav_btn("ð® Simulator", "sim")
+    nav_btn("ð­ Shadow Review", "shadow")
+    nav_btn("ð Analyse & Drawdown", "analyse")
+    nav_btn("ðª Coin Analyse", "coins")
 
-    st.markdown('<div class="nav-header" style="margin-top:8px;">🗓️ Kalender & Correlatie</div>', unsafe_allow_html=True)
-    nav_btn("🗓️ P&L Kalender", "kalender")
-    nav_btn("🔗 BTC Correlatie", "correlatie")
+    st.markdown('<div class="nav-header" style="margin-top:8px;">ðï¸ Kalender & Correlatie</div>', unsafe_allow_html=True)
+    nav_btn("ðï¸ P&L Kalender", "kalender")
+    nav_btn("ð BTC Correlatie", "correlatie")
 
-    st.markdown('<div class="nav-header" style="margin-top:8px;">💼 Systeem</div>', unsafe_allow_html=True)
-    nav_btn("💼 Portfolio", "portfolio")
-    nav_btn("⚡ Pre-BUY Signals", "signals")
-    nav_btn("🏆 Scoreboard", "scoreboard")
-    nav_btn("₿ BTC Regime", "regime")
-    nav_btn("⚙️ Instellingen", "settings")
-    nav_btn("🔧 Help & Debug", "help")
+    st.markdown('<div class="nav-header" style="margin-top:8px;">ð¼ Systeem</div>', unsafe_allow_html=True)
+    nav_btn("ð¼ Portfolio", "portfolio")
+    nav_btn("â¡ Pre-BUY Signals", "signals")
+    nav_btn("ð Scoreboard", "scoreboard")
+    nav_btn("â¿ BTC Regime", "regime")
+    nav_btn("âï¸ Instellingen", "settings")
+    nav_btn("ð§ Help & Debug", "help")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # Auto refresh — instelbaar interval
-    auto = st.checkbox("⚡ Auto-refresh", value=st.session_state.auto_refresh)
+    # Auto refresh â instelbaar interval
+    auto = st.checkbox("â¡ Auto-refresh", value=st.session_state.auto_refresh)
     if auto != st.session_state.auto_refresh:
         st.session_state.auto_refresh = auto
     if auto:
@@ -4686,12 +4729,12 @@ def render_sidebar() -> None:
             key="sidebar_refresh_interval",
         )
         st.session_state["refresh_interval"] = refresh_interval
-        st.caption(f"🔄 Ververst elke {refresh_interval}s")
+        st.caption(f"ð Ververst elke {refresh_interval}s")
         time.sleep(refresh_interval)
         st.rerun()
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="small-muted">🕐 {now_utc().strftime("%H:%M:%S UTC")}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="small-muted">ð {now_utc().strftime("%H:%M:%S UTC")}</div>', unsafe_allow_html=True)
     st.markdown('<div class="small-muted">Crypto AI Terminal v3.0</div>', unsafe_allow_html=True)
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -4815,8 +4858,8 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     regime = safe_str(row.get("regime"))
     eur_deel = f" ({format_money(pnl_eur)})" if is_real and abs(pnl_eur) > 0.0001 else ""
     analyse = (
-        f"{'✅ WIN' if outcome=='WIN' else '❌ LOSS'} | {sym} | {setup} | {regime} | {trade_type}\n"
-        f"Entry: {format_price(entry)} → Stop: {format_price(stop)} → Target: {format_price(target)} | R/R 1:{rr:.2f}\n"
+        f"{'â WIN' if outcome=='WIN' else 'â LOSS'} | {sym} | {setup} | {regime} | {trade_type}\n"
+        f"Entry: {format_price(entry)} â Stop: {format_price(stop)} â Target: {format_price(target)} | R/R 1:{rr:.2f}\n"
         f"Resultaat: {format_r(pnl_r)}{eur_deel} | Duur: {dur_str}"
     )
     st.markdown(f'<div class="trade-note">{analyse}</div>', unsafe_allow_html=True)
@@ -4824,7 +4867,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
 
 
 # ============================================================
-# TOP BALK — bot status + BTC regime + key metrics
+# TOP BALK â bot status + BTC regime + key metrics
 # ============================================================
 def render_top_bar(
     bot_label:     str,
@@ -4859,21 +4902,21 @@ def render_top_bar(
     pf_cls       = "chip-green" if pf30 >= 1.5 else "chip-red"
     cons_cls     = "chip-red"   if cons >= 3   else "chip-gray"
     pnl_sign = "+" if pnl_today >= 0 else ""
-    db_ok    = "✅" if db_ready() else "⚠️"
+    db_ok    = "â" if db_ready() else "â ï¸"
 
     st.markdown(f"""
     <div class="topbar">
         <div class="brand">
             <div class="brand-mark"></div>
             <div>
-                <div class="brand-title">₿ CRYPTO AI TERMINAL</div>
-                <div class="brand-sub">⚡ AUTONOMOUS TRADING SYSTEM V3.0</div>
+                <div class="brand-title">â¿ CRYPTO AI TERMINAL</div>
+                <div class="brand-sub">â¡ AUTONOMOUS TRADING SYSTEM V3.0</div>
             </div>
         </div>
         <div class="top-status-row">
             <span class="top-status-chip {bot_chip_cls}">{bot_emoji} {bot_label}</span>
-            <span class="top-status-chip {btc_chip_cls}">₿ {btc_regime} {btc_strength:.0f}%  €{btc_close:,.0f}</span>
-            <span class="top-status-chip {pnl_cls}">P&L {pnl_sign}€{abs(pnl_today):.2f}</span>
+            <span class="top-status-chip {btc_chip_cls}">â¿ {btc_regime} {btc_strength:.0f}%  â¬{btc_close:,.0f}</span>
+            <span class="top-status-chip {pnl_cls}">P&L {pnl_sign}â¬{abs(pnl_today):.2f}</span>
             <span class="top-status-chip {pf_cls}">PF {pf30:.2f}</span>
             <span class="top-status-chip {cons_cls}">STREAK {cons}x</span>
             <span class="top-status-chip chip-blue">OPEN {open_count}</span>
@@ -4894,11 +4937,11 @@ def render_dashboard(
     shadow_df:  pd.DataFrame,
     source_mode: str,
 ) -> None:
-    """Dashboard pagina — hero metrics + grafieken + trade tape."""
+    """Dashboard pagina â hero metrics + grafieken + trade tape."""
     render_alarm_banner()
     st.markdown('<div class="panel">', unsafe_allow_html=True)
 
-    # ── SYSTEEM STATUS BAR — live indicators ─────────────────
+    # ââ SYSTEEM STATUS BAR â live indicators âââââââââââââââââ
     scanner = get_scanner_status()
     mins    = scanner.get("mins_since_scan", -1)
     scan_ok = mins >= 0 and mins < 20
@@ -4917,22 +4960,22 @@ def render_dashboard(
 
     st.markdown(f"""
     <div class="bot-status-bar">
-        <span class="small-muted">⬡ SYSTEEM</span>
-        <span class="{db_cls}">DB {"✓" if db_ready() else "✗"}</span>
+        <span class="small-muted">â¬¡ SYSTEEM</span>
+        <span class="{db_cls}">DB {"â" if db_ready() else "â"}</span>
         <span class="{scan_cls}">SCANNER {scan_txt}</span>
         <span class="{btc_cls}">BTC {btc_r} {btc_s:.0f}%</span>
-        <span class="status-ok">⚡ {sig_pend} signals actief</span>
-        <span class="status-ok">📂 {open_live} open trades</span>
+        <span class="status-ok">â¡ {sig_pend} signals actief</span>
+        <span class="status-ok">ð {open_live} open trades</span>
         <span style="color:var(--muted);font-size:11px;margin-left:auto;">
             vandaag: {sig_tot} signalen gegenereerd
         </span>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── PERMANENTE WIN/LOSS BAR ──────────────────────────────
+    # ââ PERMANENTE WIN/LOSS BAR ââââââââââââââââââââââââââââââ
     render_overall_winloss_bar(history_df)
 
-    # ── SCANNER + DAGBUDGET WIDGETS ─────────────────────────
+    # ââ SCANNER + DAGBUDGET WIDGETS âââââââââââââââââââââââââ
     wb1, wb2, wb3 = st.columns([1.5, 1.0, 1.0], gap="small")
     with wb1:
         render_scanner_status_widget()
@@ -4943,7 +4986,7 @@ def render_dashboard(
         cons = get_consecutive_losses(real_df)
         pf30 = get_profit_factor_30d(real_df)
         rf   = get_recovery_factor(real_df)
-        st.markdown(metric_card("Verlies Streak nu", f"{cons}x {'🔴' if cons >= 3 else '🟡' if cons >= 1 else '✅'}", "verliezen op rij", "red" if cons >= 3 else "orange" if cons >= 1 else "green"), unsafe_allow_html=True)
+        st.markdown(metric_card("Verlies Streak nu", f"{cons}x {'ð´' if cons >= 3 else 'ð¡' if cons >= 1 else 'â'}", "verliezen op rij", "red" if cons >= 3 else "orange" if cons >= 1 else "green"), unsafe_allow_html=True)
         rf_disp = "N/A (nog geen trades)" if rf == 0.0 else f"{rf:.2f}"
         rf_acc = "blue" if rf == 0.0 else ("green" if rf >= 2.0 else "orange" if rf >= 1.0 else "red")
         st.markdown(metric_card("Recovery Factor", rf_disp, "doel: >2.0 | PF:" + f"{pf30:.2f}", rf_acc), unsafe_allow_html=True)
@@ -4964,12 +5007,12 @@ def render_dashboard(
         _wt3 = get_winrate_totals()
         wr_real_v = _wt3.get("REAL", {}).get("winrate", summary_real["winrate"])
         wr_real = format_pct(wr_real_v)
-        eur_sub = f"€{summary_real['total_eur']:.4f}" if abs(summary_real['total_eur']) > 0 else "—"
+        eur_sub = f"â¬{summary_real['total_eur']:.4f}" if abs(summary_real['total_eur']) > 0 else "â"
         st.markdown(metric_card("Win Rate (live)", wr_real, eur_sub, "orange"), unsafe_allow_html=True)
     with c4:
         pf = summary_real["profit_factor"]
         pf_color = "green" if pf >= 1.5 else "red"
-        st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", "✅ OK" if pf >= 1.5 else "⚠️ Laag", pf_color), unsafe_allow_html=True)
+        st.markdown(metric_card("Profit Factor 30d", f"{pf:.2f}", "â OK" if pf >= 1.5 else "â ï¸ Laag", pf_color), unsafe_allow_html=True)
     with c5:
         st.markdown(metric_card("Expectancy", f"{summary_real['expectancy']:.3f} R", "Per live trade", "purple"), unsafe_allow_html=True)
     with c6:
@@ -5017,7 +5060,7 @@ def render_dashboard(
         dominant = "green" if summary_real["winrate"] >= 50 else "red"
         dom_label = "WINST DOMINEERT" if dominant == "green" else "VERLIES DOMINEERT"
         st.markdown('<div class="hero-card">', unsafe_allow_html=True)
-        st.markdown(f'<div class="dominance-pill {dominant}">{"🟢" if dominant=="green" else "🔴"} {dom_label}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="dominance-pill {dominant}">{"ð¢" if dominant=="green" else "ð´"} {dom_label}</div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Live Statistieken</div>', unsafe_allow_html=True)
 
         stats_rows = [
@@ -5040,7 +5083,7 @@ def render_dashboard(
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     # Tabs voor analyse
-    tab_filters, tab_charts, tab_tape = st.tabs(["🔍 Gefilterde Data", "📊 Analyse Charts", "📋 Trade Tape"])
+    tab_filters, tab_charts, tab_tape = st.tabs(["ð Gefilterde Data", "ð Analyse Charts", "ð Trade Tape"])
 
     with tab_filters:
         filtered = render_filters(history_df, include_trade_type=True)
@@ -5078,7 +5121,7 @@ def render_dashboard(
 
     # Claude AI knoppen
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("### 🧠 Claude AI Analyses")
+    st.markdown("### ð§  Claude AI Analyses")
     ck1, ck2, ck3 = st.columns(3, gap="small")
     with ck1:
         claude_btn("Analyseer 30d performance", f"""
@@ -5127,7 +5170,7 @@ def render_trade_page(
     filtered = render_filters(df, include_trade_type=False)
     summary  = perf_summary(filtered)
 
-    # ── METRICS ──────────────────────────────────────────────
+    # ââ METRICS ââââââââââââââââââââââââââââââââââââââââââââââ
     m1, m2, m3, m4, m5 = st.columns(5, gap="small")
     with m1: st.markdown(metric_card("Trades", str(int(summary["count"])), "", "blue"), unsafe_allow_html=True)
     with m2: st.markdown(metric_card("Win Rate", format_pct(summary["winrate"]), f"E: {summary['expectancy']:.3f}R", "green"), unsafe_allow_html=True)
@@ -5135,11 +5178,11 @@ def render_trade_page(
         if is_real_page:
             st.markdown(metric_card("Netto EUR", format_money(summary["total_r"] * MAX_PER_TRADE_EUR / 0.5 if summary["total_eur"] == 0 else summary["total_eur"]).replace("+",""), f"R: {format_r(summary['total_r'])}", "orange"), unsafe_allow_html=True)
         else:
-            st.markdown(metric_card("Totale R", format_r(summary["total_r"]), "SIM — geen echt geld", "orange"), unsafe_allow_html=True)
-    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', "✅ OK" if summary["profit_factor"] >= 1.5 else "⚠️ Laag", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
+            st.markdown(metric_card("Totale R", format_r(summary["total_r"]), "SIM â geen echt geld", "orange"), unsafe_allow_html=True)
+    with m4: st.markdown(metric_card("Profit Factor", f'{summary["profit_factor"]:.2f}', "â OK" if summary["profit_factor"] >= 1.5 else "â ï¸ Laag", "purple" if summary["profit_factor"] >= 1.5 else "red"), unsafe_allow_html=True)
     with m5: st.markdown(metric_card("Max Drawdown", f'{summary["max_dd"]:.2f} R', "", "red"), unsafe_allow_html=True)
 
-    # ── CHARTS ──────────────────────────────────────────────
+    # ââ CHARTS ââââââââââââââââââââââââââââââââââââââââââââââ
     c1, c2 = st.columns([1.4, 1.0], gap="small")
     with c1:
         st.plotly_chart(chart_equity_curve(filtered, f"{title} Equity Curve"),
@@ -5158,17 +5201,17 @@ def render_trade_page(
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── TRADE LIJST + DETAIL ─────────────────────────────────
+    # ââ TRADE LIJST + DETAIL âââââââââââââââââââââââââââââââââ
     tl, tr = st.columns([1.2, 0.95], gap="small")
     with tl:
-        render_trade_list(filtered, f"{title} — Trade Lijst")
+        render_trade_list(filtered, f"{title} â Trade Lijst")
     with tr:
         selected = get_selected_trade(filtered)
         render_trade_detail(selected)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    # ── DATA TABEL — alleen relevante kolommen ──────────────
+    # ââ DATA TABEL â alleen relevante kolommen ââââââââââââââ
     # EUR kolommen alleen bij REAL pagina
     basis_cols = ["symbol","setup_type","regime","timeframe","outcome","pnl_r","score"]
     eur_cols   = ["pnl_eur"] if is_real_page else []
@@ -5195,7 +5238,7 @@ def render_trade_page(
         st.dataframe(styled, hide_index=True, use_container_width=True)
 
     csv = filtered.to_csv(index=False).encode("utf-8")
-    st.download_button(f"⬇️ Download {title} CSV", csv, f"{page_name}_trades.csv", "text/csv", use_container_width=True)
+    st.download_button(f"â¬ï¸ Download {title} CSV", csv, f"{page_name}_trades.csv", "text/csv", use_container_width=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -5250,24 +5293,24 @@ def render_portfolio_page(snapshot: dict, assets_df: pd.DataFrame, snap_mode: st
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    if st.button("🔄 Refresh Portfolio van Bitvavo API", use_container_width=True, key="portfolio_refresh"):
+    if st.button("ð Refresh Portfolio van Bitvavo API", use_container_width=True, key="portfolio_refresh"):
         if API_KEY and API_SECRET:
             try:
                 new_snap = build_snapshot()
-                st.success(f"✅ Portfolio bijgewerkt! Totaal: {format_money(new_snap.get('total_portfolio_eur',0)).replace('+','')}")
+                st.success(f"â Portfolio bijgewerkt! Totaal: {format_money(new_snap.get('total_portfolio_eur',0)).replace('+','')}")
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Bitvavo API fout: {e}")
+                st.error(f"â Bitvavo API fout: {e}")
         else:
-            st.warning("⚠️ BITVAVO_API_KEY en BITVAVO_API_SECRET niet ingesteld in Render.")
+            st.warning("â ï¸ BITVAVO_API_KEY en BITVAVO_API_SECRET niet ingesteld in Render.")
 
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_signals_page(pending_df: pd.DataFrame) -> None:
-    """Pre-BUY Signals pagina — aangemaakt door multi_coin_score.py."""
+    """Pre-BUY Signals pagina â aangemaakt door multi_coin_score.py."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📋 Pre-BUY Signals</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð Pre-BUY Signals</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Actieve signals aangemaakt door multi_coin_score.py. '
@@ -5286,7 +5329,7 @@ def render_signals_page(pending_df: pd.DataFrame) -> None:
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    st.success(f"✅ {len(pending_df)} actief signal(s)")
+    st.success(f"â {len(pending_df)} actief signal(s)")
 
     # Score histogram
     st.plotly_chart(chart_pending_scores(pending_df), use_container_width=True,
@@ -5320,7 +5363,7 @@ def render_signals_page(pending_df: pd.DataFrame) -> None:
         st.markdown(f"""
         <div class="signal-card">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                <div class="signal-symbol">{sym} — {setup}/{regime} — {tf}</div>
+                <div class="signal-symbol">{sym} â {setup}/{regime} â {tf}</div>
                 <span class="top-status-chip {score_cls}">Score: {score}</span>
             </div>
             <div class="signal-details">
@@ -5339,15 +5382,15 @@ def render_signals_page(pending_df: pd.DataFrame) -> None:
 
 
 def render_scoreboard_page(scoreboard_df: pd.DataFrame) -> None:
-    """Experience Scoreboard pagina — lerende systeem van de bot."""
+    """Experience Scoreboard pagina â lerende systeem van de bot."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">🏆 Experience Scoreboard</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð Experience Scoreboard</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Win rates per setup/regime combinatie. '
         'Gebouwd uit alle gesloten trades. '
         'multi_coin_score.py gebruikt dit als experience weight in de score berekening. '
-        'Groen ≥60% | Geel ≥45% | Rood <45%.'
+        'Groen â¥60% | Geel â¥45% | Rood <45%.'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -5390,7 +5433,7 @@ def render_scoreboard_page(scoreboard_df: pd.DataFrame) -> None:
 
         st.markdown(f"""
         <div class="score-row">
-            <div class="score-left">{setup} / {regime} — {n} trades ({wins}W / {losses}L)</div>
+            <div class="score-left">{setup} / {regime} â {n} trades ({wins}W / {losses}L)</div>
             <div style="display:flex;gap:6px;align-items:center;">
                 <span class="top-status-chip {wr_cls}">WR {wr:.1f}%</span>
                 <span class="top-status-chip {pnl_cls}">PnL {format_money(avg_pnl)}</span>
@@ -5405,7 +5448,7 @@ def render_scoreboard_page(scoreboard_df: pd.DataFrame) -> None:
 def render_regime_page() -> None:
     """BTC Regime + Markt overzicht pagina."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📊 BTC Regime & Markt Overzicht</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð BTC Regime & Markt Overzicht</div>', unsafe_allow_html=True)
 
     btc = get_btc_regime()
     regime   = safe_str(btc.get("regime"), "UNKNOWN").upper()
@@ -5416,15 +5459,15 @@ def render_regime_page() -> None:
     ts       = btc.get("ts_utc")
 
     badge_cls = {"BULL":"regime-bull","BEAR":"regime-bear","RANGE":"regime-range"}.get(regime,"regime-unkown")
-    regime_emoji = {"BULL":"🟢","BEAR":"🔴","RANGE":"🟡"}.get(regime,"⚪")
+    regime_emoji = {"BULL":"ð¢","BEAR":"ð´","RANGE":"ð¡"}.get(regime,"âª")
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
         st.markdown(metric_card("BTC Regime", f"{regime_emoji} {regime}", f"sterkte {strength:.1f}%", "orange" if regime=="BULL" else "red"), unsafe_allow_html=True)
     with c2:
-        st.markdown(metric_card("BTC Prijs", f"€{close:,.0f}", "", "blue"), unsafe_allow_html=True)
+        st.markdown(metric_card("BTC Prijs", f"â¬{close:,.0f}", "", "blue"), unsafe_allow_html=True)
     with c3:
-        st.markdown(metric_card("EMA200", f"€{ema200:,.0f}", f"{pct_ema:+.2f}% afstand", "purple"), unsafe_allow_html=True)
+        st.markdown(metric_card("EMA200", f"â¬{ema200:,.0f}", f"{pct_ema:+.2f}% afstand", "purple"), unsafe_allow_html=True)
     with c4:
         st.markdown(metric_card("Bijgewerkt", format_dt(ts), "", "green"), unsafe_allow_html=True)
 
@@ -5433,12 +5476,12 @@ def render_regime_page() -> None:
     st.markdown(f"""
     <div class="trade-note">
         <b>BTC Regime Impact op de Bot:</b><br><br>
-        🟢 <b>BULL</b> — Normale trading. auto_buy actief. Scanner genereert en voert signals uit.<br>
-        🟡 <b>RANGE</b> — Voorzichtige trading. auto_buy actief maar scorer is conservatiever.<br>
-        🔴 <b>BEAR</b> — auto_buy GEBLOKKEERD (BTC_SKIP_BEAR=True). Scanner genereert wel Pre-BUY signals
+        ð¢ <b>BULL</b> â Normale trading. auto_buy actief. Scanner genereert en voert signals uit.<br>
+        ð¡ <b>RANGE</b> â Voorzichtige trading. auto_buy actief maar scorer is conservatiever.<br>
+        ð´ <b>BEAR</b> â auto_buy GEBLOKKEERD (BTC_SKIP_BEAR=True). Scanner genereert wel Pre-BUY signals
         maar /auto_buy wordt niet getriggerd. Shadow trades gaan gewoon door.<br><br>
         <b>Huidig regime:</b> <span class="regime-badge {badge_cls}">{regime_emoji} {regime}</span>
-        sterkte {strength:.1f}% | BTC €{close:,.0f} vs EMA200 €{ema200:,.0f} ({pct_ema:+.2f}%)
+        sterkte {strength:.1f}% | BTC â¬{close:,.0f} vs EMA200 â¬{ema200:,.0f} ({pct_ema:+.2f}%)
     </div>
     """, unsafe_allow_html=True)
 
@@ -5471,8 +5514,8 @@ Geef advies in 3 zinnen Nederlands.
 BTC NU:
 - Regime:  {regime}
 - Sterkte: {strength:.1f}%
-- Prijs:   €{close:,.0f}
-- EMA200:  €{ema200:,.0f}
+- Prijs:   â¬{close:,.0f}
+- EMA200:  â¬{ema200:,.0f}
 - Afstand: {pct_ema:+.2f}%
 
 1. Wat betekent dit regime voor de bot?
@@ -5487,7 +5530,7 @@ BTC NU:
 def render_settings_page() -> None:
     """Bot Instellingen pagina met WhatsApp commands en configuratie overzicht."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">⚙️ Bot Instellingen</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">âï¸ Bot Instellingen</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Overzicht van alle bot limieten, WhatsApp commands en Render services. '
@@ -5499,7 +5542,7 @@ def render_settings_page() -> None:
     col_left, col_right = st.columns(2, gap="medium")
 
     with col_left:
-        st.markdown("#### 📱 WhatsApp Commands")
+        st.markdown("#### ð± WhatsApp Commands")
         st.caption("Stuur via WhatsApp naar de bot om hem te bedienen.")
         commands = [
             ("START",        "Bot begint traden"),
@@ -5517,7 +5560,7 @@ def render_settings_page() -> None:
             st.markdown(f'<div class="list-row"><div class="list-left"><code>{cmd}</code></div><div class="list-right">{desc}</div></div>', unsafe_allow_html=True)
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("#### ⏰ Render Cron Jobs")
+        st.markdown("#### â° Render Cron Jobs")
         st.caption("Automatische rapporten via Render Cron scheduler.")
         crons = [
             ("0 8 * * *",    "/send_daily_rapport",   "Dagelijks 08:00 UTC"),
@@ -5530,13 +5573,13 @@ def render_settings_page() -> None:
             st.markdown(f'<div class="list-row"><div class="list-left"><code>{cron_expr} {endpoint}</code></div><div class="list-right">{desc}</div></div>', unsafe_allow_html=True)
 
     with col_right:
-        st.markdown("#### ⚙️ Fase 1 Limieten")
+        st.markdown("#### âï¸ Fase 1 Limieten")
         st.caption("Huidige bot limieten zoals ingesteld in Render Environment Variables.")
         limits = [
-            ("MAX_PER_TRADE_EUR",       f"€{MAX_PER_TRADE_EUR:.2f}",       "Max bedrag per trade"),
+            ("MAX_PER_TRADE_EUR",       f"â¬{MAX_PER_TRADE_EUR:.2f}",       "Max bedrag per trade"),
             ("MAX_REAL_TRADES_PER_DAY", str(MAX_REAL_TRADES_PER_DAY),      "Max trades per dag"),
             ("MAX_OPEN_REAL_TRADES",    str(MAX_OPEN_REAL_TRADES),         "Max open trades"),
-            ("DAILY_STOP_LOSS_EUR",     f"€{DAILY_STOP_LOSS_EUR:.2f}",     "Dagbudget (informatief)"),
+            ("DAILY_STOP_LOSS_EUR",     f"â¬{DAILY_STOP_LOSS_EUR:.2f}",     "Dagbudget (informatief)"),
             ("MIN_SCORE_TO_TRADE",      str(MIN_SCORE_TO_TRADE),           "Min score voor BUY"),
             ("TRADING_HOURS_START",     f"{TRADING_HOURS_START}:00 UTC",   "Start trading"),
             ("TRADING_HOURS_END",       f"{TRADING_HOURS_END}:00 UTC",     "Einde trading"),
@@ -5551,15 +5594,15 @@ def render_settings_page() -> None:
         render_service_monitor_widget()
 
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-        st.markdown("#### 🔗 Bot Architectuur")
+        st.markdown("#### ð Bot Architectuur")
         st.markdown("""
         <div class="trade-note">
-            <b>Laag 1 — Data:</b> history_fetcher → candles, build_btc_regime → btc_regime_4h,
-            history_simulator → scoreboard, regime_labeler → market_regime<br><br>
-            <b>Laag 2 — Signalen:</b> multi_coin_score → pending_approvals → /auto_buy op webhook<br><br>
-            <b>Laag 3 — Uitvoering:</b> whatsapp_webhook → live_trader.buy_eur() → Bitvavo BUY<br><br>
-            <b>Laag 4 — Bewaking:</b> trade_monitor → SELL via live_trader, shadow_trades meekijkend<br><br>
-            <b>Laag 5 — Weergave:</b> app.py → dit dashboard (leest alles, schrijft niets)
+            <b>Laag 1 â Data:</b> history_fetcher â candles, build_btc_regime â btc_regime_4h,
+            history_simulator â scoreboard, regime_labeler â market_regime<br><br>
+            <b>Laag 2 â Signalen:</b> multi_coin_score â pending_approvals â /auto_buy op webhook<br><br>
+            <b>Laag 3 â Uitvoering:</b> whatsapp_webhook â live_trader.buy_eur() â Bitvavo BUY<br><br>
+            <b>Laag 4 â Bewaking:</b> trade_monitor â SELL via live_trader, shadow_trades meekijkend<br><br>
+            <b>Laag 5 â Weergave:</b> app.py â dit dashboard (leest alles, schrijft niets)
         </div>
         """, unsafe_allow_html=True)
 
@@ -5568,31 +5611,31 @@ def render_settings_page() -> None:
 
 
 # ============================================================
-# v3.0 — RENDER SERVICES MONITOR WIDGET
+# v3.0 â RENDER SERVICES MONITOR WIDGET
 # ============================================================
 def render_service_monitor_widget() -> None:
     """
     Toont de live status van alle Render services.
 
-    Bot systeem draait ALTIJD — dit toont per service:
-    ─────────────────────────────────────────────────────────
-    ✅ ACTIEF    → laatste heartbeat < drempel
-    ⚠️ TRAAG    → heartbeat net buiten drempel
-    ❌ OFFLINE  → geen heartbeat / te oud
-    🕐 ONBEKEND → nooit gelopen of geen data
+    Bot systeem draait ALTIJD â dit toont per service:
+    âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    â ACTIEF    â laatste heartbeat < drempel
+    â ï¸ TRAAG    â heartbeat net buiten drempel
+    â OFFLINE  â geen heartbeat / te oud
+    ð ONBEKEND â nooit gelopen of geen data
 
     Services:
-    ─────────────────────────────────────────────────────────
-    🌐 whatsapp_webhook.py  → Web Service (24/7)
-    🔄 trade_monitor.py     → Background Worker (24/7)
-    📊 app.py               → Dashboard (dit, 24/7)
-    🔍 multi_coin_score.py  → Cron Job (*/30 * * * *)
-    📡 regime_labeler.py    → Cron Job (0 */6 * * *)
-    📈 build_btc_regime.py  → Cron Job (0 */4 * * *)
-    📥 history_fetcher.py   → Cron Job (0 */2 * * *)
-    🧠 ai_coach.py          → Cron Job (0 8 * * *)
+    âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+    ð whatsapp_webhook.py  â Web Service (24/7)
+    ð trade_monitor.py     â Background Worker (24/7)
+    ð app.py               â Dashboard (dit, 24/7)
+    ð multi_coin_score.py  â Cron Job (*/30 * * * *)
+    ð¡ regime_labeler.py    â Cron Job (0 */6 * * *)
+    ð build_btc_regime.py  â Cron Job (0 */4 * * *)
+    ð¥ history_fetcher.py   â Cron Job (0 */2 * * *)
+    ð§  ai_coach.py          â Cron Job (0 8 * * *)
     """
-    st.markdown("#### 📋 Render Services Monitor")
+    st.markdown("#### ð Render Services Monitor")
     st.caption(
         "Bot systeem draait altijd. "
         "Status afgeleid uit bot_state heartbeats en DB data."
@@ -5622,15 +5665,15 @@ def render_service_monitor_widget() -> None:
                      drempel_warn: float) -> Tuple[str, str, str]:
         """Geeft (emoji, tekst, kleur) terug op basis van minuten geleden."""
         if min_geleden == float("inf"):
-            return "🕐", "Onbekend", "#4e5a7a"
+            return "ð", "Onbekend", "#4e5a7a"
         elif min_geleden <= drempel_ok:
-            return "✅", f"{min_geleden:.0f}m geleden", "#00ff41"
+            return "â", f"{min_geleden:.0f}m geleden", "#00ff41"
         elif min_geleden <= drempel_warn:
-            return "⚠️", f"{min_geleden:.0f}m geleden", "#00e5ff"
+            return "â ï¸", f"{min_geleden:.0f}m geleden", "#00e5ff"
         else:
-            return "❌", f"{min_geleden:.0f}m geleden", "#ff1144"
+            return "â", f"{min_geleden:.0f}m geleden", "#ff1144"
 
-    # ── Data ophalen ─────────────────────────────────────────
+    # ââ Data ophalen âââââââââââââââââââââââââââââââââââââââââ
     # Monitor laatste run
     monitor_ts    = _haal_ts("monitor_laatste_run")
     # Scanner laatste scan
@@ -5674,7 +5717,7 @@ def render_service_monitor_widget() -> None:
     # Candles laatste update
     candles_info = candles_status()
 
-    # Webhook — test via ping
+    # Webhook â test via ping
     webhook_url = os.getenv("RENDER_WEBHOOK_URL", "")
     webhook_ok  = False
     webhook_ms  = 0
@@ -5683,20 +5726,20 @@ def render_service_monitor_widget() -> None:
         webhook_ok = result.get("ok", False)
         webhook_ms = result.get("ms", 0)
 
-    # ── Services definiëren ──────────────────────────────────
+    # ââ Services definiÃ«ren ââââââââââââââââââââââââââââââââââ
     # (naam, type, bestand, schedule, status_emoji, status_txt, kleur, extra_info)
     services = []
 
-    # 1. whatsapp_webhook.py — Web Service
+    # 1. whatsapp_webhook.py â Web Service
     if webhook_url:
-        emoji_w = "✅" if webhook_ok else "❌"
+        emoji_w = "â" if webhook_ok else "â"
         kleur_w = "#00ff41" if webhook_ok else "#ff1144"
         txt_w   = f"{webhook_ms}ms" if webhook_ok else "Geen response"
     else:
-        emoji_w, kleur_w, txt_w = "🕐", "#4e5a7a", "URL niet ingesteld"
+        emoji_w, kleur_w, txt_w = "ð", "#4e5a7a", "URL niet ingesteld"
     services.append({
         "naam":     "whatsapp_webhook.py",
-        "type":     "🌐 Web Service",
+        "type":     "ð Web Service",
         "schedule": "24/7",
         "emoji":    emoji_w,
         "txt":      txt_w,
@@ -5704,14 +5747,14 @@ def render_service_monitor_widget() -> None:
         "extra":    "WhatsApp commands + /auto_buy endpoint",
     })
 
-    # 2. trade_monitor.py — Background Worker
+    # 2. trade_monitor.py â Background Worker
     m_min = _minuten_geleden(monitor_ts)
     e2, t2, k2 = _status_chip(m_min, 2, 10)
     open_live   = get_bot_state_val("monitor_open_live",   "0")
     open_shadow = get_bot_state_val("monitor_open_shadow", "0")
     services.append({
         "naam":     "trade_monitor.py",
-        "type":     "🔄 Background Worker",
+        "type":     "ð Background Worker",
         "schedule": "24/7 (elke 30s)",
         "emoji":    e2,
         "txt":      t2,
@@ -5719,25 +5762,25 @@ def render_service_monitor_widget() -> None:
         "extra":    f"Open: {open_live} live | {open_shadow} shadow",
     })
 
-    # 3. app.py — Dashboard (dit zelf)
+    # 3. app.py â Dashboard (dit zelf)
     services.append({
         "naam":     "app.py",
-        "type":     "📊 Web Service",
+        "type":     "ð Web Service",
         "schedule": "24/7",
-        "emoji":    "✅",
+        "emoji":    "â",
         "txt":      "Nu actief",
         "kleur":    "#00ff41",
-        "extra":    "Dit dashboard — Bloomberg terminal stijl",
+        "extra":    "Dit dashboard â Bloomberg terminal stijl",
     })
 
-    # 4. multi_coin_score.py — scanner sessies
+    # 4. multi_coin_score.py â scanner sessies
     s_min = _minuten_geleden(scanner_ts)
     e4, t4, k4 = _status_chip(s_min, 35, 90)
     sig_v  = get_bot_state_val("laatste_scan_signalen", "?")
     coins_v = get_bot_state_val("laatste_scan_coins",   "?")
     services.append({
         "naam":     "multi_coin_score.py",
-        "type":     "🔍 Cron Job",
+        "type":     "ð Cron Job",
         "schedule": "*/30 * * * *",
         "emoji":    e4,
         "txt":      t4,
@@ -5745,45 +5788,45 @@ def render_service_monitor_widget() -> None:
         "extra":    f"Laatste scan: {coins_v} coins | {sig_v} signalen",
     })
 
-    # 5. build_btc_regime.py — btc_regime_4h data
+    # 5. build_btc_regime.py â btc_regime_4h data
     btc_min = _minuten_geleden(btc_ts)
     e5, t5, k5 = _status_chip(btc_min, 250, 360)  # 4u ok, 6u warn
     services.append({
         "naam":     "build_btc_regime.py",
-        "type":     "📈 Cron Job",
+        "type":     "ð Cron Job",
         "schedule": "0 */4 * * *",
         "emoji":    e5,
         "txt":      t5,
         "kleur":    k5,
-        "extra":    "BTC regime 4H → btc_regime_4h tabel",
+        "extra":    "BTC regime 4H â btc_regime_4h tabel",
     })
 
-    # 6. regime_labeler.py — market_regime data
+    # 6. regime_labeler.py â market_regime data
     reg_min = _minuten_geleden(regime_ts)
     e6, t6, k6 = _status_chip(reg_min, 370, 500)  # 6u ok, 8u warn
     services.append({
         "naam":     "regime_labeler.py",
-        "type":     "📡 Cron Job",
+        "type":     "ð¡ Cron Job",
         "schedule": "0 */6 * * *",
         "emoji":    e6,
         "txt":      t6,
         "kleur":    k6,
-        "extra":    "Market regime per coin → market_regime tabel",
+        "extra":    "Market regime per coin â market_regime tabel",
     })
 
-    # 7. history_fetcher.py — candles
+    # 7. history_fetcher.py â candles
     candles_ok  = candles_info.get("ok", False)
     candles_n   = candles_info.get("n", 0)
     candles_oud = candles_info.get("uren_oud", 0)
     if candles_n == 0:
-        e7, t7, k7 = "❌", "Candles tabel leeg!", "#ff1144"
+        e7, t7, k7 = "â", "Candles tabel leeg!", "#ff1144"
     elif not candles_ok:
-        e7, t7, k7 = "⚠️", f"{candles_oud:.1f}u oud", "#00e5ff"
+        e7, t7, k7 = "â ï¸", f"{candles_oud:.1f}u oud", "#00e5ff"
     else:
-        e7, t7, k7 = "✅", f"{candles_oud:.1f}u oud", "#00ff41"
+        e7, t7, k7 = "â", f"{candles_oud:.1f}u oud", "#00ff41"
     services.append({
         "naam":     "history_fetcher.py",
-        "type":     "📥 Cron Job",
+        "type":     "ð¥ Cron Job",
         "schedule": "0 */2 * * *",
         "emoji":    e7,
         "txt":      t7,
@@ -5791,12 +5834,12 @@ def render_service_monitor_widget() -> None:
         "extra":    f"{candles_n:,} candles in DB",
     })
 
-    # 8. ai_coach.py — dagelijks
+    # 8. ai_coach.py â dagelijks
     c_min = _minuten_geleden(coach_ts)
     e8, t8, k8 = _status_chip(c_min, 1500, 2880)  # 25u ok, 48u warn
     services.append({
         "naam":     "ai_coach.py",
-        "type":     "🧠 Cron Job",
+        "type":     "ð§  Cron Job",
         "schedule": "0 8 * * *",
         "emoji":    e8,
         "txt":      t8,
@@ -5804,7 +5847,7 @@ def render_service_monitor_widget() -> None:
         "extra":    "Dagelijkse analyse + parameter optimalisatie",
     })
 
-    # ── Render ────────────────────────────────────────────────
+    # ââ Render ââââââââââââââââââââââââââââââââââââââââââââââââ
     # Toon als grid: 2 kolommen
     n_ok   = sum(1 for s in services if s["kleur"] == "#00ff41")
     n_warn = sum(1 for s in services if s["kleur"] == "#00e5ff")
@@ -5813,13 +5856,13 @@ def render_service_monitor_widget() -> None:
     # Overall status banner
     if n_err > 0:
         overall_kleur = "#ff1144"
-        overall_txt   = f"⚠️ {n_err} SERVICE(S) OFFLINE"
+        overall_txt   = f"â ï¸ {n_err} SERVICE(S) OFFLINE"
     elif n_warn > 0:
         overall_kleur = "#00e5ff"
-        overall_txt   = f"⚠️ {n_warn} SERVICE(S) TRAAG"
+        overall_txt   = f"â ï¸ {n_warn} SERVICE(S) TRAAG"
     else:
         overall_kleur = "#00ff41"
-        overall_txt   = f"✅ ALLE {n_ok} SERVICES ACTIEF"
+        overall_txt   = f"â ALLE {n_ok} SERVICES ACTIEF"
 
     st.markdown(
         f'<div style="text-align:center;background:rgba(0,0,0,0.3);'
@@ -5845,7 +5888,7 @@ def render_service_monitor_widget() -> None:
                 f'<div style="font-size:12px;font-weight:700;color:#ddd;">'
                 f'{svc["emoji"]} {svc["naam"]}</div>'
                 f'<div style="font-size:10px;color:#4e5a7a;margin-top:1px;">'
-                f'{svc["type"]} · {svc["schedule"]}</div>'
+                f'{svc["type"]} Â· {svc["schedule"]}</div>'
                 f'<div style="font-size:10px;color:#555;margin-top:3px;">'
                 f'{svc["extra"]}</div>'
                 f'</div>'
@@ -5859,14 +5902,14 @@ def render_service_monitor_widget() -> None:
             )
 
     # Refresh knop
-    if st.button("🔄 Services verversen", key="refresh_services",
+    if st.button("ð Services verversen", key="refresh_services",
                  use_container_width=False):
         st.cache_data.clear()
         st.rerun()
 
     st.caption(
-        f"Bijgewerkt: {now.strftime('%H:%M:%S UTC')} · "
-        f"Groen ≤ drempel · Geel = traag · Rood = offline/leeg"
+        f"Bijgewerkt: {now.strftime('%H:%M:%S UTC')} Â· "
+        f"Groen â¤ drempel Â· Geel = traag Â· Rood = offline/leeg"
     )
 
 
@@ -5880,19 +5923,19 @@ def render_help_page(
 ) -> None:
     """Help & Debug pagina."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">❓ Help & Data Mapping</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">â Help & Data Mapping</div>', unsafe_allow_html=True)
 
     st.markdown("""
     <div class="trade-note">
         <b>Data mapping in dit dashboard:</b><br><br>
-        1. <b>Dashboard</b> → history_df (REAL + SIM + SHADOW gecombineerd)<br>
-        2. <b>Live Performance</b> → real_df (alleen source=REAL/LIVE)<br>
-        3. <b>Simulator</b> → sim_df (alleen source=SIM)<br>
-        4. <b>Shadow Review</b> → shadow_df (alleen source=SHADOW)<br>
-        5. <b>Portfolio</b> → snapshot + assets_df (Bitvavo API)<br>
-        6. <b>Pre-BUY Signals</b> → pending_approvals tabel<br>
-        7. <b>Scoreboard</b> → experience_scoreboard tabel<br>
-        8. <b>BTC Regime</b> → btc_regime_4h tabel<br><br>
+        1. <b>Dashboard</b> â history_df (REAL + SIM + SHADOW gecombineerd)<br>
+        2. <b>Live Performance</b> â real_df (alleen source=REAL/LIVE)<br>
+        3. <b>Simulator</b> â sim_df (alleen source=SIM)<br>
+        4. <b>Shadow Review</b> â shadow_df (alleen source=SHADOW)<br>
+        5. <b>Portfolio</b> â snapshot + assets_df (Bitvavo API)<br>
+        6. <b>Pre-BUY Signals</b> â pending_approvals tabel<br>
+        7. <b>Scoreboard</b> â experience_scoreboard tabel<br>
+        8. <b>BTC Regime</b> â btc_regime_4h tabel<br><br>
         <b>Demo modus:</b> Alleen actief als experience_trades leeg is.
         Zodra PostgreSQL data heeft, krijgt DB altijd prioriteit.
     </div>
@@ -5904,7 +5947,7 @@ def render_help_page(
     rows_status = [
         ("source_mode",       source_mode),
         ("snap_mode",         snap_mode),
-        ("DB verbinding",     "✅ OK" if db_ready() else "❌ DEMO/FALLBACK"),
+        ("DB verbinding",     "â OK" if db_ready() else "â DEMO/FALLBACK"),
         ("history_df rows",   str(len(history_df))),
         ("real_df rows",      str(len(real_df))),
         ("sim_df rows",       str(len(sim_df))),
@@ -5914,8 +5957,8 @@ def render_help_page(
         ("pending_approvals", str(table_count("pending_approvals"))),
         ("btc_regime_4h",     str(table_count("btc_regime_4h"))),
         ("bot_state",         str(table_count("bot_state"))),
-        ("ANTHROPIC_API",     "✅" if ANTHROPIC_API_KEY else "❌"),
-        ("BITVAVO_API",       "✅" if API_KEY else "❌"),
+        ("ANTHROPIC_API",     "â" if ANTHROPIC_API_KEY else "â"),
+        ("BITVAVO_API",       "â" if API_KEY else "â"),
     ]
     for label, value in rows_status:
         st.markdown(f'<div class="list-row"><div class="list-left">{label}</div><div class="list-right">{value}</div></div>', unsafe_allow_html=True)
@@ -5923,16 +5966,16 @@ def render_help_page(
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     dc1, dc2, dc3 = st.columns(3, gap="small")
     with dc1:
-        if st.button("🔄 Clear cache", use_container_width=True, key="help_clear_cache"):
+        if st.button("ð Clear cache", use_container_width=True, key="help_clear_cache"):
             st.cache_data.clear()
             st.success("Cache geleegd!")
             st.rerun()
     with dc2:
-        if st.button("🐛 Toggle debug", use_container_width=True, key="help_debug"):
+        if st.button("ð Toggle debug", use_container_width=True, key="help_debug"):
             st.session_state.show_debug = not st.session_state.show_debug
             st.rerun()
     with dc3:
-        if st.button("🔁 Reset session", use_container_width=True, key="help_reset"):
+        if st.button("ð Reset session", use_container_width=True, key="help_reset"):
             for k, v in SESSION_DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
@@ -5941,7 +5984,7 @@ def render_help_page(
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title">Debug Logs</div>', unsafe_allow_html=True)
         for event in st.session_state.debug_events[:15]:
-            st.markdown(f'<div class="small-muted">• {event}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="small-muted">â¢ {event}</div>', unsafe_allow_html=True)
 
         st.json({
             "database_url": bool(DATABASE_URL),
@@ -5958,11 +6001,11 @@ def render_help_page(
 
 
 # ============================================================
-# PERMANENTE WIN/LOSS BAR — altijd zichtbaar
+# PERMANENTE WIN/LOSS BAR â altijd zichtbaar
 # ============================================================
 def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
     """
-    Permanente Win/Loss balk — altijd zichtbaar bovenaan dashboard.
+    Permanente Win/Loss balk â altijd zichtbaar bovenaan dashboard.
     Gebruikt native Streamlit columns voor betrouwbare rendering.
     Toont win/loss procenten voor ALLES, REAL, SIM en SHADOW.
     """
@@ -5981,10 +6024,10 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
         )
 
     for col, key, emoji, label in [
-        (col_all,    "ALLES",  "📊", "Alle Trades"),
-        (col_real,   "REAL",   "💶", "Live (REAL)"),
-        (col_sim,    "SIM",    "🔮", "Simulatie"),
-        (col_shadow, "SHADOW", "🎭", "Shadow"),
+        (col_all,    "ALLES",  "ð", "Alle Trades"),
+        (col_real,   "REAL",   "ð¶", "Live (REAL)"),
+        (col_sim,    "SIM",    "ð®", "Simulatie"),
+        (col_shadow, "SHADOW", "ð­", "Shadow"),
     ]:
         s        = stats.get(key, {})
         win_pct  = safe_float(s.get("win_pct"))
@@ -6006,7 +6049,7 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
                 f'<span style="color:#ff1144;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
                 f'</div>'
                 f'<div style="color:#4e5a7a;font-size:10px;margin-top:3px;">'
-                f'{wins}W / {losses}L — {total} trades</div>'
+                f'{wins}W / {losses}L â {total} trades</div>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
@@ -6016,7 +6059,7 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
 # SCANNER STATUS WIDGET
 # ============================================================
 def render_scanner_status_widget() -> None:
-    """Toont scanner status — wanneer voor het last gescand, hoeveel signals."""
+    """Toont scanner status â wanneer voor het last gescand, hoeveel signals."""
     scanner = get_scanner_status()
     bot_active = scanner["bot_active"].lower() == "true"
     mins = scanner["mins_since_scan"]
@@ -6031,24 +6074,24 @@ def render_scanner_status_widget() -> None:
         scan_str = f"{mins} min geleden"
         scan_cls = "chip-yellow"
     else:
-        scan_str = f"{mins} min geleden ⚠️"
+        scan_str = f"{mins} min geleden â ï¸"
         scan_cls = "chip-red"
 
     active_chip = (
-        '<span class="top-status-chip chip-green">🟢 Bot ACTIEF</span>'
+        '<span class="top-status-chip chip-green">ð¢ Bot ACTIEF</span>'
         if bot_active else
-        '<span class="top-status-chip chip-red">🔴 Bot GESTOPT</span>'
+        '<span class="top-status-chip chip-red">ð´ Bot GESTOPT</span>'
     )
 
     st.markdown(f"""
     <div class="scanner-card">
-        <div class="scanner-title">⚡ Scanner Status</div>
+        <div class="scanner-title">â¡ Scanner Status</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             {active_chip}
-            <span class="top-status-chip {scan_cls}">🕐 Scan: {scan_str}</span>
-            <span class="top-status-chip chip-blue">📋 Signals vandaag: {scanner['signals_today']}</span>
-            <span class="top-status-chip chip-green">✅ Uitgevoerd: {scanner['signals_executed']}</span>
-            <span class="top-status-chip chip-orange">⏳ Pending: {scanner['signals_pending']}</span>
+            <span class="top-status-chip {scan_cls}">ð Scan: {scan_str}</span>
+            <span class="top-status-chip chip-blue">ð Signals vandaag: {scanner['signals_today']}</span>
+            <span class="top-status-chip chip-green">â Uitgevoerd: {scanner['signals_executed']}</span>
+            <span class="top-status-chip chip-orange">â³ Pending: {scanner['signals_pending']}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -6058,7 +6101,7 @@ def render_scanner_status_widget() -> None:
 # DAGBUDGET WIDGET
 # ============================================================
 def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
-    """Toont dagbudget status — hoeveel van de €5 is al gebruikt."""
+    """Toont dagbudget status â hoeveel van de â¬5 is al gebruikt."""
     budget = get_dagbudget_status(real_df)
     pct    = budget["budget_pct"]
     fill_cls = "budget-fill-safe" if pct < 60 else "budget-fill-warn"
@@ -6073,13 +6116,13 @@ def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
     <div class="metric-card orange-accent">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
             <div style="color:#4e5a7a;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
-            <span class="top-status-chip {pnl_cls}">{pnl_sign}€{abs(pnl):.2f} vandaag</span>
+            <span class="top-status-chip {pnl_cls}">{pnl_sign}â¬{abs(pnl):.2f} vandaag</span>
         </div>
         <div style="color:#ffffff;font-size:18px;font-weight:900;margin-bottom:2px;">
             {budget['trades_today']}/{budget['max_trades']} trades
         </div>
         <div style="color:#4e5a7a;font-size:11px;margin-bottom:6px;">
-            Verliesruimte: €{budget['verlies_abs']:.2f} / €{budget['budget_max']:.2f} gebruikt
+            Verliesruimte: â¬{budget['verlies_abs']:.2f} / â¬{budget['budget_max']:.2f} gebruikt
         </div>
         <div class="budget-bar">
             <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#00e5ff,#ffcc00);"></div>
@@ -6088,7 +6131,7 @@ def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
         <div class="budget-bar" style="margin-top:4px;">
             <div class="{fill_cls}" style="width:{pct:.0f}%;"></div>
         </div>
-        <div style="color:#555;font-size:10px;margin-top:3px;">{pct:.0f}% verliesbudget gebruikt — nog €{budget['ruimte']:.2f} ruimte</div>
+        <div style="color:#555;font-size:10px;margin-top:3px;">{pct:.0f}% verliesbudget gebruikt â nog â¬{budget['ruimte']:.2f} ruimte</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -6099,11 +6142,11 @@ def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
 def render_open_positions_page() -> None:
     """Open posities met live floating P&L van Bitvavo."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📂 Open Posities — Live Floating P&L</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð Open Posities â Live Floating P&L</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Alle open live trades met actuele prijs van Bitvavo. '
-        'Floating P&L = (huidige prijs - entry) × hoeveelheid. '
+        'Floating P&L = (huidige prijs - entry) Ã hoeveelheid. '
         'Ververst elke 30 seconden.'
         '</div>',
         unsafe_allow_html=True,
@@ -6124,12 +6167,12 @@ def render_open_positions_page() -> None:
 
     m1, m2, m3 = st.columns(3, gap="small")
     with m1:
-        st.markdown(metric_card("Totale Float P&L", f"{sign}€{abs(total_float):.4f}", f"{len(positions)} posities", "green" if total_float >= 0 else "red"), unsafe_allow_html=True)
+        st.markdown(metric_card("Totale Float P&L", f"{sign}â¬{abs(total_float):.4f}", f"{len(positions)} posities", "green" if total_float >= 0 else "red"), unsafe_allow_html=True)
     with m2:
-        st.markdown(metric_card("Geïnvesteerd", f"€{total_invested:.2f}", "totaal open", "blue"), unsafe_allow_html=True)
+        st.markdown(metric_card("GeÃ¯nvesteerd", f"â¬{total_invested:.2f}", "totaal open", "blue"), unsafe_allow_html=True)
     with m3:
         float_pct = (total_float / max(total_invested, 0.001)) * 100
-        st.markdown(metric_card("Float %", f"{float_pct:+.2f}%", "rendement op geïnvesteerd", "orange" if abs(float_pct) < 2 else "green" if float_pct >= 0 else "red"), unsafe_allow_html=True)
+        st.markdown(metric_card("Float %", f"{float_pct:+.2f}%", "rendement op geÃ¯nvesteerd", "orange" if abs(float_pct) < 2 else "green" if float_pct >= 0 else "red"), unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -6163,7 +6206,7 @@ def render_open_positions_page() -> None:
                     <span class="trade-chip" style="margin-left:8px;">{setup}</span>
                 </div>
                 <div style="text-align:right;">
-                    <div style="color:{pnl_color};font-size:16px;font-weight:900;">{pnl_sign}€{abs(float_pnl):.4f}</div>
+                    <div style="color:{pnl_color};font-size:16px;font-weight:900;">{pnl_sign}â¬{abs(float_pnl):.4f}</div>
                     <div style="color:{r_color};font-size:12px;font-weight:700;">{float_r:+.2f} R | {pnl_pct:+.1f}%</div>
                 </div>
             </div>
@@ -6174,24 +6217,24 @@ def render_open_positions_page() -> None:
                 <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#00ff88;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
                 <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#00e5ff;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
                 <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#4e5a7a;font-size:12px;font-weight:700;">{hold_str}</span></div>
-                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#4e5a7a;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
+                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#4e5a7a;font-size:12px;font-weight:700;">â¬{amount:.2f}</span></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.caption("💡 Floating P&L is niet gerealiseerd. Prijs ophalen mislukt als Bitvavo API niet beschikbaar is.")
+    st.caption("ð¡ Floating P&L is niet gerealiseerd. Prijs ophalen mislukt als Bitvavo API niet beschikbaar is.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
-# ANALYSE PAGINA — drawdown, rolling WR, recovery, streaks
+# ANALYSE PAGINA â drawdown, rolling WR, recovery, streaks
 # ============================================================
 def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     render_alarm_banner()
     """Diepgaande analyse pagina met alle geavanceerde metrics."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📉 Diepgaande Analyse</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð Diepgaande Analyse</div>', unsafe_allow_html=True)
 
     # Recovery Factor
     rf_all  = get_recovery_factor(history_df)
@@ -6217,8 +6260,8 @@ def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None
 
     # Tabs
     tab_dd, tab_rolling, tab_streak, tab_hold, tab_hist, tab_freq = st.tabs([
-        "📉 Drawdown", "📈 Rolling WR", "🔥 Streaks",
-        "⏱️ Houdtijd", "📊 P&L Verdeling", "📅 Frequentie"
+        "ð Drawdown", "ð Rolling WR", "ð¥ Streaks",
+        "â±ï¸ Houdtijd", "ð P&L Verdeling", "ð Frequentie"
     ])
 
     with tab_dd:
@@ -6261,11 +6304,11 @@ def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None
 
             sc1, sc2, sc3 = st.columns(3, gap="small")
             with sc1:
-                st.markdown(metric_card("Huidige Streak", f"{cons_now}x {'🔴' if cons_now > 0 else '—'}", "verliezen op rij", "red" if cons_now >= 3 else "blue"), unsafe_allow_html=True)
+                st.markdown(metric_card("Huidige Streak", f"{cons_now}x {'ð´' if cons_now > 0 else 'â'}", "verliezen op rij", "red" if cons_now >= 3 else "blue"), unsafe_allow_html=True)
             with sc2:
-                st.markdown(metric_card("Langste Win Streak", f"{max_win}x 🟢", "ooit", "green"), unsafe_allow_html=True)
+                st.markdown(metric_card("Langste Win Streak", f"{max_win}x ð¢", "ooit", "green"), unsafe_allow_html=True)
             with sc3:
-                st.markdown(metric_card("Langste Loss Streak", f"{max_loss}x 🔴", "ooit", "red"), unsafe_allow_html=True)
+                st.markdown(metric_card("Langste Loss Streak", f"{max_loss}x ð´", "ooit", "red"), unsafe_allow_html=True)
 
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
             st.markdown("**Streak Geschiedenis (meest recent)**")
@@ -6283,11 +6326,11 @@ def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None
             top_streaks = sorted(streaks, key=lambda x: x["length"], reverse=True)[:10]
             st.markdown("**Top 10 langste streaks:**")
             for s in top_streaks:
-                emoji = "🟢" if s["type"] == "WIN" else "🔴"
+                emoji = "ð¢" if s["type"] == "WIN" else "ð´"
                 st.markdown(
                     f'<div class="score-row">'
-                    f'<div class="score-left">{emoji} {s["type"]} — {s["length"]} trades op rij</div>'
-                    f'<div class="score-right">{format_dt(s["start"])} → {format_dt(s["end"])}</div>'
+                    f'<div class="score-left">{emoji} {s["type"]} â {s["length"]} trades op rij</div>'
+                    f'<div class="score-right">{format_dt(s["start"])} â {format_dt(s["end"])}</div>'
                     f'</div>',
                     unsafe_allow_html=True,
                 )
@@ -6328,12 +6371,12 @@ def render_analyse_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None
 
 
 # ============================================================
-# COINS PAGINA — blacklist, cooldown, whitelist, fees, best/worst
+# COINS PAGINA â blacklist, cooldown, whitelist, fees, best/worst
 # ============================================================
 def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     """Complete coin analyse pagina."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">🪙 Coin Analyse & Filters</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ðª Coin Analyse & Filters</div>', unsafe_allow_html=True)
 
     coins_data = get_blacklist_cooldown_coins()
     fees       = get_fee_stats(real_df)
@@ -6342,19 +6385,19 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     # Fee metrics
     f1, f2, f3, f4 = st.columns(4, gap="small")
     with f1:
-        st.markdown(metric_card("Totale Fees Betaald", f"€{fees['total_fees']:.4f}", "Bitvavo 0.25% per kant", "yellow"), unsafe_allow_html=True)
+        st.markdown(metric_card("Totale Fees Betaald", f"â¬{fees['total_fees']:.4f}", "Bitvavo 0.25% per kant", "yellow"), unsafe_allow_html=True)
     with f2:
         st.markdown(metric_card("Fee Impact", f"{fees['fee_impact_pct']:.1f}%", "van bruto winst", "yellow"), unsafe_allow_html=True)
     with f3:
-        st.markdown(metric_card("Gem. Fee / Trade", f"€{fees['avg_fee_per_trade']:.4f}", "", "yellow"), unsafe_allow_html=True)
+        st.markdown(metric_card("Gem. Fee / Trade", f"â¬{fees['avg_fee_per_trade']:.4f}", "", "yellow"), unsafe_allow_html=True)
     with f4:
-        st.markdown(metric_card("Bruto Winst", f"€{fees['gross_profit']:.4f}", "voor fees", "green"), unsafe_allow_html=True)
+        st.markdown(metric_card("Bruto Winst", f"â¬{fees['gross_profit']:.4f}", "voor fees", "green"), unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
     tab_bl, tab_cd, tab_wl, tab_best, tab_corr = st.tabs([
-        "⚫ Blacklist", "⏳ Cooldown", "🌟 Whitelist",
-        "🏅 Beste/Slechtste", "📊 BTC Correlatie"
+        "â« Blacklist", "â³ Cooldown", "ð Whitelist",
+        "ð Beste/Slechtste", "ð BTC Correlatie"
     ])
 
     with tab_bl:
@@ -6375,14 +6418,14 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 st.markdown(f"""
                 <div class="coin-row coin-row-black">
                     <div>
-                        <div class="coin-name">⚫ {name}</div>
+                        <div class="coin-name">â« {name}</div>
                         <div class="coin-stats">Win rate: {wr:.1f}% | {wins} wins / {n-wins} losses / {n} trades</div>
                     </div>
                     <span class="top-status-chip chip-red">GEBLOKKEERD</span>
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.success("✅ Geen coins op de blacklist. Alle coins presteren acceptabel.")
+            st.success("â Geen coins op de blacklist. Alle coins presteren acceptabel.")
 
     with tab_cd:
         st.markdown(
@@ -6400,20 +6443,20 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 st.markdown(f"""
                 <div class="coin-row coin-row-cool">
                     <div>
-                        <div class="coin-name">⏳ {name}</div>
-                        <div class="coin-stats">Verlies {hours:.1f}u geleden — nog {remaining:.1f}u cooldown</div>
+                        <div class="coin-name">â³ {name}</div>
+                        <div class="coin-stats">Verlies {hours:.1f}u geleden â nog {remaining:.1f}u cooldown</div>
                     </div>
                     <span class="top-status-chip chip-yellow">COOLDOWN</span>
                 </div>
                 """, unsafe_allow_html=True)
         else:
-            st.success("✅ Geen coins in cooldown momenteel.")
+            st.success("â Geen coins in cooldown momenteel.")
 
     with tab_wl:
         st.markdown(
             '<div class="section-subtitle">'
             'Coins met win rate >60% na 20+ trades. '
-            'Hoge prioriteit in de scanner — hogere betrouwbaarheid.'
+            'Hoge prioriteit in de scanner â hogere betrouwbaarheid.'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -6427,7 +6470,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 st.markdown(f"""
                 <div class="coin-row coin-row-white">
                     <div>
-                        <div class="coin-name">🌟 {name}</div>
+                        <div class="coin-name">ð {name}</div>
                         <div class="coin-stats">Win rate: {wr:.1f}% | {n} trades | Gem. R: {avg_pnl:+.3f}R</div>
                     </div>
                     <span class="top-status-chip chip-green">TOPPERFORMER</span>
@@ -6439,7 +6482,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     with tab_best:
         bb1, bb2 = st.columns(2, gap="small")
         with bb1:
-            st.markdown("#### 🏆 Top 5 Beste Trades")
+            st.markdown("#### ð Top 5 Beste Trades")
             if not best.empty:
                 for _, row in best.iterrows():
                     sym   = safe_str(row.get("symbol"))
@@ -6453,7 +6496,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                     st.markdown(f"""
                     <div class="top-trade-card">
                         <div>
-                            <div class="top-trade-left">{sym} — {setup}</div>
+                            <div class="top-trade-left">{sym} â {setup}</div>
                             <div class="top-trade-sub">{dt} | {src}</div>
                         </div>
                         <div class="top-trade-right float-green">+{r:.2f} R{eur_deel}</div>
@@ -6463,7 +6506,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                 st.info("Geen data.")
 
         with bb2:
-            st.markdown("#### 💀 Top 5 Slechtste Trades")
+            st.markdown("#### ð Top 5 Slechtste Trades")
             if not worst.empty:
                 for _, row in worst.iterrows():
                     sym   = safe_str(row.get("symbol"))
@@ -6477,7 +6520,7 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
                     st.markdown(f"""
                     <div class="top-trade-card">
                         <div>
-                            <div class="top-trade-left">{sym} — {setup}</div>
+                            <div class="top-trade-left">{sym} â {setup}</div>
                             <div class="top-trade-sub">{dt} | {src}</div>
                         </div>
                         <div class="top-trade-right float-red">{r:.2f} R{eur_deel}</div>
@@ -6522,13 +6565,13 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
 
 
 # ============================================================
-# KALENDER PAGINA — P&L heatmap per maand
+# KALENDER PAGINA â P&L heatmap per maand
 # ============================================================
 def render_kalender_page(history_df: pd.DataFrame) -> None:
-    """Kalender P&L heatmap — visuele consistentie check."""
+    """Kalender P&L heatmap â visuele consistentie check."""
     render_alarm_banner()
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📅 P&L Kalender</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð P&L Kalender</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Win/verlies per dag. Groen = winstdag, rood = verliesdag. '
@@ -6538,7 +6581,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
     )
 
 
-    # ── MAAND SELECTIE ────────────────────────────────────────
+    # ââ MAAND SELECTIE ââââââââââââââââââââââââââââââââââââââââ
     mc1, mc2, mc3 = st.columns([1, 1, 2], gap="small")
     now = now_utc()
     with mc1:
@@ -6583,7 +6626,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
 
     pnl_data = pnl_data_r  # Kalender toont altijd R
 
-    # ── KALENDER GRID ─────────────────────────────────────────
+    # ââ KALENDER GRID âââââââââââââââââââââââââââââââââââââââââ
     days_in_month = calendar.monthrange(sel_year, sel_month)[1]
     first_weekday = calendar.monthrange(sel_year, sel_month)[0]
 
@@ -6648,7 +6691,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
     grid_html = '<div class="cal-grid">' + "".join(cells) + '</div>'
     st.markdown(grid_html, unsafe_allow_html=True)
 
-    # ── MAAND SAMENVATTING ────────────────────────────────────
+    # ââ MAAND SAMENVATTING ââââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     active_days  = month_wins + month_losses
     win_day_pct  = (month_wins / max(active_days, 1)) * 100
@@ -6668,7 +6711,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         # EUR alleen tonen als er echte trades zijn (filter = REAL)
         if cal_filter == "Alleen REAL" and abs(month_eur) > 0.0001:
             eur_teken = "+" if month_eur >= 0 else ""
-            st.markdown(metric_card("Maand EUR", f"{eur_teken}€{month_eur:.4f}",
+            st.markdown(metric_card("Maand EUR", f"{eur_teken}â¬{month_eur:.4f}",
                                     "echt geld", "green" if month_eur >= 0 else "red"), unsafe_allow_html=True)
         else:
             st.markdown(metric_card("Actieve Dagen", str(active_days),
@@ -6677,13 +6720,13 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         st.markdown(metric_card("Trades", str(month_trades),
                                 f"gem. {month_trades/max(active_days,1):.1f}/dag", "blue"), unsafe_allow_html=True)
 
-    # ── 30-DAAGSE R TREND ─────────────────────────────────────
+    # ââ 30-DAAGSE R TREND âââââââââââââââââââââââââââââââââââââ
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-    st.markdown("#### 📊 Dagelijkse R — 30 dagen")
+    st.markdown("#### ð Dagelijkse R â 30 dagen")
     st.plotly_chart(chart_daily_r(cal_df, "Dagelijkse R (alle types)"),
                     use_container_width=True, config={"displayModeBar":False}, key="cal_daily_r")
 
-    # ── BESTE EN SLECHTSTE DAGEN ──────────────────────────────
+    # ââ BESTE EN SLECHTSTE DAGEN ââââââââââââââââââââââââââââââ
     if pnl_data_r:
         sorted_dagen = sorted(pnl_data_r.items(), key=lambda x: x[1], reverse=True)
         top3  = [(d, r) for d, r in sorted_dagen if r > 0][:3]
@@ -6692,23 +6735,23 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         if top3 or bot3:
             bc1, bc2 = st.columns(2, gap="small")
             with bc1:
-                st.markdown("**🏆 Beste dagen deze maand**")
+                st.markdown("**ð Beste dagen deze maand**")
                 for dag, r in top3:
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#00ff88;">{dag}</b> — '
+                        f'<b style="color:#00ff88;">{dag}</b> â '
                         f'<span style="color:#ffcc00;">+{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
             with bc2:
-                st.markdown("**💀 Slechtste dagen deze maand**")
+                st.markdown("**ð Slechtste dagen deze maand**")
                 for dag, r in reversed(bot3):
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#ff1144;">{dag}</b> — '
+                        f'<b style="color:#ff1144;">{dag}</b> â '
                         f'<span style="color:#ff1144;">{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
@@ -6718,12 +6761,12 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
 
 
 # ============================================================
-# CORRELATIE PAGINA — BTC correlatie + markt analyse
+# CORRELATIE PAGINA â BTC correlatie + markt analyse
 # ============================================================
 def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
     """BTC Correlatie + edge decay + markt analyse."""
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">📊 BTC Correlatie & Edge Decay</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð BTC Correlatie & Edge Decay</div>', unsafe_allow_html=True)
 
     # Edge decay
     s_all  = perf_summary(history_df)
@@ -6745,14 +6788,14 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
 
     if diff > 10:
         st.warning(
-            f"⚠️ **Edge decay gedetecteerd** — verschil {diff:.1f}%\n\n"
+            f"â ï¸ **Edge decay gedetecteerd** â verschil {diff:.1f}%\n\n"
             f"**Mogelijke oorzaken:** Marktverandering | Fees niet in sim | Score drempel te laag\n\n"
             f"**Actie:** Verhoog MIN_SCORE_TO_TRADE | Stuur HEALTH via WhatsApp"
         )
     elif diff > 5:
-        st.warning(f"⚠️ Lichte edge decay ({diff:.1f}%) — blijf monitoren.")
+        st.warning(f"â ï¸ Lichte edge decay ({diff:.1f}%) â blijf monitoren.")
     else:
-        st.success(f"✅ Geen significante edge decay — strategie presteert consistent live.")
+        st.success(f"â Geen significante edge decay â strategie presteert consistent live.")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
@@ -6763,7 +6806,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
         st.markdown("""
         <div class="trade-note">
             <b>BTC Correlatie uitleg:</b> Als BULL regime veel hogere win rate heeft dan BEAR,
-            is de bot sterk afhankelijk van BTC richting. Dit is normaal — maar betekent dat je
+            is de bot sterk afhankelijk van BTC richting. Dit is normaal â maar betekent dat je
             in BEAR markt minder of geen trades moet doen (vandaar BTC_SKIP_BEAR=True).
         </div>
         """, unsafe_allow_html=True)
@@ -6780,7 +6823,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                 avg_r  = safe_float(row.get("avg_r"))
                 bar_w  = min(wr, 100)
                 bar_c  = color_map.get(regime, "#00e5ff")
-                emoji  = {"BULL":"🟢","BEAR":"🔴","RANGE":"🟡"}.get(regime,"⚪")
+                emoji  = {"BULL":"ð¢","BEAR":"ð´","RANGE":"ð¡"}.get(regime,"âª")
                 st.markdown(f"""
                 <div class="corr-row">
                     <div class="corr-label">{emoji} {regime}</div>
@@ -6826,7 +6869,7 @@ DATA:
 
 
 # ============================================================
-# AI COACH CHAT — live conversatie met de bot coach
+# AI COACH CHAT â live conversatie met de bot coach
 # ============================================================
 def get_live_context(history_df: pd.DataFrame, real_df: pd.DataFrame) -> Dict[str, Any]:
     """Bouwt live data context op voor de AI Coach chat."""
@@ -6851,14 +6894,14 @@ def get_live_context(history_df: pd.DataFrame, real_df: pd.DataFrame) -> Dict[st
 
         live_trading_aan = get_bot_state_val("bot_active", "false").lower() == "true"
         return {
-            # ── Architectuur status (NOOIT verwarren) ────────────────
-            # bot_systeem_draait = ALTIJD True — scanner/coach/monitor draaien 24/7
+            # ââ Architectuur status (NOOIT verwarren) ââââââââââââââââ
+            # bot_systeem_draait = ALTIJD True â scanner/coach/monitor draaien 24/7
             # live_trading_aan   = de ENIGE aan/uit schakelaar
-            "bot_systeem_draait":  True,          # altijd True — Render service draait
+            "bot_systeem_draait":  True,          # altijd True â Render service draait
             "live_trading_aan":    live_trading_aan,
             "live_trading_label":  bl_status,     # "LIVE TRADING AAN/UIT/GEPAUZEERD"
             "scanner_draait":      True,           # scanner draait altijd
-            # ── Oud veld bewaard voor compat maar gebruik live_trading_label ──
+            # ââ Oud veld bewaard voor compat maar gebruik live_trading_label ââ
             "bot_status":          bl_status,
             "btc_regime":         safe_str(btc.get("regime"), "UNKNOWN"),
             "btc_strength":       safe_float(btc.get("strength")),
@@ -6888,45 +6931,45 @@ def get_live_context(history_df: pd.DataFrame, real_df: pd.DataFrame) -> Dict[st
 def coach_antwoord(vraag: str, context: Dict[str, Any], history: List[Dict]) -> str:
     """Stuurt vraag + live context naar Claude en geeft antwoord terug."""
     if not ANTHROPIC_API_KEY:
-        return "❌ ANTHROPIC_API_KEY niet ingesteld in Render Environment Variables."
+        return "â ANTHROPIC_API_KEY niet ingesteld in Render Environment Variables."
 
     laatste_trades_txt = "\n".join(
-        f"  • {t}" for t in context.get("laatste_trades", [])
+        f"  â¢ {t}" for t in context.get("laatste_trades", [])
     ) or "  Geen recente trades"
 
     live_trading_aan  = context.get("live_trading_aan", False)
-    live_trading_label = "AAN ✅ — koopt echt met €{:.2f} per trade".format(context.get("max_per_trade", 0.50)) if live_trading_aan else "UIT 🟡 — scanner draait, shadow/sim trades, GEEN echt geld"
+    live_trading_label = "AAN â â koopt echt met â¬{:.2f} per trade".format(context.get("max_per_trade", 0.50)) if live_trading_aan else "UIT ð¡ â scanner draait, shadow/sim trades, GEEN echt geld"
     btc_regime   = context.get("btc_regime", "ONBEKEND")
     btc_strength = context.get("btc_strength", 0.0)
     btc_prijs    = context.get("btc_prijs", 0.0)
-    btc_display  = f"{btc_regime} ({btc_strength:.0f}% sterkte, €{btc_prijs:,.0f})" if btc_prijs > 0 else f"{btc_regime} (prijs nog niet geladen)"
+    btc_display  = f"{btc_regime} ({btc_strength:.0f}% sterkte, â¬{btc_prijs:,.0f})" if btc_prijs > 0 else f"{btc_regime} (prijs nog niet geladen)"
 
     system_prompt = f"""Je bent de AI Coach van een automatische cryptocurrency trading bot genaamd "Heintji".
 Je spreekt ALTIJD Nederlands en geeft concrete, directe adviezen.
 
-╔══════════════════════════════════════════════════════════════╗
-║  ARCHITECTUUR — NOOIT VERWARREN, ALTIJD ONTHOUDEN            ║
-╠══════════════════════════════════════════════════════════════╣
-║                                                               ║
-║  ONDERDEEL 1: BOT SYSTEEM — DRAAIT 24/7, NOOIT UIT           ║
-║  ─────────────────────────────────────────────────────────── ║
-║  • scanner (multi_coin_score.py) — scant elke 30 min         ║
-║  • ai_coach (ai_coach.py) — leert van trades                  ║
-║  • trade_monitor — bewaakt open posities                      ║
-║  • dashboard (app.py) — dit dashboard                         ║
-║                                                               ║
-║  STATUS: ✅ ALTIJD AAN — Render service stopt nooit           ║
-║  → "Bot: ?" of lege DB = data nog niet geladen, NIET kapot    ║
-║  → Performance 0 = geen trades YET, NIET dat bot kapot is     ║
-║                                                               ║
-║  ONDERDEEL 2: LIVE TRADING SCHAKELAAR — KAN AAN/UIT           ║
-║  ─────────────────────────────────────────────────────────── ║
-║  • AAN  → bot koopt echt met euros op Bitvavo                 ║
-║  • UIT  → scanner draait normaal, signalen als shadow/sim     ║
-║           GEEN echt geld gebruikt                             ║
-║                                                               ║
-║  DIT IS DE ENIGE SCHAKELAAR DIE DE GEBRUIKER BEDIENT          ║
-╚══════════════════════════════════════════════════════════════╝
+ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â  ARCHITECTUUR â NOOIT VERWARREN, ALTIJD ONTHOUDEN            â
+â âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ£
+â                                                               â
+â  ONDERDEEL 1: BOT SYSTEEM â DRAAIT 24/7, NOOIT UIT           â
+â  âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ â
+â  â¢ scanner (multi_coin_score.py) â scant elke 30 min         â
+â  â¢ ai_coach (ai_coach.py) â leert van trades                  â
+â  â¢ trade_monitor â bewaakt open posities                      â
+â  â¢ dashboard (app.py) â dit dashboard                         â
+â                                                               â
+â  STATUS: â ALTIJD AAN â Render service stopt nooit           â
+â  â "Bot: ?" of lege DB = data nog niet geladen, NIET kapot    â
+â  â Performance 0 = geen trades YET, NIET dat bot kapot is     â
+â                                                               â
+â  ONDERDEEL 2: LIVE TRADING SCHAKELAAR â KAN AAN/UIT           â
+â  âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ â
+â  â¢ AAN  â bot koopt echt met euros op Bitvavo                 â
+â  â¢ UIT  â scanner draait normaal, signalen als shadow/sim     â
+â           GEEN echt geld gebruikt                             â
+â                                                               â
+â  DIT IS DE ENIGE SCHAKELAAR DIE DE GEBRUIKER BEDIENT          â
+ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 KRITIEKE REGELS VOOR JOUW ANTWOORDEN:
 1. Zeg NOOIT "bot is gestopt", "verbindingsprobleem" of "bot status onduidelijk"
@@ -6937,18 +6980,18 @@ KRITIEKE REGELS VOOR JOUW ANTWOORDEN:
 5. Geef ALTIJD een concrete aanbeveling wat de gebruiker nu kan doen
 
 HUIDIGE LIVE STATUS:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Bot systeem:     ✅ DRAAIT (Render service = altijd aan)
+âââââââââââââââââââââââââââââââââââââââââ
+Bot systeem:     â DRAAIT (Render service = altijd aan)
 Live trading:    {live_trading_label}
 BTC regime:      {btc_display}
-PnL vandaag:     €{context.get("pnl_vandaag", 0):.4f}
+PnL vandaag:     â¬{context.get("pnl_vandaag", 0):.4f}
 Verlies streak:  {context.get("cons_losses", 0)}x op rij
 Profit Factor:   {context.get("profit_factor_30", 0):.2f} (30d, doel: >1.5)
 
 TRADE PERFORMANCE:
 Live trades:     {context.get("real_trades", 0)} trades met echt geld
 Win rate live:   {context.get("real_winrate", 0):.1f}%
-PnL totaal:      €{context.get("real_pnl_eur", 0):.4f}
+PnL totaal:      â¬{context.get("real_pnl_eur", 0):.4f}
 Alle trades:     {context.get("all_trades", 0)} (incl. sim/shadow)
 Win rate alles:  {context.get("all_winrate", 0):.1f}%
 Expectancy:      {context.get("real_expectancy", 0):.3f} R per trade
@@ -6959,7 +7002,7 @@ RECENTE TRADES:
 
 INSTELLINGEN:
 Min score:       {context.get("min_score", 85)} (score drempel voor trades)
-Max per trade:   €{context.get("max_per_trade", 0.50):.2f}
+Max per trade:   â¬{context.get("max_per_trade", 0.50):.2f}
 Trading uren:    {context.get("trading_uren", "08:00-22:00 UTC")}
 ATR multiplier:  {context.get("atr_multiplier", 2.0)}
 
@@ -6998,17 +7041,17 @@ Wees altijd positief en constructief. Leg exact uit wat de status betekent.""".s
             content = resp.json().get("content", [])
             if content:
                 return content[0]["text"].strip()
-        return f"❌ API fout {resp.status_code} — probeer opnieuw."
+        return f"â API fout {resp.status_code} â probeer opnieuw."
     except requests.exceptions.Timeout:
-        return "⏱️ Timeout — probeer een kortere vraag."
+        return "â±ï¸ Timeout â probeer een kortere vraag."
     except Exception as e:
-        return f"❌ Fout: {type(e).__name__}"
+        return f"â Fout: {type(e).__name__}"
 
 
 
 
 # ============================================================
-# v3.0 HELPER FUNCTIES — Render ping, trader status, candles
+# v3.0 HELPER FUNCTIES â Render ping, trader status, candles
 # ============================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def ping_render(url: str) -> Dict[str, Any]:
@@ -7121,12 +7164,12 @@ def get_trade_monitor_check() -> str:
         return "fout"
 
 def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
-    """AI Coach Chat pagina — live conversatie met volledige bot context."""
+    """AI Coach Chat pagina â live conversatie met volledige bot context."""
     import html as html_lib
     import re
 
     st.markdown('<div class="panel">', unsafe_allow_html=True)
-    st.markdown('<div class="section-title">🤖 AI Coach Chat</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">ð¤ AI Coach Chat</div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="section-subtitle">'
         'Direct chatten met je AI Coach. Hij heeft live toegang tot alle bot data '
@@ -7137,9 +7180,9 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
 
     if not ANTHROPIC_API_KEY:
         st.error(
-            "❌ ANTHROPIC_API_KEY niet ingesteld.\n\n"
-            "Ga naar: Render Dashboard → crypto-ai-dashboard → "
-            "Environment → voeg ANTHROPIC_API_KEY toe."
+            "â ANTHROPIC_API_KEY niet ingesteld.\n\n"
+            "Ga naar: Render Dashboard â crypto-ai-dashboard â "
+            "Environment â voeg ANTHROPIC_API_KEY toe."
         )
         st.markdown("</div>", unsafe_allow_html=True)
         return
@@ -7154,30 +7197,30 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     pf_kleur   = "#00ff41" if context.get("profit_factor_30", 0) >= 1.5 else "#ff1144"
     str_kleur  = "#ff1144" if context.get("cons_losses", 0) >= 3 else "#ffffff"
 
-    # Context display card — visueel duidelijk gescheiden
+    # Context display card â visueel duidelijk gescheiden
     live_aan_nu = context.get("live_trading_aan", False)
     ltrade_kleur = C_WIN if live_aan_nu else C_WARN
     ltrade_label = "AAN" if live_aan_nu else "UIT"
 
     st.markdown(
         f'''<div class="chat-context-card">
-        <div class="chat-context-title">⚡ Live Bot Data — automatisch geladen</div>
+        <div class="chat-context-title">â¡ Live Bot Data â automatisch geladen</div>
         <div style="display:flex;gap:0;flex-wrap:wrap;align-items:center;font-size:12px;">
 
             <!-- Bot systeem: ALTIJD groen, nooit veranderend -->
             <span style="background:rgba(0,255,65,0.10);border:1px solid rgba(0,255,65,0.25);
                 border-radius:8px;padding:3px 8px;margin-right:8px;margin-bottom:4px;">
-                🤖 Bot systeem: <b style="color:{C_WIN};">✅ DRAAIT</b>
+                ð¤ Bot systeem: <b style="color:{C_WIN};">â DRAAIT</b>
             </span>
 
             <!-- Live trading: de ENIGE schakelaar -->
             <span style="background:{"rgba(0,255,65,0.10)" if live_aan_nu else "rgba(0,229,255,0.08)"};
                 border:1px solid {"rgba(0,255,65,0.25)" if live_aan_nu else "rgba(0,229,255,0.20)"};
                 border-radius:8px;padding:3px 8px;margin-right:16px;margin-bottom:4px;">
-                💶 Live trading: <b style="color:{ltrade_kleur};">{ltrade_label}</b>
+                ð¶ Live trading: <b style="color:{ltrade_kleur};">{ltrade_label}</b>
             </span>
 
-            <span style="color:var(--muted);font-size:10px;margin-right:16px;margin-bottom:4px;">│</span>
+            <span style="color:var(--muted);font-size:10px;margin-right:16px;margin-bottom:4px;">â</span>
 
             <span style="margin-right:12px;margin-bottom:4px;">
                 BTC: <b style="color:#fff;">{context.get("btc_regime","?")}</b>
@@ -7186,7 +7229,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                 Win rate: <b style="color:{C_WIN};">{context.get("real_winrate",0):.1f}%</b> live
             </span>
             <span style="margin-right:12px;margin-bottom:4px;">
-                PnL vandaag: <b style="color:{pnl_kleur};">{pnl_sign}€{abs(context.get("pnl_vandaag",0)):.4f}</b>
+                PnL vandaag: <b style="color:{pnl_kleur};">{pnl_sign}â¬{abs(context.get("pnl_vandaag",0)):.4f}</b>
             </span>
             <span style="margin-right:12px;margin-bottom:4px;">
                 PF 30d: <b style="color:{pf_kleur};">{context.get("profit_factor_30",0):.2f}</b>
@@ -7206,7 +7249,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     if not st.session_state.coach_messages:
         st.markdown(
             '<div style="color:#555;font-size:11px;margin-bottom:6px;">'
-            '💡 Klik een vraag of typ hieronder:'
+            'ð¡ Klik een vraag of typ hieronder:'
             '</div>',
             unsafe_allow_html=True,
         )
@@ -7230,7 +7273,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                         "role": "user", "content": sug,
                         "tijd": now_utc().strftime("%H:%M"),
                     })
-                    with st.spinner("🤖 Coach analyseert..."):
+                    with st.spinner("ð¤ Coach analyseert..."):
                         ant = coach_antwoord(sug, context, [])
                     st.session_state.coach_messages.append({
                         "role": "assistant", "content": ant,
@@ -7257,7 +7300,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
             else:
                 chat_html += f"""
                 <div class="chat-msg-coach">
-                    <div class="chat-avatar-coach">🤖</div>
+                    <div class="chat-avatar-coach">ð¤</div>
                     <div>
                         <div class="chat-bubble-coach">{content}</div>
                         <div class="chat-time">{tijd}</div>
@@ -7269,7 +7312,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
         st.markdown("""
         <div class="chat-container">
             <div class="chat-empty">
-                🤖 AI Coach staat klaar<br>
+                ð¤ AI Coach staat klaar<br>
                 <span style="font-size:11px;color:#444;">Typ je vraag hieronder of klik een suggestie.</span>
             </div>
         </div>""", unsafe_allow_html=True)
@@ -7283,9 +7326,9 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
             label_visibility="collapsed", key="coach_input",
         )
     with btn_col:
-        stuur = st.button("📤 Stuur", use_container_width=True, key="coach_stuur")
+        stuur = st.button("ð¤ Stuur", use_container_width=True, key="coach_stuur")
     with wis_col:
-        if st.button("🗑️ Wis", use_container_width=True, key="coach_wis"):
+        if st.button("ðï¸ Wis", use_container_width=True, key="coach_wis"):
             st.session_state.coach_messages = []
             st.rerun()
 
@@ -7295,7 +7338,7 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
             "role": "user", "content": vraag.strip(),
             "tijd": now_utc().strftime("%H:%M"),
         })
-        with st.spinner("🤖 Coach analyseert jouw data..."):
+        with st.spinner("ð¤ Coach analyseert jouw data..."):
             hist = [
                 {"role": m["role"], "content": m["content"]}
                 for m in st.session_state.coach_messages[:-1]
@@ -7319,16 +7362,16 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
             if score_m:
                 ns = safe_int(score_m.group(1))
                 if 70 <= ns <= 100 and ns != MIN_SCORE_TO_TRADE:
-                    aanpassingen.append({"label": f"✅ MIN_SCORE_TO_TRADE: {MIN_SCORE_TO_TRADE} → {ns}", "key": "min_score_to_trade", "value": str(ns)})
+                    aanpassingen.append({"label": f"â MIN_SCORE_TO_TRADE: {MIN_SCORE_TO_TRADE} â {ns}", "key": "min_score_to_trade", "value": str(ns)})
 
             atr_m = re.search(r'atr_multiplier.*?(\d+\.?\d*)', content_low)
             if atr_m:
                 na = safe_float(atr_m.group(1))
                 if 1.0 <= na <= 5.0 and abs(na - ATR_MULTIPLIER) > 0.05:
-                    aanpassingen.append({"label": f"✅ ATR_MULTIPLIER: {ATR_MULTIPLIER} → {na}", "key": "atr_multiplier", "value": str(na)})
+                    aanpassingen.append({"label": f"â ATR_MULTIPLIER: {ATR_MULTIPLIER} â {na}", "key": "atr_multiplier", "value": str(na)})
 
             if aanpassingen:
-                st.markdown('<div class="chat-action-card">🔧 Coach adviseert — klik om direct toe te passen:</div>', unsafe_allow_html=True)
+                st.markdown('<div class="chat-action-card">ð§ Coach adviseert â klik om direct toe te passen:</div>', unsafe_allow_html=True)
                 for aanp in aanpassingen:
                     if st.button(aanp["label"], key=f"apply_{aanp['key']}", use_container_width=True):
                         conn = get_db_conn()
@@ -7342,20 +7385,20 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                                     )
                                 conn.commit()
                                 conn.close()
-                                st.success(f"✅ Opgeslagen! Bot gebruikt dit bij volgende scan.")
+                                st.success(f"â Opgeslagen! Bot gebruikt dit bij volgende scan.")
                                 st.session_state.coach_messages.append({
                                     "role": "assistant",
-                                    "content": f"✅ Aanpassing doorgevoerd: {aanp['key']} = {aanp['value']}\nBot gebruikt dit bij de volgende scan.",
+                                    "content": f"â Aanpassing doorgevoerd: {aanp['key']} = {aanp['value']}\nBot gebruikt dit bij de volgende scan.",
                                     "tijd": now_utc().strftime("%H:%M"),
                                 })
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"❌ Opslaan mislukt: {e}")
+                                st.error(f"â Opslaan mislukt: {e}")
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown(
-        '<div style="color:#444;font-size:11px;">💡 De coach heeft alle live data — je hoeft niets uit te leggen. '
-        'Aanpassingen via knoppen werken direct. Permanente aanpassingen: Render → Environment Variables.</div>',
+        '<div style="color:#444;font-size:11px;">ð¡ De coach heeft alle live data â je hoeft niets uit te leggen. '
+        'Aanpassingen via knoppen werken direct. Permanente aanpassingen: Render â Environment Variables.</div>',
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -7363,10 +7406,10 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
 
 
 # ============================================================
-# HOOFD LAYOUT — lazy loading per pagina
+# HOOFD LAYOUT â lazy loading per pagina
 # ============================================================
 # Oorzaak 502: alle 57.000 trades werden bij elke page refresh
-# tegelijk geladen → geheugen overflow → Render kill → 502.
+# tegelijk geladen â geheugen overflow â Render kill â 502.
 #
 # Fix: alleen de data laden die de huidige pagina nodig heeft.
 # Elke pagina laadt zijn eigen data via gecachte functies.
@@ -7375,13 +7418,13 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
 
 st.markdown('<div class="shell">', unsafe_allow_html=True)
 
-# ── TOP BALK — alleen lichtgewicht data ───────────────────────
-# Geen zware trade queries hier — alleen status en BTC regime.
+# ââ TOP BALK â alleen lichtgewicht data âââââââââââââââââââââââ
+# Geen zware trade queries hier â alleen status en BTC regime.
 bot_label, bot_emoji, bot_type = get_bot_status()
 btc_regime_data = get_btc_regime()
 source_mode     = "DB" if db_ready() else "DEMO"
 
-# Dagelijks PnL via lichte query — beperkt tot vandaag
+# Dagelijks PnL via lichte query â beperkt tot vandaag
 @st.cache_data(ttl=20, show_spinner=False)
 def get_open_live_count_direct() -> int:
     """Realtime open live trades voor dashboard status bar."""
@@ -7477,7 +7520,7 @@ if st.session_state.status_notice:
     st.info(st.session_state.status_notice)
     st.session_state.status_notice = ""
 
-# ── PAGINA ROUTING — lazy loading ─────────────────────────────
+# ââ PAGINA ROUTING â lazy loading âââââââââââââââââââââââââââââ
 page = st.session_state.page
 
 if page == "dashboard":
@@ -7497,7 +7540,7 @@ else:
     with content_col:
 
         if page == "coach":
-            # Coach chat — laadt alleen lichte real_df (laatste 100)
+            # Coach chat â laadt alleen lichte real_df (laatste 100)
             @st.cache_data(ttl=30, show_spinner=False)
             def _coach_data():
                 sql = build_trades_sql("REAL", 100)
@@ -7524,31 +7567,31 @@ else:
         elif page == "live":
             with st.spinner("Live trades laden..."):
                 real_df = load_real_trades()
-            render_trade_page("live", real_df, "💶 Live Performance",
+            render_trade_page("live", real_df, "ð¶ Live Performance",
                 "Alleen echte REAL trades met echt geld op Bitvavo.")
 
         elif page == "sim":
             with st.spinner("Simulator laden..."):
                 sim_df = load_sim_trades()
-            render_trade_page("sim", sim_df, "🔮 Simulator",
-                "Alleen SIM trades — historische signalen van history_simulator.py.")
+            render_trade_page("sim", sim_df, "ð® Simulator",
+                "Alleen SIM trades â historische signalen van history_simulator.py.")
 
         elif page == "shadow":
             with st.spinner("Shadow trades laden..."):
                 shadow_df = load_shadow_trades()
             # Shadow tabs: gefilterd vs ongefilterd
-            shadow_tab1, shadow_tab2 = st.tabs(["🎯 Gefilterd (score>=80, TREND_PULLBACK)", "📊 Alle Shadow Trades"])
+            shadow_tab1, shadow_tab2 = st.tabs(["ð¯ Gefilterd (score>=80, TREND_PULLBACK)", "ð Alle Shadow Trades"])
             with shadow_tab1:
                 shadow_filtered = shadow_df[
                     (shadow_df["score"] >= 80) &
                     (shadow_df["setup_type"] == "TREND_PULLBACK") &
                     (shadow_df["regime"] != "BEAR")
                 ] if not shadow_df.empty else shadow_df
-                render_trade_page("shadow_filtered", shadow_filtered, "🎯 Shadow Gefilterd",
-                    "Shadow trades met score>=80, TREND_PULLBACK, geen BEAR — verwachte win rate ~64%")
+                render_trade_page("shadow_filtered", shadow_filtered, "ð¯ Shadow Gefilterd",
+                    "Shadow trades met score>=80, TREND_PULLBACK, geen BEAR â verwachte win rate ~64%")
             with shadow_tab2:
-                render_trade_page("shadow", shadow_df, "🎭 Shadow Alle Trades",
-                    "Alle shadow trades zonder filter — win rate ~49%")
+                render_trade_page("shadow", shadow_df, "ð­ Shadow Alle Trades",
+                    "Alle shadow trades zonder filter â win rate ~49%")
 
         elif page == "positions":
             render_open_positions_page()
@@ -7617,7 +7660,7 @@ else:
 st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 st.caption(
     f"Crypto AI Terminal v3.0 | "
-    f"DB: {'✅' if db_ready() else '❌ DEMO'} | "
+    f"DB: {'â' if db_ready() else 'â DEMO'} | "
     f"Pagina: {page} | "
     f"{now_utc().strftime('%Y-%m-%d %H:%M UTC')}"
 )
@@ -7625,16 +7668,16 @@ st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ============================================================
-# v3.0 UITBREIDINGEN — NIEUWE FUNCTIES EN PAGINA'S
+# v3.0 UITBREIDINGEN â NIEUWE FUNCTIES EN PAGINA'S
 # ============================================================
 
-# ── TWILIO DAGMETER WIDGET ────────────────────────────────────
+# ââ TWILIO DAGMETER WIDGET ââââââââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=60, show_spinner=False)
 def get_twilio_dagmeter() -> Dict[str, Any]:
     """
     Leest het aantal WhatsApp berichten van vandaag uit bot_state.
     Twilio gratis account = max 50 berichten/dag.
-    Als dagmeter > 40 → waarschuwing op dashboard.
+    Als dagmeter > 40 â waarschuwing op dashboard.
     """
     if not db_ready():
         return {"count": 0, "max": 50, "pct": 0}
@@ -7664,16 +7707,16 @@ def render_twilio_dagmeter_widget() -> None:
 
     if count == 0:
         kleur = "#22c55e"
-        emoji = "📱"
+        emoji = "ð±"
     elif count < 40:
         kleur = "#22c55e"
-        emoji = "📱"
+        emoji = "ð±"
     elif count < 45:
         kleur = "#00e5ff"
-        emoji = "⚠️"
+        emoji = "â ï¸"
     else:
         kleur = "#ff1133"
-        emoji = "🚨"
+        emoji = "ð¨"
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:8px 12px;margin-bottom:8px;'>
@@ -7687,7 +7730,7 @@ def render_twilio_dagmeter_widget() -> None:
     )
 
 
-# ── SCAN EFFICIENCY MINI WIDGET ───────────────────────────────
+# ââ SCAN EFFICIENCY MINI WIDGET âââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=60, show_spinner=False)
 def get_scan_efficiency_data() -> Dict[str, Any]:
     """Haalt scan efficiency data op uit bot_state voor mini widget."""
@@ -7719,13 +7762,13 @@ def render_scan_efficiency_widget() -> None:
     """
     d = get_scan_efficiency_data()
     if not d:
-        st.caption("⏳ Nog geen scan uitgevoerd")
+        st.caption("â³ Nog geen scan uitgevoerd")
         return
 
     gescand   = d.get("gescand", 0)
     signalen  = d.get("signalen", 0)
     conv      = d.get("conversie_pct", 0)
-    beste     = d.get("beste_coin", "—")
+    beste     = d.get("beste_coin", "â")
     score     = d.get("beste_score", 0)
     duur      = d.get("duur_sec", 0)
     tijd      = d.get("tijd", "nooit")
@@ -7736,20 +7779,20 @@ def render_scan_efficiency_widget() -> None:
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
-        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🔍 Laatste scan — {tijd}</div>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>ð Laatste scan â {tijd}</div>
         <div style='display:flex;gap:16px;flex-wrap:wrap;'>
-          <span style='color:#e2e8f0;font-size:12px;'>📊 {gescand} gescand</span>
-          <span style='color:{kleur_conv};font-size:12px;'>🎯 {signalen} signalen ({conv:.2f}%)</span>
-          <span style='color:#94a3b8;font-size:12px;'>⏱️ {duur:.0f}s</span>
+          <span style='color:#e2e8f0;font-size:12px;'>ð {gescand} gescand</span>
+          <span style='color:{kleur_conv};font-size:12px;'>ð¯ {signalen} signalen ({conv:.2f}%)</span>
+          <span style='color:#94a3b8;font-size:12px;'>â±ï¸ {duur:.0f}s</span>
           <span style='color:#94a3b8;font-size:12px;'>BTC: {btc} | drempel: {drempel}</span>
         </div>
-        {f"<div style='color:#f59e0b;font-size:11px;margin-top:4px;'>Beste: {beste} score={score}</div>" if beste and beste != "—" else ""}
+        {f"<div style='color:#f59e0b;font-size:11px;margin-top:4px;'>Beste: {beste} score={score}</div>" if beste and beste != "â" else ""}
         </div>""",
         unsafe_allow_html=True,
     )
 
 
-# ── KELLY CRITERION WIDGET ────────────────────────────────────
+# ââ KELLY CRITERION WIDGET ââââââââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=300, show_spinner=False)
 def get_kelly_data() -> Dict[str, Any]:
     """Haalt Kelly Criterion data op uit coach geheugen."""
@@ -7788,17 +7831,17 @@ def render_kelly_widget() -> None:
         return
 
     kleur  = "#22c55e" if positief else "#ff1133"
-    emoji  = "✅" if positief else "❌"
+    emoji  = "â" if positief else "â"
     status = "POSITIEF" if positief else "NEGATIEF"
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
-        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>📐 Kelly Criterion</div>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>ð Kelly Criterion</div>
         <div style='display:flex;gap:16px;flex-wrap:wrap;align-items:center;'>
           <span style='color:{kleur};font-size:13px;font-weight:600;'>{emoji} Edge {status}</span>
           <span style='color:#e2e8f0;font-size:12px;'>WR: {wr:.1f}%</span>
           <span style='color:#e2e8f0;font-size:12px;'>Half Kelly: {half_kelly:.1f}%</span>
-          <span style='color:{kleur};font-size:12px;font-weight:600;'>Aanbevolen: €{aanbevolen:.2f}/trade</span>
+          <span style='color:{kleur};font-size:12px;font-weight:600;'>Aanbevolen: â¬{aanbevolen:.2f}/trade</span>
         </div>
         <div style='color:#64748b;font-size:10px;margin-top:4px;'>
           Gebaseerd op {n} live trades | Kelly: {kelly_pct:.1f}%
@@ -7808,7 +7851,7 @@ def render_kelly_widget() -> None:
     )
 
 
-# ── COIN CLUSTER WIDGET ───────────────────────────────────────
+# ââ COIN CLUSTER WIDGET âââââââââââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=300, show_spinner=False)
 def get_coin_clusters() -> Dict[str, List[str]]:
     """Haalt coin clusters op uit bot_state."""
@@ -7831,15 +7874,15 @@ def render_coin_clusters_widget() -> None:
         return
 
     st.markdown(
-        "<div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🏷️ Coin Clusters</div>",
+        "<div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>ð·ï¸ Coin Clusters</div>",
         unsafe_allow_html=True,
     )
 
     cluster_config = [
-        ("STAR",   "⭐", "#00e5ff", "Beste performers"),
-        ("STABLE", "✅", "#22c55e", "Solide"),
-        ("WEAK",   "⚠️", "#94a3b8", "Underperform"),
-        ("ZOMBIE", "💀", "#ff1133", "Blacklist"),
+        ("STAR",   "â­", "#00e5ff", "Beste performers"),
+        ("STABLE", "â", "#22c55e", "Solide"),
+        ("WEAK",   "â ï¸", "#94a3b8", "Underperform"),
+        ("ZOMBIE", "ð", "#ff1133", "Blacklist"),
     ]
 
     rijen = []
@@ -7866,7 +7909,7 @@ def render_coin_clusters_widget() -> None:
         )
 
 
-# ── PARAMETER ROLLBACK WIDGET ─────────────────────────────────
+# ââ PARAMETER ROLLBACK WIDGET âââââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=120, show_spinner=False)
 def get_recente_rollbacks() -> List[Dict]:
     """Haalt recente parameter rollbacks op uit de DB."""
@@ -7906,22 +7949,22 @@ def render_rollback_widget() -> None:
         verschil = wr_n - wr_v
         items.append(
             f"<div style='margin-bottom:4px;font-size:11px;'>"
-            f"<span style='color:#f59e0b;'>🔄 {param}</span>: "
-            f"<span style='color:#94a3b8;'>{oud} → {nieuw}</span> "
+            f"<span style='color:#f59e0b;'>ð {param}</span>: "
+            f"<span style='color:#94a3b8;'>{oud} â {nieuw}</span> "
             f"<span style='color:#ef4444;'>(WR {verschil:+.1f}%)</span>"
             f"</div>"
         )
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;border-left:3px solid #f59e0b;'>
-        <div style='color:#f59e0b;font-size:11px;margin-bottom:6px;'>⚙️ Parameter Rollbacks (7d)</div>
+        <div style='color:#f59e0b;font-size:11px;margin-bottom:6px;'>âï¸ Parameter Rollbacks (7d)</div>
         {"".join(items)}
         </div>""",
         unsafe_allow_html=True,
     )
 
 
-# ── DAGBRIEF WIDGET ───────────────────────────────────────────
+# ââ DAGBRIEF WIDGET âââââââââââââââââââââââââââââââââââââââââââ
 @st.cache_data(ttl=300, show_spinner=False)
 def get_coach_dagbrief() -> str:
     """Haalt de dagelijkse coach brief op uit bot_state."""
@@ -7939,7 +7982,7 @@ def render_dagbrief_widget() -> None:
     if not brief:
         return
 
-    with st.expander("📋 Dagelijkse Coach Brief", expanded=False):
+    with st.expander("ð Dagelijkse Coach Brief", expanded=False):
         st.markdown(
             f"<pre style='color:#e2e8f0;font-size:12px;white-space:pre-wrap;"
             f"background:#0f1117;padding:10px;border-radius:6px;'>{brief}</pre>",
@@ -7947,7 +7990,7 @@ def render_dagbrief_widget() -> None:
         )
 
 
-# ── SHADOW vs LIVE VERGELIJKING WIDGET ───────────────────────
+# ââ SHADOW vs LIVE VERGELIJKING WIDGET âââââââââââââââââââââââ
 @st.cache_data(ttl=120, show_spinner=False)
 def get_shadow_vs_live() -> Dict[str, Any]:
     """Vergelijkt shadow en live win rates voor de laatste 30 dagen."""
@@ -8000,20 +8043,20 @@ def render_shadow_live_widget() -> None:
     verschil  = shadow_wr - live_wr
 
     kleur_diff = "#22c55e" if abs(verschil) <= 10 else "#ff1133"
-    status     = "✅ Consistent" if abs(verschil) <= 10 else "⚠️ Discrepantie"
+    status     = "â Consistent" if abs(verschil) <= 10 else "â ï¸ Discrepantie"
 
     st.markdown(
         f"""<div style='background:#1a1f2e;border-radius:8px;padding:10px 12px;margin-bottom:8px;'>
-        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>🌉 Shadow ↔ Live (30d)</div>
+        <div style='color:#94a3b8;font-size:11px;margin-bottom:6px;'>ð Shadow â Live (30d)</div>
         <div style='display:flex;gap:20px;align-items:center;flex-wrap:wrap;'>
           <div>
-            <div style='color:#94a3b8;font-size:10px;'>🎭 Shadow</div>
+            <div style='color:#94a3b8;font-size:10px;'>ð­ Shadow</div>
             <div style='color:#e2e8f0;font-size:14px;font-weight:600;'>{shadow_wr:.1f}%</div>
             <div style='color:#64748b;font-size:10px;'>{shadow_n} trades</div>
           </div>
-          <div style='color:#475569;font-size:18px;'>↔</div>
+          <div style='color:#475569;font-size:18px;'>â</div>
           <div>
-            <div style='color:#94a3b8;font-size:10px;'>🔴 Live</div>
+            <div style='color:#94a3b8;font-size:10px;'>ð´ Live</div>
             <div style='color:#e2e8f0;font-size:14px;font-weight:600;'>{live_wr:.1f}%</div>
             <div style='color:#64748b;font-size:10px;'>{live_n} trades</div>
           </div>
@@ -8028,7 +8071,7 @@ def render_shadow_live_widget() -> None:
     )
 
 
-# ── RENDER UITGEBREIDE MONITOR PAGINA ────────────────────────
+# ââ RENDER UITGEBREIDE MONITOR PAGINA ââââââââââââââââââââââââ
 def render_uitgebreide_monitor_pagina() -> None:
     """
     Uitgebreide monitor pagina met alle v3.0 widgets gecombineerd.
@@ -8043,7 +8086,7 @@ def render_uitgebreide_monitor_pagina() -> None:
     Wordt bereikbaar via de monitor pagina als extra tab.
     """
     st.markdown(
-        "<h3 style='color:#e2e8f0;margin-bottom:16px;'>🔍 Bot Gezondheid — v3.0</h3>",
+        "<h3 style='color:#e2e8f0;margin-bottom:16px;'>ð Bot Gezondheid â v3.0</h3>",
         unsafe_allow_html=True,
     )
 
@@ -8064,7 +8107,7 @@ def render_uitgebreide_monitor_pagina() -> None:
 
     # Gradient optimizer resultaat tonen
     st.markdown(
-        "<div style='color:#94a3b8;font-size:11px;margin-top:8px;'>⚙️ Gradient Score Optimizer</div>",
+        "<div style='color:#94a3b8;font-size:11px;margin-top:8px;'>âï¸ Gradient Score Optimizer</div>",
         unsafe_allow_html=True,
     )
     try:
@@ -8082,7 +8125,7 @@ def render_uitgebreide_monitor_pagina() -> None:
             st.markdown(
                 f"<div style='background:#1a1f2e;border-radius:8px;padding:10px;margin-top:6px;'>"
                 f"<span style='color:{kleur};font-size:12px;'>Optimale drempel: {beste} "
-                f"(huidig: {huidig}) — {aanbev}</span>"
+                f"(huidig: {huidig}) â {aanbev}</span>"
                 f"<span style='color:#64748b;font-size:11px;'> | composite: {composite:.1f}</span>"
                 f"</div>",
                 unsafe_allow_html=True,
