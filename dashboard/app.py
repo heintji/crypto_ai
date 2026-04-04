@@ -11,7 +11,7 @@ import calendar
 # Dit is het visuele controlecentrum van de gehele bot.
 # Volledig herschreven voor een professionelere uitstraling
 # met betere navigatie, meer data en Claude AI integratie.
-#
+#h
 # PAGINA'S:
 # ─────────────────────────────────────────────────────────────
 # 1. dashboard     → Overzicht: hero metrics + equity curve
@@ -106,21 +106,22 @@ st.set_page_config(
 # ============================================================
 st.markdown("""<style>
 :root {
-    --bg:#030308; --bg2:#060610; --panel:#0a0a16; --card:#0d0d1a;
+    --bg:#010109; --bg2:#02020d; --panel:#060618; --card:#08081e;
     --border:rgba(0,212,255,0.10); --grid:rgba(0,212,255,0.06); --zero:rgba(0,212,255,0.15);
-    --txt:#e8f0ff; --txt-hi:#ffffff; --muted:#6e7a9a;
-    --win:#00e676; --loss:#ff2d55; --live:#00d4ff;
-    --shadow:#bf5fff; --sim:#ff6b00; --warn:#ffe600; --info:#3d8bff;
+    --txt:#e8f0ff; --txt-hi:#ffffff; --muted:#4e5a7a;
+    --win:#00ff88; --loss:#ff1144; --live:#00e5ff;
+    --shadow:#cc44ff; --sim:#ff6b00; --warn:#ffcc00; --info:#3d8bff;
     --gwin:rgba(0,230,118,0.18); --gloss:rgba(255,45,85,0.18); --glive:rgba(0,212,255,0.18);
 }
-.stApp{background:radial-gradient(ellipse at 15% 0%,rgba(0,212,255,0.05) 0%,transparent 55%),radial-gradient(ellipse at 85% 0%,rgba(191,95,255,0.06) 0%,transparent 55%),radial-gradient(ellipse at 50% 100%,rgba(0,230,118,0.03) 0%,transparent 60%),linear-gradient(180deg,var(--bg) 0%,#020208 100%);color:var(--txt);font-family:'Courier New',Courier,monospace;}
+.stApp{background:radial-gradient(ellipse at 15% 0%,rgba(0,229,255,0.07) 0%,transparent 55%),radial-gradient(ellipse at 85% 0%,rgba(204,68,255,0.07) 0%,transparent 55%),radial-gradient(ellipse at 50% 100%,rgba(0,255,136,0.04) 0%,transparent 60%),linear-gradient(180deg,var(--bg) 0%,#000008 100%);color:var(--txt);font-family:'Courier New',Courier,monospace;}
+.stApp::before{content:"";position:fixed;top:0;left:0;right:0;bottom:0;background-image:linear-gradient(rgba(0,229,255,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,0.025) 1px,transparent 1px);background-size:60px 60px;pointer-events:none;z-index:0;}
 header[data-testid="stHeader"]{background:transparent;}
 section[data-testid="stSidebar"]{display:none;}
 .block-container{max-width:1880px;padding-top:0.4rem;padding-bottom:1rem;}
-.shell{background:linear-gradient(180deg,rgba(7,7,18,0.98),rgba(3,3,12,0.98));border:1px solid var(--border);border-radius:24px;box-shadow:0 24px 60px rgba(0,0,0,0.6),0 0 80px rgba(0,212,255,0.03);padding:14px;}
-.panel,.panel-tight{background:linear-gradient(180deg,var(--panel),rgba(6,6,16,0.98));border:1px solid var(--border);border-radius:20px;box-shadow:0 12px 34px rgba(0,0,0,0.50),inset 0 1px 0 rgba(0,212,255,0.06);}
+.shell{background:linear-gradient(180deg,rgba(7,7,18,0.98),rgba(3,3,12,0.98));border:1px solid var(--border);border-radius:6px;box-shadow:0 24px 60px rgba(0,0,0,0.6),0 0 80px rgba(0,212,255,0.03);padding:14px;}
+.panel,.panel-tight{background:linear-gradient(180deg,var(--panel),rgba(6,6,16,0.98));border:1px solid var(--border);border-radius:4px;box-shadow:0 12px 34px rgba(0,0,0,0.70),inset 0 1px 0 rgba(0,212,255,0.06);}
 .panel{padding:14px;} .panel-tight{padding:10px 12px;}
-.metric-card{background:linear-gradient(135deg,var(--card),rgba(6,6,15,0.99));border:1px solid var(--border);border-radius:16px;padding:14px;min-height:88px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.50),inset 0 1px 0 rgba(0,212,255,0.06);transition:border-color 0.2s ease,box-shadow 0.2s ease;}
+.metric-card{background:linear-gradient(135deg,var(--card),rgba(6,6,15,0.99));border:1px solid var(--border);border-radius:4px;padding:14px;min-height:88px;position:relative;overflow:hidden;box-shadow:0 8px 24px rgba(0,0,0,0.50),inset 0 1px 0 rgba(0,212,255,0.06);transition:border-color 0.2s ease,box-shadow 0.2s ease;}
 .metric-card:hover{border-color:rgba(0,212,255,0.22);box-shadow:0 8px 24px rgba(0,0,0,0.50),0 0 24px rgba(0,212,255,0.08);}
 .metric-card::before{content:"";position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(0,212,255,0.5),rgba(191,95,255,0.5),transparent);}
 .metric-card.green-accent{border-top:2px solid var(--win);box-shadow:0 8px 24px rgba(0,0,0,0.5),0 0 20px var(--gwin);}
@@ -138,11 +139,11 @@ section[data-testid="stSidebar"]{display:none;}
 .accent-orange{color:var(--live)!important;text-shadow:0 0 10px var(--glive);}
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:4px 2px 12px 2px;border-bottom:1px solid var(--grid);margin-bottom:12px;}
 .brand{display:flex;align-items:center;gap:12px;}
-.brand-mark{width:18px;height:38px;border-radius:8px 16px 8px 16px;background:linear-gradient(180deg,var(--live),var(--shadow));transform:skewX(-18deg);box-shadow:0 8px 22px var(--glive);}
+.brand-mark{width:18px;height:38px;border-radius:8px 16px 8px 16px;background:linear-gradient(135deg,#f7931a,#00e5ff,#cc44ff);transform:skewX(-18deg);box-shadow:0 8px 22px rgba(247,147,26,0.5);}
 .brand-title{font-size:22px;line-height:1.05;font-weight:900;letter-spacing:-0.03em;color:var(--txt-hi);}
 .brand-sub{font-size:11px;color:var(--muted);letter-spacing:0.08em;text-transform:uppercase;margin-top:1px;}
 .top-status-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.top-status-chip{display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:999px;font-size:11px;font-weight:900;letter-spacing:0.04em;}
+.top-status-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:3px;font-size:10px;font-weight:900;letter-spacing:0.08em;text-transform:uppercase;font-family:'Courier New',monospace;}
 .chip-green{background:rgba(0,230,118,0.12);color:var(--win);border:1px solid rgba(0,230,118,0.28);}
 .chip-red{background:rgba(255,45,85,0.12);color:var(--loss);border:1px solid rgba(255,45,85,0.28);}
 .chip-yellow{background:rgba(255,230,0,0.10);color:var(--warn);border:1px solid rgba(255,230,0,0.25);}
@@ -154,7 +155,7 @@ section[data-testid="stSidebar"]{display:none;}
 .nav-caption{color:var(--muted);font-size:11px;line-height:1.5;margin-bottom:10px;}
 .page-chip{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:linear-gradient(90deg,rgba(0,212,255,0.14),rgba(191,95,255,0.14));border:1px solid var(--border);color:var(--txt-hi);font-size:11px;font-weight:900;margin-bottom:12px;letter-spacing:0.04em;text-transform:uppercase;}
 .nav-button-active div.stButton>button{background:linear-gradient(90deg,rgba(0,212,255,0.18),rgba(191,95,255,0.18))!important;border-color:rgba(0,212,255,0.28)!important;color:var(--txt-hi)!important;box-shadow:0 0 20px var(--glive)!important;padding-left:20px!important;}
-div.stButton>button,div.stFormSubmitButton>button,div.stDownloadButton>button{width:100%;background:linear-gradient(180deg,#0e0e1e,#080810)!important;color:var(--txt)!important;border:1px solid var(--border)!important;border-radius:12px!important;font-weight:800!important;font-family:'Courier New',monospace!important;font-size:12px!important;min-height:40px!important;transition:all 0.15s ease!important;}
+div.stButton>button,div.stFormSubmitButton>button,div.stDownloadButton>button{width:100%;background:linear-gradient(180deg,#0e0e1e,#080810)!important;color:var(--txt)!important;border:1px solid var(--border)!important;border-radius:3px!important;font-weight:700!important;font-family:'Courier New',monospace!important;font-size:11px!important;letter-spacing:0.06em!important;text-transform:uppercase!important;min-height:36px!important;transition:all 0.15s ease!important;}
 div.stButton>button:hover{background:linear-gradient(180deg,#121224,#0c0c1c)!important;color:var(--live)!important;border-color:rgba(0,212,255,0.40)!important;transform:translateY(-1px)!important;box-shadow:0 4px 16px var(--glive)!important;}
 .tc{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:10px 12px;margin-bottom:6px;font-size:12px;line-height:1.6;}
 .tc-win{border-left:3px solid var(--win);box-shadow:inset 3px 0 14px rgba(0,230,118,0.08);}
@@ -372,12 +373,12 @@ BOT_STATE_TABLE         = "public.bot_state"
 # ================================================================
 
 # ── Semantische kleuren ──────────────────────────────────────
-C_WIN    = "#00e676"   # electric green  — WIN, positief, omhoog
-C_LOSS   = "#ff2d55"   # neon red        — LOSS, negatief, omlaag
-C_LIVE   = "#00d4ff"   # electric cyan   — live trades, primair, open
-C_SHADOW = "#bf5fff"   # electric purple — shadow trades
+C_WIN    = "#00ff88"   # electric green  — WIN, positief, omhoog
+C_LOSS   = "#ff1144"   # neon red        — LOSS, negatief, omlaag
+C_LIVE   = "#00e5ff"   # electric cyan   — live trades, primair, open
+C_SHADOW = "#cc44ff"   # electric purple — shadow trades
 C_SIM    = "#ff6b00"   # neon orange     — simulator trades
-C_WARN   = "#ffe600"   # electric yellow — waarschuwing, RANGE regime
+C_WARN   = "#ffcc00"   # electric yellow — waarschuwing, RANGE regime
 C_INFO   = "#3d8bff"   # deep blue       — algemene info
 
 # ── Alias voor backwards-compat (worden niet meer uitgebreid) ─
@@ -407,7 +408,7 @@ SHAD_A10 = "rgba(191,95,255,0.10)"
 WARN_A10 = "rgba(255,230,0,0.10)"
 
 # ── Layout kleuren ───────────────────────────────────────────
-BG_DEEP  = "#030308"             # diepste achtergrond
+BG_DEEP  = "#010109"             # diepste achtergrond
 BG_PANEL = "rgba(10,10,20,0.98)" # panel achtergrond
 BG_CARD  = "rgba(8,8,16,0.99)"   # card achtergrond
 
@@ -416,7 +417,7 @@ GRID     = "rgba(0,212,255,0.06)"   # grafiek gridlijnen
 ZEROLINE = "rgba(0,212,255,0.15)"   # nul-lijn in grafieken
 
 TXT_MAIN = "#e8f0ff"    # hoofd tekst kleur
-TXT_DIM  = "#6e7a9a"    # gedimd / muted tekst
+TXT_DIM  = "#4e5a7a"    # gedimd / muted tekst
 TXT_HIGH = "#ffffff"    # highlight tekst (titels)
 
 # ── Lookup dictionaries ──────────────────────────────────────
@@ -1655,7 +1656,7 @@ def get_recovery_factor(df: pd.DataFrame) -> float:
     net_pnl = safe_float(summary.get("total_eur"))
     max_dd  = safe_float(summary.get("max_drawdown"))
     if max_dd <= 0:
-        return float("nan")  # Geen drawdown = N/A
+        return 0.0  # Geen drawdown = geen trades
     return round(net_pnl / max_dd, 2)
 def get_calendar_pnl(df: pd.DataFrame, year: int, month: int) -> Dict[str, float]:
     """P&L per dag voor de kalender heatmap."""
@@ -1771,8 +1772,8 @@ def chart_btc_correlation_bar(df: pd.DataFrame) -> go.Figure:
     corr = get_btc_correlation(df)
     if corr.empty:
         return empty_fig("Geen regime data")
-    color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
-    colors = [color_map.get(safe_str(r).upper(), "#00d4ff") for r in corr["regime"]]
+    color_map = {"BULL":"#00ff88","BEAR":"#ff1144","RANGE":"#ffcc00"}
+    colors = [color_map.get(safe_str(r).upper(), "#00e5ff") for r in corr["regime"]]
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=corr["regime"],
@@ -1796,7 +1797,7 @@ def chart_hold_time_bar(df: pd.DataFrame) -> go.Figure:
         y=hold["avg_hold"],
         text=[f"{v:.0f}m ({int(n)})" for v, n in zip(hold["avg_hold"], hold["n"])],
         textposition="outside",
-        marker=dict(color="#00d4ff"),
+        marker=dict(color="#00e5ff"),
         hovertemplate="Setup: %{x}<br>Gem. houdtijd: %{y:.0f} min<extra></extra>",
     ))
     return style_fig(fig, 260, "Gemiddelde Houdtijd per Setup (minuten)")
@@ -1816,7 +1817,7 @@ def chart_pnl_histogram(df: pd.DataFrame) -> go.Figure:
         x=euros,
         nbinsx=20,
         marker=dict(
-            color=["#00e676" if v >= 0 else "#ff2d55" for v in euros],
+            color=["#00ff88" if v >= 0 else "#ff1144" for v in euros],
             line=dict(width=0),
         ),
         opacity=0.8,
@@ -2368,7 +2369,7 @@ def chart_portfolio_pie(assets_df: pd.DataFrame) -> go.Figure:
     if work.empty:
         return empty_fig("Portfolio — geen assets met waarde")
     PORTFOLIO_COLORS = [C_CYAN, C_GREEN, C_PURPLE, C_YELLOW, C_ORANGE, C_BLUE,
-                        "#00d4ff", "#ff00aa", "#a78bfa"]
+                        "#00e5ff", "#ff00aa", "#a78bfa"]
     fig = go.Figure(go.Pie(
         labels=work["symbol"],
         values=work["eur_value"],
@@ -2581,11 +2582,11 @@ def render_alarm_banner() -> None:
     hoog    = [a for a in alarmen if a.get("ernst") == "HOOG"]
 
     if kritiek:
-        kleur = "#ff2d55"
+        kleur = "#ff1144"
         label = f"🔴 {len(kritiek)} KRITIEK ALARM{'EN' if len(kritiek)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in kritiek[:3])
     elif hoog:
-        kleur = "#ffe600"
+        kleur = "#ffcc00"
         label = f"🟡 {len(hoog)} HOOG ALARM{'EN' if len(hoog)>1 else ''}"
         tekst = " | ".join(a.get("omschrijving","") for a in hoog[:3])
     else:
@@ -2752,14 +2753,14 @@ def chart_r_distributie(df: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=loss, name="Verlies", nbinsx=20,
-        marker_color="#ff2d55", opacity=0.8,
+        marker_color="#ff1144", opacity=0.8,
     ))
     fig.add_trace(go.Histogram(
         x=wins, name="Winst", nbinsx=20,
-        marker_color="#00e676", opacity=0.8,
+        marker_color="#00ff88", opacity=0.8,
     ))
-    fig.add_vline(x=0, line_dash="dash", line_color="#ffe600", line_width=1)
-    fig.add_vline(x=float(vals.mean()), line_dash="dot", line_color="#00d4ff",
+    fig.add_vline(x=0, line_dash="dash", line_color="#ffcc00", line_width=1)
+    fig.add_vline(x=float(vals.mean()), line_dash="dot", line_color="#00e5ff",
                   annotation_text=f"Gem {vals.mean():.2f}R", line_width=1)
     return style_fig(fig, height=300, title="R-Multiple Verdeling")
 
@@ -2786,7 +2787,7 @@ def chart_score_winrate_correlatie(df: pd.DataFrame) -> go.Figure:
     if grp.empty:
         return empty_fig("Te weinig data per bucket")
 
-    kleuren = ["#ff2d55" if w < 45 else "#ffe600" if w < 55 else "#00e676"
+    kleuren = ["#ff1144" if w < 45 else "#ffcc00" if w < 55 else "#00ff88"
                for w in grp["wr"]]
     fig = go.Figure(go.Bar(
         x=grp["bucket"].astype(str),
@@ -2827,11 +2828,11 @@ def chart_fee_impact(df: pd.DataFrame) -> go.Figure:
     grp["netto"] = grp["bruto_winst"] - grp["bruto_verlies"] - grp["fees"]
 
     fig = go.Figure()
-    fig.add_trace(go.Bar(name="Bruto Winst",  x=grp["maand"], y=grp["bruto_winst"],  marker_color="#00e676"))
-    fig.add_trace(go.Bar(name="Bruto Verlies",x=grp["maand"], y=-grp["bruto_verlies"],marker_color="#ff2d55"))
-    fig.add_trace(go.Bar(name="Fees",         x=grp["maand"], y=-grp["fees"],         marker_color="#ffe600"))
+    fig.add_trace(go.Bar(name="Bruto Winst",  x=grp["maand"], y=grp["bruto_winst"],  marker_color="#00ff88"))
+    fig.add_trace(go.Bar(name="Bruto Verlies",x=grp["maand"], y=-grp["bruto_verlies"],marker_color="#ff1144"))
+    fig.add_trace(go.Bar(name="Fees",         x=grp["maand"], y=-grp["fees"],         marker_color="#ffcc00"))
     fig.add_trace(go.Scatter(name="Netto",    x=grp["maand"], y=grp["netto"],
-                             mode="lines+markers", marker_color="#00d4ff", line_width=2))
+                             mode="lines+markers", marker_color="#00e5ff", line_width=2))
     fig.update_layout(barmode="relative")
     return style_fig(fig, height=320, title="Fee Impact per Maand")
 
@@ -2843,7 +2844,7 @@ def chart_config_timeline(config_df: pd.DataFrame) -> go.Figure:
 
     fig = go.Figure()
     kleuren_map: Dict[str, str] = {}
-    palette = ["#00d4ff","#ff2d55","#00e676","#ffe600","#bf5fff","#00e676","#ffe600"]
+    palette = ["#00e5ff","#ff1144","#00ff88","#ffcc00","#cc44ff","#00ff88","#ffcc00"]
 
     params = config_df["parameter"].unique() if "parameter" in config_df.columns else []
     for i, param in enumerate(params[:7]):
@@ -2883,22 +2884,22 @@ def chart_trade_flow_funnel(flow: Dict) -> go.Figure:
     fig = go.Figure(go.Funnel(
         y=labels, x=values,
         textinfo="value+percent initial",
-        marker_color=["#00d4ff","#ffe600","#00e676","#00e676"],
+        marker_color=["#00e5ff","#ffcc00","#00ff88","#00ff88"],
     ))
     return style_fig(fig, height=280, title="Trade Flow Funnel (7 dagen)")
 
 
 def chart_audit_gauge(score: int) -> go.Figure:
     """Gauge chart voor systeem audit score 0-100."""
-    kleur = "#00e676" if score >= 90 else "#ffe600" if score >= 70 else "#ff2d55"
+    kleur = "#00ff88" if score >= 90 else "#ffcc00" if score >= 70 else "#ff1144"
     fig = go.Figure(go.Indicator(
         mode="gauge+number+delta",
         value=score,
         domain={"x":[0,1],"y":[0,1]},
-        title={"text":"Systeem Gezondheid","font":{"size":14,"color":"#6e7a9a"}},
-        delta={"reference":90,"increasing":{"color":"#00e676"},"decreasing":{"color":"#ff2d55"}},
+        title={"text":"Systeem Gezondheid","font":{"size":14,"color":"#4e5a7a"}},
+        delta={"reference":90,"increasing":{"color":"#00ff88"},"decreasing":{"color":"#ff1144"}},
         gauge={
-            "axis":{"range":[0,100],"tickcolor":"#555","tickfont":{"color":"#6e7a9a"}},
+            "axis":{"range":[0,100],"tickcolor":"#555","tickfont":{"color":"#4e5a7a"}},
             "bar":{"color":kleur},
             "steps":[
                 {"range":[0,60],"color":"#2c0a0a"},
@@ -2986,8 +2987,8 @@ def render_coach_monitor_page() -> None:
                 st.markdown(
                     f'<div style="font-size:12px;padding:4px 8px;border-left:3px solid #333;margin:2px 0;">'
                     f'{emoji} <b style="color:#aaa;">{ts}</b> '
-                    f'<span style="color:#ffe600;">[{cat}]</span> '
-                    f'<span style="color:#00d4ff;">{etype}</span> '
+                    f'<span style="color:#ffcc00;">[{cat}]</span> '
+                    f'<span style="color:#00e5ff;">{etype}</span> '
                     f'<span style="color:#ccc;">{omschr[:120]}</span>'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -3051,7 +3052,7 @@ def render_coach_monitor_page() -> None:
 
                 st.markdown(
                     f'<div style="background:#1a1a2e;border-left:4px solid '
-                    f'{"#ff2d55" if ernst=="KRITIEK" else "#ffe600" if ernst=="HOOG" else "#555"}'
+                    f'{"#ff1144" if ernst=="KRITIEK" else "#ffcc00" if ernst=="HOOG" else "#555"}'
                     f';padding:8px 12px;border-radius:4px;margin:4px 0;">'
                     f'<b>{emoji} {type_}</b> <span style="color:#aaa;font-size:11px;">{ts} | {status}</span><br>'
                     f'<span style="font-size:12px;color:#ccc;">{omschr}</span>'
@@ -3072,8 +3073,8 @@ def render_coach_monitor_page() -> None:
                 oud  = str(row.get("oud_regime","?"))
                 nieuw= str(row.get("nieuw_regime","?"))
                 btc  = float(row.get("btc_prijs",0) or 0)
-                kleur_oud  = "#ff2d55" if "BEAR" in oud  else "#00e676" if "BULL" in oud  else "#ffe600"
-                kleur_nieuw= "#ff2d55" if "BEAR" in nieuw else "#00e676" if "BULL" in nieuw else "#ffe600"
+                kleur_oud  = "#ff1144" if "BEAR" in oud  else "#00ff88" if "BULL" in oud  else "#ffcc00"
+                kleur_nieuw= "#ff1144" if "BEAR" in nieuw else "#00ff88" if "BULL" in nieuw else "#ffcc00"
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:10px;padding:6px;'
                     f'border-bottom:1px solid #222;font-size:13px;">'
@@ -3103,7 +3104,7 @@ def render_coach_monitor_page() -> None:
                 st.markdown(
                     f'<div style="display:flex;align-items:center;gap:12px;padding:6px 0;'
                     f'border-bottom:1px solid #222;font-size:13px;">'
-                    f'<code style="color:#00d4ff;width:220px;">{naam}</code>'
+                    f'<code style="color:#00e5ff;width:220px;">{naam}</code>'
                     f'<span style="color:#888;">{regels:,} regels</span>'
                     f'<span style="color:#555;font-family:monospace;">{checksum}</span>'
                     f'<span style="color:#888;font-size:11px;">{bijgew}</span>'
@@ -3170,10 +3171,10 @@ def render_coin_cluster_widget() -> None:
 
         clusters = json.loads(row[0])
         cluster_info = [
-            ("⭐ STAR",   clusters.get("STAR",   []), "#ffe600", "Prioriteer"),
-            ("✅ STABLE", clusters.get("STABLE", []), "#00e676", "Houd bij"),
+            ("⭐ STAR",   clusters.get("STAR",   []), "#ffcc00", "Prioriteer"),
+            ("✅ STABLE", clusters.get("STABLE", []), "#00ff88", "Houd bij"),
             ("⚠️ WEAK",  clusters.get("WEAK",   []), "#ff9100", "Verhoog drempel"),
-            ("💀 ZOMBIE", clusters.get("ZOMBIE", []), "#ff2d55", "Blacklist"),
+            ("💀 ZOMBIE", clusters.get("ZOMBIE", []), "#ff1144", "Blacklist"),
         ]
         cols = st.columns(4)
         for i, (label, coins, kleur, tip) in enumerate(cluster_info):
@@ -3183,12 +3184,12 @@ def render_coin_cluster_widget() -> None:
                     f'border-radius:8px;padding:10px;min-height:100px;">'
                     f'<div style="color:{kleur};font-size:12px;font-weight:700;'
                     f'margin-bottom:6px;">{label} ({len(coins)})</div>'
-                    f'<div style="color:#6e7a9a;font-size:10px;margin-bottom:6px;">{tip}</div>'
+                    f'<div style="color:#4e5a7a;font-size:10px;margin-bottom:6px;">{tip}</div>'
                     + "".join(
                         f'<div style="color:#ddd;font-size:11px;padding:2px 0;">{c}</div>'
                         for c in coins[:6]
                     )
-                    + (f'<div style="color:#6e7a9a;font-size:10px;">+{len(coins)-6} meer</div>'
+                    + (f'<div style="color:#4e5a7a;font-size:10px;">+{len(coins)-6} meer</div>'
                        if len(coins) > 6 else "")
                     + "</div>",
                     unsafe_allow_html=True,
@@ -3231,20 +3232,20 @@ def render_kelly_widget() -> None:
         edge  = data.get("edge_positief", True)
         n     = safe_int(data.get("n"))
 
-        kleur_edge = "#00e676" if edge else "#ff2d55"
+        kleur_edge = "#00ff88" if edge else "#ff1144"
         edge_txt   = "✅ POSITIEF" if edge else "❌ NEGATIEF"
 
         st.markdown(
             f'<div style="background:#12121a;border:1px solid #1e1e2e;'
             f'border-radius:8px;padding:12px;">'
             f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
-            f'<div><div style="color:#6e7a9a;font-size:10px;">Kelly %</div>'
-            f'<div style="color:#ffe600;font-size:18px;font-weight:900;">{kelly:.1f}%</div></div>'
-            f'<div><div style="color:#6e7a9a;font-size:10px;">Half Kelly</div>'
-            f'<div style="color:#00d4ff;font-size:18px;font-weight:900;">{half:.1f}%</div></div>'
-            f'<div><div style="color:#6e7a9a;font-size:10px;">Aanbevolen/trade</div>'
+            f'<div><div style="color:#4e5a7a;font-size:10px;">Kelly %</div>'
+            f'<div style="color:#ffcc00;font-size:18px;font-weight:900;">{kelly:.1f}%</div></div>'
+            f'<div><div style="color:#4e5a7a;font-size:10px;">Half Kelly</div>'
+            f'<div style="color:#00e5ff;font-size:18px;font-weight:900;">{half:.1f}%</div></div>'
+            f'<div><div style="color:#4e5a7a;font-size:10px;">Aanbevolen/trade</div>'
             f'<div style="color:#fff;font-size:16px;font-weight:700;">€{aanbv:.2f}</div></div>'
-            f'<div><div style="color:#6e7a9a;font-size:10px;">Win rate ({n} trades)</div>'
+            f'<div><div style="color:#4e5a7a;font-size:10px;">Win rate ({n} trades)</div>'
             f'<div style="color:#fff;font-size:16px;font-weight:700;">{wr:.1f}%</div></div>'
             f'</div>'
             f'<div style="margin-top:8px;font-size:11px;color:{kleur_edge};">'
@@ -3306,25 +3307,25 @@ def render_scan_efficiency_widget() -> None:
         conv  = safe_float(data.get("conversie_pct"))
         beoor = safe_str(data.get("beoordeling", "?"))
         beoor_kleur = (
-            "#00e676" if beoor == "OPTIMAAL" else
+            "#00ff88" if beoor == "OPTIMAAL" else
             "#ff9100" if beoor == "DREMPEL_HOOG" else
-            "#ff2d55"
+            "#ff1144"
         )
 
         items = [
             ("Sessies (7d)",     data.get("n_sessies", 0),   "#aaa"),
             ("Gescand totaal",   f"{data.get('totaal_gescand',0):,}", "#aaa"),
-            ("Signalen",         data.get("totaal_signalen", 0), "#ffe600"),
+            ("Signalen",         data.get("totaal_signalen", 0), "#ffcc00"),
             ("Conversie %",      f"{conv:.2f}%", beoor_kleur),
             ("Gem. duur",        f"{data.get('gem_duur_sec',0):.0f}s", "#aaa"),
-            ("Gem. beste score", f"{data.get('gem_beste_score',0):.1f}", "#00d4ff"),
+            ("Gem. beste score", f"{data.get('gem_beste_score',0):.1f}", "#00e5ff"),
         ]
         html = '<div style="background:#12121a;border:1px solid #1e1e2e;border-radius:8px;padding:10px;">'
         for label, val, kleur in items:
             html += (
                 f'<div style="display:flex;justify-content:space-between;'
                 f'padding:4px 0;border-bottom:1px solid #1a1a2a;font-size:12px;">'
-                f'<span style="color:#6e7a9a;">{label}</span>'
+                f'<span style="color:#4e5a7a;">{label}</span>'
                 f'<b style="color:{kleur};">{val}</b></div>'
             )
         html += (
@@ -3369,13 +3370,13 @@ def render_shadow_live_brug_widget() -> None:
 
         gezond    = data.get("brug_gezond", True)
         discr     = data.get("discrepanties", [])
-        status_kleur = "#00e676" if gezond else "#ff2d55"
+        status_kleur = "#00ff88" if gezond else "#ff1144"
         status_txt   = "✅ GEZOND" if gezond else f"⚠️ {len(discr)} DISCREPANTIES"
 
         s_wr = safe_float(shadow.get("wr"))
         l_wr = safe_float(live.get("wr"))
         diff = s_wr - l_wr
-        diff_kleur = "#00e676" if abs(diff) <= 10 else "#ff2d55"
+        diff_kleur = "#00ff88" if abs(diff) <= 10 else "#ff1144"
 
         html = (
             f'<div style="background:#12121a;border:1px solid {status_kleur}33;'
@@ -3384,14 +3385,14 @@ def render_shadow_live_brug_widget() -> None:
             f'margin-bottom:8px;">{status_txt}</div>'
             f'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">'
             f'<div style="text-align:center;">'
-            f'<div style="color:#6e7a9a;font-size:10px;">🎭 Shadow WR</div>'
-            f'<div style="color:#00d4ff;font-size:20px;font-weight:900;">{s_wr:.1f}%</div>'
-            f'<div style="color:#6e7a9a;font-size:10px;">{safe_int(shadow.get("n"))} trades</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">🎭 Shadow WR</div>'
+            f'<div style="color:#00e5ff;font-size:20px;font-weight:900;">{s_wr:.1f}%</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">{safe_int(shadow.get("n"))} trades</div>'
             f'</div>'
             f'<div style="text-align:center;">'
-            f'<div style="color:#6e7a9a;font-size:10px;">🔴 Live WR</div>'
-            f'<div style="color:#ffe600;font-size:20px;font-weight:900;">{l_wr:.1f}%</div>'
-            f'<div style="color:#6e7a9a;font-size:10px;">{safe_int(live.get("n"))} trades</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">🔴 Live WR</div>'
+            f'<div style="color:#ffcc00;font-size:20px;font-weight:900;">{l_wr:.1f}%</div>'
+            f'<div style="color:#4e5a7a;font-size:10px;">{safe_int(live.get("n"))} trades</div>'
             f'</div>'
             f'</div>'
             f'<div style="margin-top:8px;text-align:center;font-size:12px;color:{diff_kleur};">'
@@ -3434,7 +3435,7 @@ def render_param_rollback_widget() -> None:
             rows = cur.fetchall()
         if not rows:
             st.markdown(
-                '<div style="color:#6e7a9a;font-size:12px;padding:8px;">Geen rollbacks — alle aanpassingen presteren goed ✅</div>',
+                '<div style="color:#4e5a7a;font-size:12px;padding:8px;">Geen rollbacks — alle aanpassingen presteren goed ✅</div>',
                 unsafe_allow_html=True,
             )
             return
@@ -3447,7 +3448,7 @@ def render_param_rollback_widget() -> None:
             wr_na    = safe_float(r[5])
             rolled   = bool(r[6])
             wr_diff  = wr_na - wr_voor
-            kleur    = "#ff2d55" if rolled else "#00e676"
+            kleur    = "#ff1144" if rolled else "#00ff88"
             status   = "🔄 GERESET" if rolled else "✅ GEHOUDEN"
             st.markdown(
                 f'<div style="background:#12121a;border-left:3px solid {kleur};'
@@ -3455,7 +3456,7 @@ def render_param_rollback_widget() -> None:
                 f'<div style="display:flex;justify-content:space-between;">'
                 f'<b style="color:#ddd;">{param}</b>'
                 f'<span style="color:{kleur};">{status}</span></div>'
-                f'<div style="color:#6e7a9a;margin-top:2px;">'
+                f'<div style="color:#4e5a7a;margin-top:2px;">'
                 f'{test_v} → terug naar {orig_v} | '
                 f'WR: {wr_voor:.1f}% → {wr_na:.1f}% ({wr_diff:+.1f}%)</div>'
                 f'<div style="color:#555;font-size:10px;">{ts} UTC</div>'
@@ -3502,12 +3503,12 @@ def render_health_page() -> None:
                 f'<div style="display:flex;justify-content:space-between;'
                 f'padding:5px 0;border-bottom:1px solid #1e1e1e;font-size:13px;">'
                 f'<span style="color:#aaa;">{label}</span>'
-                f'<b style="color:#ffe600;">{val}</b>'
+                f'<b style="color:#ffcc00;">{val}</b>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
         conv = flow.get("conversie_pct",0)
-        kleur = "#00e676" if conv >= 5 else "#ff2d55" if conv < 2 else "#ffe600"
+        kleur = "#00ff88" if conv >= 5 else "#ff1144" if conv < 2 else "#ffcc00"
         st.markdown(
             f'<div style="margin-top:8px;font-size:12px;color:{kleur};">'
             f'Conversie: {conv:.1f}% signalen → live</div>',
@@ -3564,7 +3565,7 @@ def render_health_page() -> None:
                     ts = datetime.fromisoformat(ts.replace("Z","+00:00"))
                 uren = (now - ts).total_seconds() / 3600
                 ok   = uren < check["max_uren"]
-                kleur= "#00e676" if ok else "#ff2d55"
+                kleur= "#00ff88" if ok else "#ff1144"
                 label= f"{uren:.1f}u" if uren < 48 else f"{uren/24:.1f}d"
                 st.markdown(
                     f'<div class="metric-card"><div style="font-size:11px;color:#888;">{check["naam"]}</div>'
@@ -3607,7 +3608,7 @@ def render_health_page() -> None:
     else:
         for a in alarmen:
             ernst = str(a.get("ernst","MEDIUM"))
-            kleur = "#ff2d55" if ernst=="KRITIEK" else "#ffe600" if ernst=="HOOG" else "#555"
+            kleur = "#ff1144" if ernst=="KRITIEK" else "#ffcc00" if ernst=="HOOG" else "#555"
             emoji = "🔴" if ernst=="KRITIEK" else "🟡"
             st.markdown(
                 f'<div style="background:#111;border-left:4px solid {kleur};'
@@ -3677,15 +3678,15 @@ def render_controls_page() -> None:
     if bot_actief and not bot_gepauz:
         status_label  = "🟢 LIVE TRADING AAN"
         status_sub    = "Bot koopt actief met echt geld op Bitvavo"
-        status_kleur  = "#00e676"
+        status_kleur  = "#00ff88"
     elif bot_gepauz:
         status_label  = "⏸️ LIVE TRADING GEPAUZEERD"
         status_sub    = "Bot systeem draait — live trades tijdelijk geblokkeerd"
-        status_kleur  = "#ffe600"
+        status_kleur  = "#ffcc00"
     else:
         status_label  = "🟡 LIVE TRADING UIT"
         status_sub    = "Bot systeem draait 24/7 — scanner actief — GEEN echte euro-trades"
-        status_kleur  = "#ffe600"
+        status_kleur  = "#ffcc00"
 
     st.markdown(
         f'<div style="text-align:center;background:rgba(0,0,0,0.4);border:2px solid {status_kleur};'
@@ -3693,7 +3694,7 @@ def render_controls_page() -> None:
         f'<div style="font-size:26px;font-weight:900;color:{status_kleur};font-family:Courier New,monospace;">{status_label}</div>'
         f'<div style="font-size:12px;color:#8090b0;margin-top:6px;">{status_sub}</div>'
         f'<div style="font-size:11px;color:#4a5568;margin-top:4px;">'
-        f'<span style="color:#00e676;">✅ Bot systeem</span> draait altijd 24/7 op Render — '
+        f'<span style="color:#00ff88;">✅ Bot systeem</span> draait altijd 24/7 op Render — '
         f'scanner · coach · monitor · dashboard</div>'
         f'<div style="font-size:10px;color:#4a5568;margin-top:2px;">Laatste check: {datetime.now(timezone.utc).strftime("%H:%M:%S UTC")}</div>'
         f'</div>',
@@ -3884,9 +3885,9 @@ def render_controls_page() -> None:
             st.markdown(
                 f'<div style="font-size:12px;padding:3px 0;border-bottom:1px solid #1e1e1e;">'
                 f'<span style="color:#888;">{ts}</span> '
-                f'<b style="color:#ffe600;">{param}</b>: '
-                f'<span style="color:#ff2d55;">{oud}</span> → '
-                f'<span style="color:#00e676;">{nieuw}</span> '
+                f'<b style="color:#ffcc00;">{param}</b>: '
+                f'<span style="color:#ff1144;">{oud}</span> → '
+                f'<span style="color:#00ff88;">{nieuw}</span> '
                 f'<span style="color:#555;">[{bron}]</span>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -4554,7 +4555,7 @@ def render_trade_list(df: pd.DataFrame, title: str = "Trades") -> None:
         trade_id = safe_str(row.get("trade_id"))
         outcome  = safe_str(row.get("outcome"))
         pnl      = safe_float(row.get("pnl_r"))
-        color    = "#00e676" if outcome == "WIN" else "#ff2d55" if outcome == "LOSS" else "#6e7a9a"
+        color    = "#00ff88" if outcome == "WIN" else "#ff1144" if outcome == "LOSS" else "#4e5a7a"
         label    = (
             f"[{outcome}] {safe_str(row.get('symbol'))} | "
             f"{safe_str(row.get('setup_type'))} | "
@@ -4588,7 +4589,7 @@ def render_trade_detail(row: Optional[pd.Series]) -> None:
     is_real   = trade_type in ("REAL","LIVE")
     rr        = abs(target - entry) / max(abs(entry - stop), 0.0001) if entry > 0 and stop > 0 and target > 0 else 0.0
 
-    outcome_color = "#00e676" if outcome == "WIN" else "#ff2d55" if outcome == "LOSS" else "#6e7a9a"
+    outcome_color = "#00ff88" if outcome == "WIN" else "#ff1144" if outcome == "LOSS" else "#4e5a7a"
 
     st.markdown(f"""
     <div class="trade-chip-row">
@@ -4700,8 +4701,8 @@ def render_top_bar(
         <div class="brand">
             <div class="brand-mark"></div>
             <div>
-                <div class="brand-title">Crypto AI Terminal</div>
-                <div class="brand-sub">Cyber Neon Command Center v3.0</div>
+                <div class="brand-title">₿ Crypto AI Terminal</div>
+                <div class="brand-sub">⚡ Autonomous Trading System v3.0</div>
             </div>
         </div>
         <div class="top-status-row">
@@ -4779,7 +4780,9 @@ def render_dashboard(
         pf30 = get_profit_factor_30d(real_df)
         rf   = get_recovery_factor(real_df)
         st.markdown(metric_card("Verlies Streak nu", f"{cons}x {'🔴' if cons >= 3 else '🟡' if cons >= 1 else '✅'}", "verliezen op rij", "red" if cons >= 3 else "orange" if cons >= 1 else "green"), unsafe_allow_html=True)
-        st.markdown(metric_card("Recovery Factor", f"{rf:.2f}", "doel: >2.0 | PF:" + f"{pf30:.2f}", "green" if rf >= 2.0 else "orange" if rf >= 1.0 else "red"), unsafe_allow_html=True)
+        rf_disp = "N/A (nog geen trades)" if rf == 0.0 else f"{rf:.2f}"
+        rf_acc = "blue" if rf == 0.0 else ("green" if rf >= 2.0 else "orange" if rf >= 1.0 else "red")
+        st.markdown(metric_card("Recovery Factor", rf_disp, "doel: >2.0 | PF:" + f"{pf30:.2f}", rf_acc), unsafe_allow_html=True)
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     summary_all  = perf_summary(history_df)
@@ -4789,10 +4792,14 @@ def render_dashboard(
     with c1:
         st.markdown(metric_card("Trades (totaal)", str(int(summary_all["count"])), "", "blue"), unsafe_allow_html=True)
     with c2:
-        wr_all = format_pct(summary_all["winrate"])
+        _wt = get_winrate_totals()
+        wr_all_v = _wt.get("ALL", {}).get("winrate", summary_all["winrate"])
+        wr_all = format_pct(wr_all_v)
         st.markdown(metric_card("Win Rate (all)", wr_all, f"R: {format_r(summary_all['total_r'])}", "green"), unsafe_allow_html=True)
     with c3:
-        wr_real = format_pct(summary_real["winrate"])
+        _wt3 = get_winrate_totals()
+        wr_real_v = _wt3.get("REAL", {}).get("winrate", summary_real["winrate"])
+        wr_real = format_pct(wr_real_v)
         eur_sub = f"€{summary_real['total_eur']:.4f}" if abs(summary_real['total_eur']) > 0 else "—"
         st.markdown(metric_card("Win Rate (live)", wr_real, eur_sub, "orange"), unsafe_allow_html=True)
     with c4:
@@ -5015,9 +5022,9 @@ def render_trade_page(
         # Kleur uitkomst kolom
         def kleur_uitkomst(val):
             if str(val).upper() == "WIN":
-                return "color: #00e676"
+                return "color: #00ff88"
             elif str(val).upper() == "LOSS":
-                return "color: #ff2d55"
+                return "color: #ff1144"
             return ""
 
         styled = weergave.style.map(kleur_uitkomst, subset=["Uitkomst"]) if "Uitkomst" in weergave.columns else weergave
@@ -5451,13 +5458,13 @@ def render_service_monitor_widget() -> None:
                      drempel_warn: float) -> Tuple[str, str, str]:
         """Geeft (emoji, tekst, kleur) terug op basis van minuten geleden."""
         if min_geleden == float("inf"):
-            return "🕐", "Onbekend", "#6e7a9a"
+            return "🕐", "Onbekend", "#4e5a7a"
         elif min_geleden <= drempel_ok:
-            return "✅", f"{min_geleden:.0f}m geleden", "#00e676"
+            return "✅", f"{min_geleden:.0f}m geleden", "#00ff88"
         elif min_geleden <= drempel_warn:
-            return "⚠️", f"{min_geleden:.0f}m geleden", "#ffe600"
+            return "⚠️", f"{min_geleden:.0f}m geleden", "#ffcc00"
         else:
-            return "❌", f"{min_geleden:.0f}m geleden", "#ff2d55"
+            return "❌", f"{min_geleden:.0f}m geleden", "#ff1144"
 
     # ── Data ophalen ─────────────────────────────────────────
     # Monitor laatste run
@@ -5519,10 +5526,10 @@ def render_service_monitor_widget() -> None:
     # 1. whatsapp_webhook.py — Web Service
     if webhook_url:
         emoji_w = "✅" if webhook_ok else "❌"
-        kleur_w = "#00e676" if webhook_ok else "#ff2d55"
+        kleur_w = "#00ff88" if webhook_ok else "#ff1144"
         txt_w   = f"{webhook_ms}ms" if webhook_ok else "Geen response"
     else:
-        emoji_w, kleur_w, txt_w = "🕐", "#6e7a9a", "URL niet ingesteld"
+        emoji_w, kleur_w, txt_w = "🕐", "#4e5a7a", "URL niet ingesteld"
     services.append({
         "naam":     "whatsapp_webhook.py",
         "type":     "🌐 Web Service",
@@ -5555,7 +5562,7 @@ def render_service_monitor_widget() -> None:
         "schedule": "24/7",
         "emoji":    "✅",
         "txt":      "Nu actief",
-        "kleur":    "#00e676",
+        "kleur":    "#00ff88",
         "extra":    "Dit dashboard — Bloomberg terminal stijl",
     })
 
@@ -5605,11 +5612,11 @@ def render_service_monitor_widget() -> None:
     candles_n   = candles_info.get("n", 0)
     candles_oud = candles_info.get("uren_oud", 0)
     if candles_n == 0:
-        e7, t7, k7 = "❌", "Candles tabel leeg!", "#ff2d55"
+        e7, t7, k7 = "❌", "Candles tabel leeg!", "#ff1144"
     elif not candles_ok:
-        e7, t7, k7 = "⚠️", f"{candles_oud:.1f}u oud", "#ffe600"
+        e7, t7, k7 = "⚠️", f"{candles_oud:.1f}u oud", "#ffcc00"
     else:
-        e7, t7, k7 = "✅", f"{candles_oud:.1f}u oud", "#00e676"
+        e7, t7, k7 = "✅", f"{candles_oud:.1f}u oud", "#00ff88"
     services.append({
         "naam":     "history_fetcher.py",
         "type":     "📥 Cron Job",
@@ -5635,19 +5642,19 @@ def render_service_monitor_widget() -> None:
 
     # ── Render ────────────────────────────────────────────────
     # Toon als grid: 2 kolommen
-    n_ok   = sum(1 for s in services if s["kleur"] == "#00e676")
-    n_warn = sum(1 for s in services if s["kleur"] == "#ffe600")
-    n_err  = sum(1 for s in services if s["kleur"] == "#ff2d55")
+    n_ok   = sum(1 for s in services if s["kleur"] == "#00ff88")
+    n_warn = sum(1 for s in services if s["kleur"] == "#ffcc00")
+    n_err  = sum(1 for s in services if s["kleur"] == "#ff1144")
 
     # Overall status banner
     if n_err > 0:
-        overall_kleur = "#ff2d55"
+        overall_kleur = "#ff1144"
         overall_txt   = f"⚠️ {n_err} SERVICE(S) OFFLINE"
     elif n_warn > 0:
-        overall_kleur = "#ffe600"
+        overall_kleur = "#ffcc00"
         overall_txt   = f"⚠️ {n_warn} SERVICE(S) TRAAG"
     else:
-        overall_kleur = "#00e676"
+        overall_kleur = "#00ff88"
         overall_txt   = f"✅ ALLE {n_ok} SERVICES ACTIEF"
 
     st.markdown(
@@ -5673,7 +5680,7 @@ def render_service_monitor_widget() -> None:
                 f'<div>'
                 f'<div style="font-size:12px;font-weight:700;color:#ddd;">'
                 f'{svc["emoji"]} {svc["naam"]}</div>'
-                f'<div style="font-size:10px;color:#6e7a9a;margin-top:1px;">'
+                f'<div style="font-size:10px;color:#4e5a7a;margin-top:1px;">'
                 f'{svc["type"]} · {svc["schedule"]}</div>'
                 f'<div style="font-size:10px;color:#555;margin-top:3px;">'
                 f'{svc["extra"]}</div>'
@@ -5803,7 +5810,7 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
 
     with col_titel:
         st.markdown(
-            '<div style="padding-top:10px;color:#6e7a9a;font-size:10px;'
+            '<div style="padding-top:10px;color:#4e5a7a;font-size:10px;'
             'font-weight:900;text-transform:uppercase;letter-spacing:0.06em;">'
             'WIN %<br>LOSS %</div>',
             unsafe_allow_html=True,
@@ -5827,14 +5834,14 @@ def render_overall_winloss_bar(history_df: pd.DataFrame) -> None:
                 f'<div style="background:rgba(0,212,255,0.04);'
                 f'border:1px solid rgba(0,212,255,0.07);'
                 f'border-radius:12px;padding:8px 10px;">' 
-                f'<div style="color:#6e7a9a;font-size:10px;font-weight:700;'
+                f'<div style="color:#4e5a7a;font-size:10px;font-weight:700;'
                 f'text-transform:uppercase;">{emoji} {label}</div>'
                 f'<div style="display:flex;gap:8px;align-items:center;margin-top:4px;">'
-                f'<span style="color:#00e676;font-size:15px;font-weight:900;">{win_pct:.1f}%</span>'
+                f'<span style="color:#00ff88;font-size:15px;font-weight:900;">{win_pct:.1f}%</span>'
                 f'<span style="color:#555;font-size:12px;">|</span>'
-                f'<span style="color:#ff2d55;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
+                f'<span style="color:#ff1144;font-size:15px;font-weight:900;">{loss_pct:.1f}%</span>'
                 f'</div>'
-                f'<div style="color:#6e7a9a;font-size:10px;margin-top:3px;">'
+                f'<div style="color:#4e5a7a;font-size:10px;margin-top:3px;">'
                 f'{wins}W / {losses}L — {total} trades</div>'
                 f'</div>',
                 unsafe_allow_html=True,
@@ -5901,17 +5908,17 @@ def render_dagbudget_widget(real_df: pd.DataFrame) -> None:
     st.markdown(f"""
     <div class="metric-card orange-accent">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-            <div style="color:#6e7a9a;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
+            <div style="color:#4e5a7a;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;">Dagbudget</div>
             <span class="top-status-chip {pnl_cls}">{pnl_sign}€{abs(pnl):.2f} vandaag</span>
         </div>
         <div style="color:#ffffff;font-size:18px;font-weight:900;margin-bottom:2px;">
             {budget['trades_today']}/{budget['max_trades']} trades
         </div>
-        <div style="color:#6e7a9a;font-size:11px;margin-bottom:6px;">
+        <div style="color:#4e5a7a;font-size:11px;margin-bottom:6px;">
             Verliesruimte: €{budget['verlies_abs']:.2f} / €{budget['budget_max']:.2f} gebruikt
         </div>
         <div class="budget-bar">
-            <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#00d4ff,#ffe600);"></div>
+            <div class="budget-fill-safe" style="width:{min(trades_pct,100):.0f}%;background:linear-gradient(90deg,#00e5ff,#ffcc00);"></div>
         </div>
         <div style="color:#555;font-size:10px;margin-top:3px;">{trades_pct:.0f}% daglimiet gebruikt</div>
         <div class="budget-bar" style="margin-top:4px;">
@@ -5978,8 +5985,8 @@ def render_open_positions_page() -> None:
         is_profit = float_pnl >= 0
         card_cls  = "tc-win" if is_profit else "tc-loss"
         pnl_sign  = "+" if is_profit else ""
-        pnl_color = "#00e676" if is_profit else "#ff2d55"
-        r_color   = "#00e676" if float_r >= 0 else "#ff2d55"
+        pnl_color = "#00ff88" if is_profit else "#ff1144"
+        r_color   = "#00ff88" if float_r >= 0 else "#ff1144"
         hold_str  = f"{int(hold_min//60)}h {int(hold_min%60)}m" if hold_min > 60 else f"{int(hold_min)}m"
 
         pnl_pct = (float_pnl / max(amount, 0.001)) * 100
@@ -5999,11 +6006,11 @@ def render_open_positions_page() -> None:
             <div style="display:flex;gap:16px;flex-wrap:wrap;">
                 <div><span style="color:#555;font-size:10px;">ENTRY</span><br><span style="color:#fff;font-size:12px;font-weight:700;">{format_price(entry)}</span></div>
                 <div><span style="color:#555;font-size:10px;">NU</span><br><span style="color:{pnl_color};font-size:12px;font-weight:700;">{format_price(current) if current > 0 else '?'}</span></div>
-                <div><span style="color:#555;font-size:10px;">STOP</span><br><span style="color:#ff2d55;font-size:12px;font-weight:700;">{format_price(stop)}</span></div>
-                <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#00e676;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
-                <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#00d4ff;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
-                <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#6e7a9a;font-size:12px;font-weight:700;">{hold_str}</span></div>
-                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#6e7a9a;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
+                <div><span style="color:#555;font-size:10px;">STOP</span><br><span style="color:#ff1144;font-size:12px;font-weight:700;">{format_price(stop)}</span></div>
+                <div><span style="color:#555;font-size:10px;">TARGET</span><br><span style="color:#00ff88;font-size:12px;font-weight:700;">{format_price(target)}</span></div>
+                <div><span style="color:#555;font-size:10px;">R/R</span><br><span style="color:#00e5ff;font-size:12px;font-weight:700;">1:{rr:.1f}</span></div>
+                <div><span style="color:#555;font-size:10px;">OPEN</span><br><span style="color:#4e5a7a;font-size:12px;font-weight:700;">{hold_str}</span></div>
+                <div><span style="color:#555;font-size:10px;">INZET</span><br><span style="color:#4e5a7a;font-size:12px;font-weight:700;">€{amount:.2f}</span></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
@@ -6328,14 +6335,14 @@ def render_coins_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> None:
             st.plotly_chart(chart_btc_correlation_bar(history_df), use_container_width=True, config={"displayModeBar":False}, key="corr_chart")
         with cc2:
             if not corr_df.empty:
-                color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
+                color_map = {"BULL":"#00ff88","BEAR":"#ff1144","RANGE":"#ffcc00"}
                 for _, row in corr_df.iterrows():
                     regime  = safe_str(row.get("regime")).upper()
                     wr      = safe_float(row.get("win_rate"))
                     n       = safe_int(row.get("n"))
                     avg_r   = safe_float(row.get("avg_r"))
                     bar_w   = min(wr, 100)
-                    bar_col = color_map.get(regime, "#00d4ff")
+                    bar_col = color_map.get(regime, "#00e5ff")
                     st.markdown(f"""
                     <div class="corr-row">
                         <div class="corr-label">{regime}</div>
@@ -6439,7 +6446,7 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
         n_trades  = int(count_per_dag.get(dag_str, 0))
         n_wins    = int(wins_per_dag.get(dag_str, 0))
         is_vandaag = dag_str == now.strftime("%Y-%m-%d")
-        vandaag_border = "border:2px solid #ffe600;" if is_vandaag else ""
+        vandaag_border = "border:2px solid #ffcc00;" if is_vandaag else ""
 
         if pnl_val is None or n_trades == 0:
             cells.append(f'<div class="cal-day cal-flat" style="{vandaag_border}">{day_num}</div>')
@@ -6526,8 +6533,8 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#00e676;">{dag}</b> — '
-                        f'<span style="color:#ffe600;">+{r:.2f}R</span> | {n} trades'
+                        f'<b style="color:#00ff88;">{dag}</b> — '
+                        f'<span style="color:#ffcc00;">+{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -6537,8 +6544,8 @@ def render_kalender_page(history_df: pd.DataFrame) -> None:
                     n = int(count_per_dag.get(dag, 0))
                     st.markdown(
                         f'<div style="padding:4px 0;border-bottom:1px solid #222;font-size:13px;">'
-                        f'<b style="color:#ff2d55;">{dag}</b> — '
-                        f'<span style="color:#ff2d55;">{r:.2f}R</span> | {n} trades'
+                        f'<b style="color:#ff1144;">{dag}</b> — '
+                        f'<span style="color:#ff1144;">{r:.2f}R</span> | {n} trades'
                         f'</div>',
                         unsafe_allow_html=True,
                     )
@@ -6600,7 +6607,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     with cc2:
         corr_df = get_btc_correlation(history_df)
         if not corr_df.empty:
-            color_map = {"BULL":"#00e676","BEAR":"#ff2d55","RANGE":"#ffe600"}
+            color_map = {"BULL":"#00ff88","BEAR":"#ff1144","RANGE":"#ffcc00"}
             st.markdown('<div class="section-title" style="font-size:15px;">Win Rate per Regime</div>', unsafe_allow_html=True)
             for _, row in corr_df.iterrows():
                 regime = safe_str(row.get("regime")).upper()
@@ -6608,7 +6615,7 @@ def render_correlatie_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
                 n      = safe_int(row.get("n"))
                 avg_r  = safe_float(row.get("avg_r"))
                 bar_w  = min(wr, 100)
-                bar_c  = color_map.get(regime, "#00d4ff")
+                bar_c  = color_map.get(regime, "#00e5ff")
                 emoji  = {"BULL":"🟢","BEAR":"🔴","RANGE":"🟡"}.get(regime,"⚪")
                 st.markdown(f"""
                 <div class="corr-row">
@@ -6978,10 +6985,10 @@ def render_coach_chat_page(history_df: pd.DataFrame, real_df: pd.DataFrame) -> N
     st.session_state.coach_context = context
 
     # Context samenvatting bovenaan
-    pnl_kleur  = "#00e676" if context.get("pnl_vandaag", 0) >= 0 else "#ff2d55"
+    pnl_kleur  = "#00ff88" if context.get("pnl_vandaag", 0) >= 0 else "#ff1144"
     pnl_sign   = "+" if context.get("pnl_vandaag", 0) >= 0 else ""
-    pf_kleur   = "#00e676" if context.get("profit_factor_30", 0) >= 1.5 else "#ff2d55"
-    str_kleur  = "#ff2d55" if context.get("cons_losses", 0) >= 3 else "#ffffff"
+    pf_kleur   = "#00ff88" if context.get("profit_factor_30", 0) >= 1.5 else "#ff1144"
+    str_kleur  = "#ff1144" if context.get("cons_losses", 0) >= 3 else "#ffffff"
 
     # Context display card — visueel duidelijk gescheiden
     live_aan_nu = context.get("live_trading_aan", False)
