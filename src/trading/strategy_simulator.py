@@ -279,7 +279,7 @@ def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None):
             cur.execute("""INSERT INTO public.experience_trades(
                 trade_key,source,coin,timestamp,entry_time,exit_time,
                 setup_type,market_regime,entry,stop,target,
-                outcome,pnl_eur,pnl_r,result_r,bot_confidence,
+                outcome,pnl_eur,markt_advies,markt_score,pnl_r,result_r,bot_confidence,
                 strategy_id,strategy_name,filter_flags,filter_label,
                 created_at,updated_at)
                 VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,
