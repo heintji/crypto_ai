@@ -1556,7 +1556,7 @@ def place_market_buy_eur(
         "market":      market,
         "side":        "buy",
         "orderType":   "market",
-        "amountQuote": str(round(amount_eur, 2)),
+        "amountQuote": f"{amount_eur:.2f}",
         "operatorId":  BITVAVO_OPERATOR_ID,
     }
 
@@ -1564,7 +1564,7 @@ def place_market_buy_eur(
 
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
-        data = sdk.placeOrder(market, "buy", "market", {"amountQuote": str(round(amount_eur, 2)), "operatorId": BITVAVO_OPERATOR_ID})
+        data = sdk.placeOrder(market, "buy", "market", {"amountQuote": f"{amount_eur:.2f}", "operatorId": BITVAVO_OPERATOR_ID})
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
         log(f"❌ BUY exception ({market}): {e}")
