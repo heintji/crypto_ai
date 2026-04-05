@@ -101,16 +101,19 @@ def vwap(highs, lows, closes, vols):
     return sum(t*v for t,v in zip(tp,vols))/tv if tv else (closes[-1] if closes else 0)
 
 # --- DB helpers ---
-def get_candles(conn, sym, tf="1h", lim=55):
-    """Haalt OHLCV candles op van Binance, chronologisch (oud->nieuw)."""
+def get_candles(conn, sym, tf="1h", lim=260):
+    """Haalt OHLCV candles op van Binance, chronologisch (oud->nieuw).
+    Standaard 260 candles voor backtesting over meerdere periodes."""
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT open,high,low,close,volume,taker_buy_base,quote_volume
+            cur.execute("""SELECT open,high,low,close,volume,taker_buy_base,quote_volume,
+                EXTRACT(EPOCH FROM open_time)*1000 AS ts_ms
                 FROM public.candles WHERE symbol=%s AND timeframe=%s AND exchange='binance'
                 ORDER BY open_time DESC LIMIT %s""", (sym,tf,lim))
             rows=cur.fetchall()
         return [{"open":sf(r[0]),"high":sf(r[1]),"low":sf(r[2]),"close":sf(r[3]),
-                 "volume":sf(r[4]),"taker":sf(r[5]),"qvol":sf(r[6])} for r in reversed(rows)]
+                 "volume":sf(r[4]),"taker":sf(r[5]),"qvol":sf(r[6]),
+                 "ts_ms":int(sf(r[7]))} for r in reversed(rows)]
     except Exception as e: log(f"Candles {sym}: {e}"); return []
 
 def get_regime(conn):
@@ -266,10 +269,12 @@ def sim_result(sig, c1h):
         if nx<=st: return "LOSS", -1.0
     return None
 
-def save_trade(conn, sym, sig, regime, oc, pr, flags, label):
-    """Slaat SIM trade op in experience_trades. ON CONFLICT DO NOTHING voor veiligheid."""
+def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None):
+    """Slaat SIM trade op in experience_trades.
+    tk = unieke trade_key, standaard op timestamp maar bij backtest op candle-tijd
+    zodat dezelfde historische candle nooit twee keer opgeslagen wordt."""
     try:
-        tk=f"SIM_{sig['id']}_{sym}_{int(time.time()*1000)}"
+        if tk is None: tk=f"SIM_{sig['id']}_{sym}_{int(time.time()*1000)}"
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO public.experience_trades(
                 trade_key,source,coin,timestamp,entry_time,exit_time,
@@ -338,19 +343,52 @@ def main():
         log(f"Simuleer {len(coins)} coins x 5 strategieen x 7 filters...")
         tot=wins=losses=0
         for sym in coins:
-            c1=get_candles(conn,sym,"1h",55); c4=get_candles(conn,sym,"4h",55)
-            if len(c1)<25: continue
-            for sig in [s1_mean_reversion(c1,regime),s2_breakout(c1,regime),
-                        s3_trend(c1,c4,regime),s4_vwap(c1,regime),s5_regime(c1,c4,regime)]:
-                if not sig: continue
-                flags,label=eval_filters(sig,regime,btc_k,btc_e,fng,c1)
-                res=sim_result(sig,c1)
-                if not res: continue
-                oc,pr=res
-                if save_trade(conn,sym,sig,regime,oc,pr,flags,label):
-                    tot+=1; wins+=(1 if oc=="WIN" else 0); losses+=(1 if oc=="LOSS" else 0)
-                    log(f"  {sig['nm']:<20} {sym:<12} flags={flags:03d} "
-                        f"{oc:<5} {pr:+.2f}R [{label}]")
+            # Haal 260 candles op voor backtesting (260-55=205 simulatiepunten per coin)
+            c1_all=get_candles(conn,sym,"1h",260)
+            c4_all=get_candles(conn,sym,"4h",260)
+            if len(c1_all)<57: continue
+
+            # Backtest: loop door alle historische vensters
+            for i in range(55, len(c1_all)-1):
+                c1_ctx = c1_all[max(0,i-55):i]   # 55 candles context
+                c1_nx  = c1_all[i]                 # volgende candle = outcome
+                candle_ts = c1_nx["ts_ms"]         # unieke timestamp voor trade_key
+
+                # 4h context: gebruik candles die <= huidige 1h candle zijn
+                c4_ctx = [c for c in c4_all if c["ts_ms"] <= c1_all[i-1]["ts_ms"]]
+                c4_ctx = c4_ctx[-55:] if c4_ctx else []
+
+                strats = [
+                    (s1_mean_reversion, False),
+                    (s2_breakout,       False),
+                    (s3_trend,          True),
+                    (s4_vwap,           False),
+                    (s5_regime,         True),
+                ]
+                for fn, needs4h in strats:
+                    try:
+                        sig = fn(c1_ctx, c4_ctx, regime) if needs4h else fn(c1_ctx, regime)
+                    except: continue
+                    if not sig: continue
+
+                    # Outcome direct bepalen op basis van volgende candle
+                    e,s,t = sig["e"],sig["s"],sig["t"]
+                    nx = c1_nx["close"]
+                    if t > e:
+                        if nx >= t:  oc,pr = "WIN",  round((t-e)/(e-s),3)
+                        elif nx <= s: oc,pr = "LOSS", -1.0
+                        else: continue  # trade nog open
+                    else: continue
+
+                    # Unieke key op basis van candle-tijd zodat backtesting niet dubbelt
+                    tk = f"SIM_{sig['id']}_{sym}_{candle_ts}"
+                    flags,label=eval_filters(sig,regime,btc_k,btc_e,fng,c1_ctx)
+
+                    if save_trade(conn,sym,sig,regime,oc,pr,flags,label,tk=tk):
+                        tot+=1; wins+=(1 if oc=="WIN" else 0); losses+=(1 if oc=="LOSS" else 0)
+                        if tot<=20:  # log alleen eerste 20 om output kort te houden
+                            log(f"  {sig['nm']:<20} {sym:<12} flags={flags:03d} "
+                                f"{oc:<5} {pr:+.2f}R [{label}]")
         log(f"\nSamenvatting: {tot} trades | {wins}W {losses}L"
             + (f" | {wins/tot*100:.1f}% WR" if tot>0 else ""))
         log("\nPromotiecheck:")
