@@ -2971,6 +2971,12 @@ if __name__ == "__main__":
 
         conn.close()
         log("Scanner v4.1 klaar")
+        try:
+            _conn = db_connect()
+            set_bot_state(_conn, "scanner_last_run", now_utc().isoformat())
+            _conn.close()
+        except Exception as _e:
+            log(f"scanner_last_run fout: {_e}")
         sys.exit(0)
 
     except KeyboardInterrupt:
