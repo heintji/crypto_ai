@@ -283,10 +283,10 @@ def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None):
                 strategy_id,strategy_name,filter_flags,filter_label,
                 created_at,updated_at)
                 VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
                 ON CONFLICT(trade_key) DO NOTHING""",
                 (tk,sym,sig["nm"],regime,sig["e"],sig["s"],sig["t"],
-                 oc,pr*SIM_POSITION_EUR,pr,pr,sig["sc"],
+                 oc,pr*SIM_POSITION_EUR,markt_advies,markt_score_val,pr,pr,sig["sc"],
                  sig["id"],sig["nm"],flags,label))
         conn.commit(); return True
     except Exception as ex: log(f"Save {sym}: {ex}"); safe_rb(conn); return False
