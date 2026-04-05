@@ -3139,9 +3139,9 @@ def render_coach_monitor_page() -> None:
     st.caption("Volledig overzicht van alle coach activiteit, beslissingen en wijzigingen.")
 
     #  TABS 
-    tab_dag, tab_events, tab_config, tab_anom, tab_regime, tab_files, tab_analyses = st.tabs([
+    tab_dag, tab_events, tab_config, tab_anom, tab_regime, tab_files, tab_analyses, tab_rapporten = st.tabs([
         " Dagboek", " Events", " Config Log", " Anomalien",
-        " Regime Log", " Bestanden", " Analyses",
+        " Regime Log", " Bestanden", " Analyses", " AI Rapporten",
     ])
 
     #  DAGBOEK 
@@ -5379,6 +5379,44 @@ def render_signals_page(pending_df: pd.DataFrame) -> None:
         """, unsafe_allow_html=True)
 
     st.markdown("</div>", unsafe_allow_html=True)
+
+
+    # AI RAPPORTEN TAB
+    with tab_rapporten:
+        st.markdown("###  AI Coach Rapporten")
+        st.caption("Dag-, week- en maandanalyses gegenereerd door Claude.")
+        try:
+            conn_r = get_db_conn()
+            with conn_r.cursor() as cur:
+                cur.execute("""
+                    SELECT run_at AT TIME ZONE 'Europe/Amsterdam' as tijd,
+                           status, input_json->>'mode' as mode,
+                           tokens_used, duration_s, error_msg,
+                           output_json
+                    FROM public.agent_logs
+                    WHERE agent_name = 'ai_coach'
+                    ORDER BY run_at DESC LIMIT 30
+                """)
+                rows = cur.fetchall()
+            conn_r.close()
+            if not rows:
+                st.info("Nog geen AI rapporten. Coach draait dagelijks om 08:00 UTC.")
+            else:
+                for row in rows:
+                    tijd, status, mode, tokens, dur, err, out_json = row
+                    mode_label = {"dag": " Dagrapport", "week": " Weekrapport",
+                                  "maand": " Maandanalyse", "top5": " Top-5"}.get(str(mode or ""), f" {mode}")
+                    kleur = "#00ff41" if status == "OK" else "#ff1133"
+                    with st.expander(f"{mode_label}  {tijd.strftime('%d %b %Y %H:%M') if tijd else ''} | {tokens or 0} tokens", expanded=False):
+                        if status != "OK":
+                            st.error(f"Fout: {err}")
+                        if out_json and isinstance(out_json, dict):
+                            analyse = out_json.get("analyse") or out_json.get("reden", "")
+                            if analyse:
+                                st.markdown(analyse)
+                        st.caption(f"Status: {status} | Duur: {dur:.1f}s" if dur else f"Status: {status}")
+        except Exception as e:
+            st.warning(f"agent_logs niet beschikbaar: {e}")
 
 
 def render_scoreboard_page(scoreboard_df: pd.DataFrame) -> None:
