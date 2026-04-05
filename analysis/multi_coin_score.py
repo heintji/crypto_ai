@@ -1867,6 +1867,26 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
     else:              confidence = 40
 
     why_tag = " | ".join(why_tags[:12])
+
+    # Fase 4: Funding rate bonus van market_data.py
+    # Negatieve funding rate = shorts betalen longs = BULLISH signaal (+3)
+    # Hoge positieve funding rate = te veel longs = BEARISH signaal (-3)
+    try:
+        import sys
+        sys.path.insert(0, "/opt/render/project/src")
+        from market_data import MarketData
+        import psycopg2, os
+        _conn = psycopg2.connect(os.environ.get("DATABASE_URL",""), sslmode="require", connect_timeout=5)
+        _conn.autocommit = False
+        fr_bonus = MarketData(_conn).funding_rate_bonus(symbol)
+        _conn.close()
+        if fr_bonus != 0:
+            score += fr_bonus
+            why_tags.append(f"FR:{fr_bonus:+d}")
+            why_tag = " | ".join(why_tags[:12])
+    except Exception:
+        pass  # Funding rate is optioneel, niet kritiek
+
     return score, chance, confidence, why_tag, rsi_4h, vol_ratio
 
 
