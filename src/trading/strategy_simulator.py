@@ -130,15 +130,23 @@ def get_fng():
     except: return 50
 
 def get_coins(conn):
-    """Actieve coins van laatste 7 dagen. Fallback: DEFAULT_COINS lijst."""
+    """Haalt alle coins op die voldoende candle data hebben (>=25 1h candles).
+    Pakt direct uit de candles tabel zodat alle beschikbare coins meedoen,
+    niet alleen coins die al eerder gehandeld zijn."""
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT DISTINCT coin FROM public.experience_trades
-                WHERE timestamp>NOW()-INTERVAL '7 days'
-                AND UPPER(source) IN ('SHADOW','LIVE','SIM') ORDER BY coin LIMIT 40""")
+            cur.execute("""
+                SELECT DISTINCT symbol FROM public.candles
+                WHERE exchange='binance' AND timeframe='1h'
+                GROUP BY symbol HAVING COUNT(*) >= 25
+                ORDER BY symbol
+            """)
             coins=[r[0] for r in cur.fetchall()]
+        log(f"Coins gevonden in DB: {len(coins)}")
         return coins if coins else DEFAULT_COINS
-    except: return DEFAULT_COINS
+    except Exception as e:
+        log(f"get_coins fout: {e}")
+        return DEFAULT_COINS
 
 # --- Filter evaluatie ---
 def eval_filters(sig, regime, btc_koers, btc_ema200, fng, c1h):
