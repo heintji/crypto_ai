@@ -13,6 +13,12 @@ if PROJECT_ROOT not in sys.path:
 
 import anthropic
 from db import db_connect, set_bot_state, get_bot_state
+try:
+    from trading.market_sentiment import get_market_context
+    SENTIMENT_OK = True
+except ImportError:
+    SENTIMENT_OK = False
+    def get_market_context(symbol=""): return {}
 
 # 
 CLAUDE_MODEL     = "claude-sonnet-4-6"
@@ -98,6 +104,24 @@ def beoordeel_trade(
     # R-berekening
     risk_r = round((target - entry) / (entry - stop), 2) if entry > stop else 0.0
 
+    # Fear & Greed harde blokkade
+    if SENTIMENT_OK:
+        try:
+            ctx = get_market_context(symbol)
+            fng_val = ctx.get("fear_greed", {}).get("value", 50)
+            fng_lbl = ctx.get("fear_greed", {}).get("label", "Neutral")
+            cp_sent = ctx.get("cryptopanic", {}).get("sentiment", "neutral")
+            # Extreme fear (<20) + bearish nieuws = altijd NO-GO
+            if fng_val < 20 and cp_sent == "bearish":
+                msg = f" Auto NO-GO: Extreme Fear ({fng_val}) + bearish nieuws"
+                log(msg)
+                return {"go": False, "reden": msg, "tokens": 0, "script_mode": False, "fng": fng_val}
+            # Extreme greed (>85) = extra voorzichtig (laat Claude beslissen)
+            extra["fear_greed"] = f"{fng_val} ({fng_lbl})"
+            extra["cryptopanic"] = cp_sent
+        except Exception as _se:
+            log(f"Sentiment fout (skip): {_se}")
+
     # Script mode als circuit open
     if not _circuit_ok():
         log(f" Script mode  circuit open. Auto-GO voor {symbol}")
@@ -115,6 +139,12 @@ Target: {target:.4f}
 R-ratio: {risk_r:.1f}R
 
 Extra context: {json.dumps(extra, ensure_ascii=False) if extra else 'geen'}
+
+Factoren die zwaar wegen:
+- R-ratio < 1.5 = NO-GO
+- Regime BEAR = extra voorzichtig
+- Fear & Greed < 30 = voorzichtiger, < 20 = NO-GO tenzij score >90
+- Fear & Greed > 80 = FOMO-gevaar, wees strenger
 
 Geef een GO of NO-GO met maximaal 2 zinnen uitleg.
 Antwoord ALLEEN in dit JSON formaat (geen markdown):

@@ -1702,6 +1702,19 @@ def buy_eur(
             amount_eur = float(val or MAX_PER_TRADE_EUR)
         except Exception:
             amount_eur = MAX_PER_TRADE_EUR
+    # 1b. Regime-adaptive sizing
+    try:
+        regime_raw = str(meta.get("regime", "")).upper()
+        score_raw  = int(meta.get("score", 0))
+        if regime_raw == "BULL" and score_raw >= 85:
+            amount_eur = min(amount_eur * 1.5, MAX_PER_TRADE_EUR * 1.5)
+            log(f" BULL+score85: positie verhoogd naar {amount_eur:.2f}")
+        elif regime_raw in ("BEAR", "CRASH"):
+            amount_eur = amount_eur * 0.5
+            log(f" {regime_raw}: positie verlaagd naar {amount_eur:.2f}")
+        amount_eur = max(amount_eur, BITVAVO_MIN_ORDER_EUR)
+    except Exception:
+        pass
 
     # 1. Market ophalen
     market = symbol_to_market(symbol)
