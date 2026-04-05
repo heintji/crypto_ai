@@ -166,7 +166,7 @@ class MarketData:
 
     def haal_alle_signalen_op(self):
         """Haalt alle markt signalen op. Gebruikt DB cache waar mogelijk."""
-        return [self.haal_fear_greed_op(), self.haal_open_interest_op("BTCUSDT"), self.haal_btc_dominantie_op()]
+        return [self.haal_fear_greed_op(), self.haal_open_interest_op("BTCUSDT"), self.haal_btc_dominantie_op(), self.haal_nieuws_sentiment_op()]
 
     def cross_reference_advies(self):
         """Cross-referencing: alle signalen combineren tot 1 handelsadvies.
@@ -187,6 +187,84 @@ class MarketData:
         return {"advies":advies,"kleur":kleur,"totaal_score":totaal,
             "n_bullish":n_bull,"n_bearish":n_bear,"n_neutraal":n_neut,
             "signalen":signalen,"uitleg":uitleg,"go":advies=="GO"}
+
+    # RSS feeds: 4 grote crypto nieuwsbronnen
+    RSS_FEEDS=[
+        ("Cointelegraph","https://cointelegraph.com/rss"),
+        ("Decrypt","https://decrypt.co/feed"),
+        ("CoinDesk","https://coindesk.com/arc/outboundfeeds/rss/"),
+        ("BitcoinMagazine","https://bitcoinmagazine.com/feed"),
+    ]
+    # FUD keywords: negatief nieuws = BEARISH signaal
+    FUD_KEYWORDS=["ban","banned","hack","hacked","crash","crashing","sec","lawsuit",
+        "fraud","scam","arrested","seized","collapse","insolvent","bankrupt",
+        "warning","illegal","criminal","ponzi","rug","exploit","stolen"]
+    # FOMO keywords: positief nieuws = BULLISH signaal
+    FOMO_KEYWORDS=["etf","approved","approval","bullish","rally","ath","all-time high",
+        "partnership","adoption","launch","upgrade","institutional","bitcoin reserve",
+        "legal tender","nation","buy","accumulate","breakthrough","record"]
+
+    def haal_nieuws_sentiment_op(self):
+        """
+        Analyseert nieuws van 4 grote crypto RSS feeds op sentiment.
+        Telt FUD keywords (negatief) en FOMO keywords (positief) in
+        de laatste 20 artikelen van elke bron.
+
+        FUD woorden: ban, hack, crash, sec, fraud, scam, exploit etc.
+        FOMO woorden: etf, approved, rally, ath, adoption, institutional etc.
+
+        Score logica:
+          FOMO > FUD*2 en FOMO >= 3  -> BULLISH (+1)
+          FUD > FOMO*2 en FUD >= 3   -> BEARISH (-1)
+          Anders                     -> NEUTRAAL (0)
+
+        Cache: 30 minuten (nieuws verandert snel).
+        """
+        import xml.etree.ElementTree as ET
+        c=self._lees_cache("NIEUWS_SENTIMENT")
+        if c: return c
+
+        fud_totaal=0; fomo_totaal=0; artikelen_gelezen=0; bronnen_ok=[]
+
+        for naam,url in self.RSS_FEEDS:
+            try:
+                resp=requests.get(url,timeout=6,headers={"User-Agent":"CryptoBot/1.0"})
+                if resp.status_code!=200: continue
+                root=ET.fromstring(resp.text)
+                items=root.findall(".//item")[:20]
+                for item in items:
+                    tekst=(item.findtext("title","")+" "+item.findtext("description","")).lower()
+                    fud_totaal+=sum(1 for kw in self.FUD_KEYWORDS if kw in tekst)
+                    fomo_totaal+=sum(1 for kw in self.FOMO_KEYWORDS if kw in tekst)
+                    artikelen_gelezen+=1
+                bronnen_ok.append(naam)
+            except Exception as e:
+                log(f"RSS {naam} fout: {e}")
+
+        # Bepaal sentiment
+        if fomo_totaal>fud_totaal*2 and fomo_totaal>=3:
+            ri,sc="BULLISH",1
+        elif fud_totaal>fomo_totaal*2 and fud_totaal>=3:
+            ri,sc="BEARISH",-1
+        else:
+            ri,sc="NEUTRAAL",0
+
+        label=f"Nieuws:FOMO={fomo_totaal}/FUD={fud_totaal}({artikelen_gelezen}art)"
+        self._schrijf_cache("NIEUWS_SENTIMENT","MARKET",float(fomo_totaal-fud_totaal),
+            label,ri,sc,{"fomo":fomo_totaal,"fud":fud_totaal,"bronnen":bronnen_ok},uur=0)
+
+        # Sla 30 minuten op via aparte geldig_tot
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""UPDATE public.market_signals SET geldig_tot=NOW()+INTERVAL'30 minutes'
+                    WHERE bron='NIEUWS_SENTIMENT' AND symbool='MARKET'""")
+            self.conn.commit()
+        except Exception: pass
+
+        log(f"Nieuws sentiment: {label} -> {ri} (bronnen:{bronnen_ok})")
+        return {"bron":"NIEUWS_SENTIMENT","symbool":"MARKET",
+            "waarde":float(fomo_totaal-fud_totaal),"label":label,
+            "richting":ri,"score":sc,"fomo":fomo_totaal,"fud":fud_totaal}
 
     def funding_rate_bonus(self,symbool):
         """Score bonus/malus voor 1 coin op basis van funding rate.
