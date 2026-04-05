@@ -18,7 +18,16 @@ from db import db_connect
 CLAUDE_MODEL   = "claude-sonnet-4-6"
 MAX_TOKENS     = 1200
 WHATSAPP_URL   = os.getenv("WEBHOOK_BASE_URL", "")
-REPORT_MODE    = os.getenv("COACH_MODE", "dag")   # dag | week | maand | top5
+# Auto-detect mode op basis van dag (tenzij COACH_MODE handmatig ingesteld)
+def _auto_mode() -> str:
+    m = os.getenv("COACH_MODE", "")
+    if m: return m.lower()
+    now = datetime.now(timezone.utc)
+    if now.day == 1:             return "maand"   # 1e vd maand = maandanalyse
+    if now.weekday() == 0:       return "week"    # Maandag = weekrapport
+    return "dag"                                   # Rest = dagrapport
+
+REPORT_MODE = _auto_mode()
 
 def now_utc():
     return datetime.now(timezone.utc)
