@@ -1743,6 +1743,27 @@ def buy_eur(
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
+        # 5b. Risk Gate  Claude poortwachter
+        if RISK_GATE_OK:
+            try:
+                rg = _riskgate_beoordeel(
+                    symbol=symbol,
+                    score=int(meta.get("score", 0)),
+                    regime=str(meta.get("regime", "ONBEKEND")),
+                    entry=float(meta.get("entry", 0)),
+                    stop=float(meta.get("stop", 0)),
+                    target=float(meta.get("target", 0)),
+                    setup_type=str(meta.get("setup_type", "")),
+                )
+                if not rg.get("go", True):
+                    msg = f" Risk Gate NO-GO: {rg.get('reden','')[:80]}"
+                    log(msg)
+                    log_naar_bot_state(f"BUY geblokkeerd: Risk Gate NO-GO", busy=False)
+                    return False, msg
+                log(f" Risk Gate GO: {rg.get('reden','')[:60]}")
+            except Exception as _rge:
+                log(f"Risk Gate fout (skip): {_rge}")
+
         # 6. BUY order plaatsen
         ok, order_data = place_market_buy_eur(market, amount_eur)
 
