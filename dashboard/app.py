@@ -534,9 +534,9 @@ DB_STATEMENT_TIMEOUT = int(os.getenv("DB_STATEMENT_TIMEOUT_MS", "4000"))
 DASHBOARD_REFRESH    = int(os.getenv("DASHBOARD_REFRESH_SEC", "30"))
 
 # Data limieten
-REAL_LIMIT       = int(os.getenv("DASH_REAL_LIMIT", "400"))
-SIM_LIMIT        = int(os.getenv("DASH_SIM_LIMIT", "400"))
-SHADOW_LIMIT     = int(os.getenv("DASH_SHADOW_LIMIT", "400"))
+REAL_LIMIT       = int(os.getenv("DASH_REAL_LIMIT", "100000"))
+SIM_LIMIT        = int(os.getenv("DASH_SIM_LIMIT", "100000"))
+SHADOW_LIMIT     = int(os.getenv("DASH_SHADOW_LIMIT", "100000"))
 HISTORY_LIMIT    = int(os.getenv("DASH_HISTORY_LIMIT", "100000"))
 PENDING_LIMIT    = int(os.getenv("DASH_PENDING_LIMIT", "1000"))
 SCOREBOARD_LIMIT = int(os.getenv("DASH_SCOREBOARD_LIMIT", "500"))
