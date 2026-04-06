@@ -277,24 +277,31 @@ def sim_result(sig, c1h):
         if nx<=st: return "LOSS", -1.0
     return None
 
-def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None):
-    """Slaat SIM trade op in experience_trades.
-    tk = unieke trade_key, standaard op timestamp maar bij backtest op candle-tijd
-    zodat dezelfde historische candle nooit twee keer opgeslagen wordt."""
+def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None,
+               fng_waarde=None, fng_label=None, funding_r=None, funding_v=None,
+               nieuws_r=None, oi_r=None, btc_dom_r=None, cross_score=None):
+    """Slaat SIM trade op met alle signalen apart voor combinatie analyse.
+    Elke trade registreert: strategie + filter bitmap + F&G + nieuws + funding
+    + OI + BTC dominantie. Zo kun je later querien welke combinatie het beste werkt.
+    """
     try:
         if tk is None: tk=f"SIM_{sig['id']}_{sym}_{int(time.time()*1000)}"
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO public.experience_trades(
                 trade_key,source,coin,timestamp,entry_time,exit_time,
                 setup_type,market_regime,entry,stop,target,
-                outcome,pnl_eur,markt_advies,markt_score,pnl_r,result_r,bot_confidence,
+                outcome,pnl_eur,markt_advies,markt_score,
+                fng_waarde,fng_label,funding_richting,funding_waarde,
+                nieuws_richting,oi_richting,btc_dom_richting,cross_ref_score,pnl_r,result_r,bot_confidence,
                 strategy_id,strategy_name,filter_flags,filter_label,
                 created_at,updated_at)
                 VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
                 ON CONFLICT(trade_key) DO NOTHING""",
                 (tk,sym,sig["nm"],regime,sig["e"],sig["s"],sig["t"],
-                 oc,pr*SIM_POSITION_EUR,markt_advies,markt_score_val,pr,pr,sig["sc"],
+                 oc,pr*SIM_POSITION_EUR,markt_advies,markt_score_val,
+                 fng_waarde,fng_label,funding_r,funding_v,
+                 nieuws_r,oi_r,btc_dom_r,cross_score,pr,pr,sig["sc"],
                  sig["id"],sig["nm"],flags,label))
         conn.commit(); return True
     except Exception as ex: log(f"Save {sym}: {ex}"); safe_rb(conn); return False
