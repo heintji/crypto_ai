@@ -2033,6 +2033,7 @@ def get_prebuy_count_today(conn) -> int:
             SELECT COUNT(*) FROM public.pending_approvals
             WHERE DATE(created_at AT TIME ZONE 'UTC') = CURRENT_DATE
             AND status NOT IN ('SKIPPED','CANCELLED')
+            AND NOT (status = 'FAILED' AND buy_attempts = 0)
             """)
             row = cur.fetchone()
             return safe_int(row[0]) if row else 0
