@@ -2177,19 +2177,13 @@ def main_loop():
                     conn.commit()
                     log(f"✅ BUY uitgevoerd: {symbol}")
                 else:
-                    reden = str(result) if result else "onbekend"
-                    log(f"❌ BUY mislukt: {symbol}: {reden}")
-                    # SKIPPED voor verwachte blokkering, FAILED voor echte fout
-                    skip_kw = ["trading hours","buiten","risk gate","extreme greed",
-                               "drawdown","cooldown","max open","daily stop","geen open"]
-                    st = "SKIPPED" if any(k in reden.lower() for k in skip_kw) else "FAILED"
+                    log(f"❌ BUY mislukt: {symbol}: {result}")
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE pending_approvals SET status=%s, last_buy_error=%s WHERE id=%s",
-                            (st, reden[:500], pid)
+                            "UPDATE pending_approvals SET status='FAILED' WHERE id=%s",
+                            (pid,)
                         )
                     conn.commit()
-                    log(f"  → Status: {st}")
 
         except Exception as e:
             log(f"❌ Loop fout: {e}")
