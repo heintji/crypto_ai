@@ -404,8 +404,24 @@ def main():
                     # Unieke key op basis van candle-tijd zodat backtesting niet dubbelt
                     tk = f"SIM_{sig['id']}_{sym}_{candle_ts}"
                     flags,label=eval_filters(sig,regime,btc_k,btc_e,fng,c1_ctx)
+                    # Funding rate + coin cluster per coin ophalen
+                    _fr_r=None; _fr_v=None; _cluster=None
+                    try:
+                        _fr=_md_obj.haal_funding_rate_coin_op(sym)
+                        _fr_r=_fr.get("richting"); _fr_v=_fr.get("waarde")
+                    except Exception: pass
+                    try:
+                        with conn.cursor() as _cc:
+                            _cc.execute("SELECT cluster FROM public.coin_clusters WHERE symbool=%s LIMIT 1",(sym,))
+                            _cr2=_cc.fetchone()
+                            if _cr2: _cluster=_cr2[0]
+                    except Exception: pass
 
-                    if save_trade(conn,sym,sig,regime,oc,pr,flags,label,tk=tk):
+                    if save_trade(conn,sym,sig,regime,oc,pr,flags,label,tk=tk,
+                        fng_waarde=_fng_waarde,fng_label=_fng_label,
+                        funding_r=_fr_r,funding_v=_fr_v,
+                        nieuws_r=_nieuws_r,oi_r=_oi_r,btc_dom_r=_btc_dom_r,
+                        cross_score=markt_score_val,cluster=_cluster):
                         tot+=1; wins+=(1 if oc=="WIN" else 0); losses+=(1 if oc=="LOSS" else 0)
                         if tot<=20:  # log alleen eerste 20 om output kort te houden
                             log(f"  {sig['nm']:<20} {sym:<12} flags={flags:03d} "
