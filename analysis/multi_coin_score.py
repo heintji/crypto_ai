@@ -2032,6 +2032,7 @@ def get_prebuy_count_today(conn) -> int:
             cur.execute("""
             SELECT COUNT(*) FROM public.pending_approvals
             WHERE DATE(created_at AT TIME ZONE 'UTC') = CURRENT_DATE
+            AND status NOT IN ('SKIPPED','CANCELLED')
             """)
             row = cur.fetchone()
             return safe_int(row[0]) if row else 0
@@ -2993,7 +2994,7 @@ if __name__ == "__main__":
         log("Scanner v4.1 klaar")
         try:
             _conn = db_connect()
-            set_bot_state(_conn, "scanner_last_run", now_utc().isoformat())
+            set_bot_state_value(_conn, "scanner_last_run", now_utc().isoformat())
             _conn.close()
         except Exception as _e:
             log(f"scanner_last_run fout: {_e}")
