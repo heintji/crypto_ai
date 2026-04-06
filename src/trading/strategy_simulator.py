@@ -146,6 +146,14 @@ def get_coins(conn):
             """)
             coins=[r[0] for r in cur.fetchall()]
         log(f"Coins gevonden in DB: {len(coins)}")
+
+        # Fase 4: Extreme Greed filter - alleen SIM
+        # Backtest bewijs: WR 28.9% vs 34.1% baseline bij F&G>80
+        # Live trades: nog niet actief - eerst meer data verzamelen
+        if markt_score_val <= -2:
+            log(f"SIM SKIP: Extreme Greed geblokkeerd (markt_score={markt_score_val})")
+            log(f"Bewijs: backtest WR=28.9% vs baseline 34.1% op 1909 trades")
+            log(f"Status: SIM blocked | LIVE: nog niet actief (wacht op meer bewijs)")
         return coins if coins else DEFAULT_COINS
     except Exception as e:
         log(f"get_coins fout: {e}")
@@ -343,6 +351,9 @@ def main():
         log(f"Simuleer {len(coins)} coins x 5 strategieen x 7 filters...")
         tot=wins=losses=0
         for sym in coins:
+            # Extreme Greed filter: sla over als markt in Extreme Greed
+            if markt_score_val <= -2:
+                break  # stop hele loop bij Extreme Greed
             # Haal 260 candles op voor backtesting (260-55=205 simulatiepunten per coin)
             c1_all=get_candles(conn,sym,"1h",260)
             c4_all=get_candles(conn,sym,"4h",260)
