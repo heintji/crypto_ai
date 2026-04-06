@@ -2304,7 +2304,8 @@ def insert_pending(conn, prebuy: Dict) -> str:
                 created_at, status, score_details,
                 vwap_positie, divergentie, funding_rate, live_toegestaan,
                 markt_structuur, taker_ratio, coin_cluster,
-                kelly_grootte_eur, correlatie_max, edge_decay, sessie_timing
+                kelly_grootte_eur, correlatie_max, edge_decay, sessie_timing,
+                dag_van_de_week, uur_utc
             ) VALUES (
                 %s,%s,%s,%s,'4H',%s,%s,
                 %s,'GO',%s,%s,%s,%s,%s,
@@ -2312,7 +2313,9 @@ def insert_pending(conn, prebuy: Dict) -> str:
                 %s,%s,%s,%s,%s,
                 NOW(),'PENDING',%s::jsonb,
                 %s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s
+                %s,%s,%s,%s,%s,%s,%s,
+                EXTRACT(DOW FROM NOW() AT TIME ZONE 'UTC')::INTEGER,
+                EXTRACT(HOUR FROM NOW() AT TIME ZONE 'UTC')::INTEGER
             )
             ON CONFLICT (id) DO UPDATE SET
                 score=EXCLUDED.score, expires_at=EXCLUDED.expires_at,
