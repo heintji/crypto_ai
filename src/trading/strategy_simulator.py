@@ -292,16 +292,17 @@ def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None,
                 setup_type,market_regime,entry,stop,target,
                 outcome,pnl_eur,markt_advies,markt_score,
                 fng_waarde,fng_label,funding_richting,funding_waarde,
-                nieuws_richting,oi_richting,btc_dom_richting,cross_ref_score,pnl_r,result_r,bot_confidence,
+                nieuws_richting,oi_richting,btc_dom_richting,cross_ref_score,
+                coin_cluster,pnl_r,result_r,bot_confidence,
                 strategy_id,strategy_name,filter_flags,filter_label,
                 created_at,updated_at)
                 VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
                 ON CONFLICT(trade_key) DO NOTHING""",
                 (tk,sym,sig["nm"],regime,sig["e"],sig["s"],sig["t"],
                  oc,pr*SIM_POSITION_EUR,markt_advies,markt_score_val,
                  fng_waarde,fng_label,funding_r,funding_v,
-                 nieuws_r,oi_r,btc_dom_r,cross_score,pr,pr,sig["sc"],
+                 nieuws_r,oi_r,btc_dom_r,cross_score,_cluster,pr,pr,sig["sc"],
                  sig["id"],sig["nm"],flags,label))
         conn.commit(); return True
     except Exception as ex: log(f"Save {sym}: {ex}"); safe_rb(conn); return False
@@ -377,11 +378,13 @@ def main():
                 c4_ctx = c4_ctx[-55:] if c4_ctx else []
 
                 strats = [
-                    (s1_mean_reversion, False),
+                    # s1_mean_reversion: UIT - WR=15% op 20 trades, te slecht
+                    # (s1_mean_reversion, False),
                     (s2_breakout,       False),
                     (s3_trend,          True),
                     (s4_vwap,           False),
-                    (s5_regime,         True),
+                    # s5_regime: UIT - WR=14% op 92 trades, te slecht
+                    # (s5_regime,         True),
                 ]
                 for fn, needs4h in strats:
                     try:
