@@ -70,6 +70,20 @@ def evalueer_trade(symbool: str, score: int, regime: str) -> Dict:
             return {"go":False,"advies":"NO-GO","reden":"BTC regime=BEAR: geen long trades",
                 "score_aanpassing":0,"checks":checks}
 
+        # Check 1b: Extreme Greed blokkering (F&G > 80)
+        # Backtest op 43.021 SIM trades toonde aan: WR=28.9% bij Extreme Greed
+        # vs baseline 34.1% => 5.2% slechter. Dit filter heeft aantoonbaar waarde.
+        try:
+            fng_r = requests.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+            fng_val = int(fng_r.json()["data"][0]["value"])
+            if fng_val > 80:
+                return {"go":False,"advies":"NO-GO",
+                    "reden":f"Extreme Greed geblokkeerd: F&G={fng_val}/100 (>80). Backtest: WR 28.9% vs 34.1% baseline.",
+                    "score_aanpassing":0,"checks":[f"F&G:{fng_val} EXTREME_GREED"]}
+            checks.append(f"F&G:{fng_val} OK")
+        except Exception as _fe:
+            log(f"F&G check fout (skip): {_fe}")
+
         # Check 2: Drawdown pauze
         with conn.cursor() as cur:
             cur.execute("""SELECT COALESCE(SUM(pnl_eur),0) FROM public.experience_trades
