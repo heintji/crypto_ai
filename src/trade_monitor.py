@@ -822,6 +822,62 @@ def load_state() -> Dict[str, Any]:
         for r in rows:
             key = r[0] or f"LIVE|{r[1]}|0"
             positions[key] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "peak_price": float(r[13] or r[3] or 0)}
+        # Herstel runtime monitor state per trade uit DB
+        if positions:
+            try:
+                cur2 = conn2.cursor()
+                cur2.execute("""SELECT trade_key, monitor_mode, structuur_high,
+                    had_over_1r, target_reached, max_price_seen
+                    FROM experience_trades WHERE trade_key = ANY(%s)
+                    AND status = 'OPEN' AND source = 'LIVE'""",
+                    (list(positions.keys()),))
+                for row in cur2.fetchall():
+                    tk = row[0]
+                    if tk in positions:
+                        positions[tk]["mode"]                    = row[1] or "NORMAAL"
+                        positions[tk]["structuur_high"]          = float(row[2] or 0)
+                        positions[tk]["had_over_1r"]             = bool(row[3])
+                        positions[tk]["target_reached_notified"] = bool(row[4])
+                        positions[tk]["max_price_seen"]          = float(row[5] or 0)
+                cur2.close()
+            except Exception as e:
+                log(f"load_state monitor sync fout: {e}")
+        # Herstart fallback: state file leeg  laad uit DB
+        if not positions:
+            try:
+                cur2 = conn2.cursor()
+                cur2.execute("""SELECT trade_key, symbol, bitvavo_market, entry,
+                    stop, stop_loss, target, qty, amount_eur, setup_type, score,
+                    entry_time, prebuy_id, max_price_seen, monitor_mode,
+                    structuur_high, had_over_1r, target_reached
+                    FROM experience_trades
+                    WHERE status = 'OPEN' AND is_shadow = FALSE AND source = 'LIVE'""")
+                for row in cur2.fetchall():
+                    tk = row[0]
+                    positions[tk] = {
+                        "symbol": row[1], "bitvavo_market": row[2],
+                        "entry": float(row[3] or 0),
+                        "stop": float(row[4] or 0),
+                        "stop_loss": float(row[5] or 0),
+                        "target": float(row[6] or 0),
+                        "qty": float(row[7] or 0),
+                        "amount_eur": float(row[8] or 0),
+                        "setup_type": row[9] or "",
+                        "score": row[10] or 0,
+                        "entry_time": str(row[11] or ""),
+                        "prebuy_id": row[12] or "",
+                        "max_price_seen": float(row[13] or 0),
+                        "mode": row[14] or "NORMAAL",
+                        "structuur_high": float(row[15] or 0),
+                        "had_over_1r": bool(row[16]),
+                        "target_reached_notified": bool(row[17]),
+                        "_herstart": True
+                    }
+                if positions:
+                    log(f" Herstart: {len(positions)} open trades hervat uit DB")
+                cur2.close()
+            except Exception as e2:
+                log(f"load_state herstart fout: {e2}")
         return {"positions": positions, "open_trades": list(positions.keys())}
     except Exception as e:
         log(f"⚠️ load_state DB fout: {e}")
