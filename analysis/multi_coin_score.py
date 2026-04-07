@@ -2920,7 +2920,7 @@ if __name__ == "__main__":
     log(f"Weekend live skip:     {SKIP_WEEKEND}")
     log(f"Rapport uur UTC:       {RAPPORT_HOUR_UTC}:00")
     log(f"Correlatie max:        {MAX_CORRELATIE_DREMPEL:.2f}")
-        log(f"Kelly fractie:      VAST 20ac5.00 per trade\n")
+    log(f"Kelly fractie:         VAST €5.00 per trade\n")
     log(f"Auto BL interval:      {AUTO_BL_INTERVAL_UREN}u")
     log(f"Whitelist min WR:      {WHITELIST_MIN_WINRATE:.0%} na {WHITELIST_MIN_TRADES} trades")
     log(f"Markt sessie timing:   {bepaal_markt_sessie_timing()}")
