@@ -881,7 +881,41 @@ def load_state() -> Dict[str, Any]:
         return {"positions": positions, "open_trades": list(positions.keys())}
     except Exception as e:
         log(f"⚠️ load_state DB fout: {e}")
-        return {"positions": {}, "open_trades": []}
+        # Herstart fallback: laad open shadow trades uit DB
+        positions_fb = {}
+        try:
+            _conn = db_connect()
+            _cur = _conn.cursor()
+            _cur.execute("""SELECT trade_key, coin, entry, stop, stop_loss,
+                target, qty, amount_eur, setup_type, score, entry_time,
+                prebuy_id, max_price_seen, min_price_seen, coin_cluster
+                FROM experience_trades
+                WHERE UPPER(source)='SHADOW' AND status='OPEN'""")
+            for row in _cur.fetchall():
+                tk = row[0]
+                positions_fb[tk] = {
+                    "symbol": row[1],
+                    "entry":       float(row[2] or 0),
+                    "stop":        float(row[4] or row[3] or 0),
+                    "stop_loss":   float(row[4] or row[3] or 0),
+                    "target":      float(row[5] or 0),
+                    "qty":         float(row[6] or 0),
+                    "amount_eur":  float(row[7] or 0),
+                    "setup_type":  row[8] or "",
+                    "score":       row[9] or 0,
+                    "entry_time":  str(row[10] or ""),
+                    "prebuy_id":   row[11] or "",
+                    "max_price_seen": float(row[12] or 0),
+                    "min_price_seen": float(row[13] or 0),
+                    "coin_cluster":   row[14] or "STABLE",
+                    "_herstart": True,
+                }
+            _cur.close(); _conn.close()
+            if positions_fb:
+                log(f" Shadow herstart: {len(positions_fb)} open trades geladen uit DB")
+        except Exception as _e:
+            log(f" shadow herstart fout: {_e}")
+        return {"positions": positions_fb, "open_trades": list(positions_fb.keys())}
     finally:
         if conn2:
             try: conn2.close()
