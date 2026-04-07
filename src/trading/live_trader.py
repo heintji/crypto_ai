@@ -644,7 +644,7 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
         )
 
     trades_today = get_real_trades_today(conn)
-    if trades_today >= MAX_REAL_TRADES_PER_DAY:
+    if False:  # daglimiet verwijderd
         return False, f"Daglimiet: {trades_today}/{MAX_REAL_TRADES_PER_DAY}"
 
     open_count = get_open_real_trades_count(conn)
