@@ -1377,6 +1377,8 @@ def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
             result["verschil"]   = round(result["sim_wr"] - result["live_wr"], 4)
             result["edge_decay"] = result["verschil"] > 0.15
     except Exception as e:
+        try: conn.rollback()
+        except: pass
         log(f"Edge decay check fout ({symbol}): {e}")
     return result
 
