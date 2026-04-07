@@ -256,7 +256,7 @@ def utc_day_str() -> str:
     return now_utc().strftime("%Y-%m-%d")
 
 def is_trading_hours() -> bool:
-    return TRADING_HOURS_START <= now_utc().hour < TRADING_HOURS_END
+    return True  # 24/7 trading - geen uren limiet
 
 def is_weekend() -> bool:
     return now_utc().weekday() >= 5
