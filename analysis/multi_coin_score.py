@@ -1397,7 +1397,7 @@ def bereken_kelly_grootte(win_rate: float, avg_win_r: float = 2.5,
     kelly_eur = bankroll * kelly_f
     kelly_eur = max(min_eur, min(max_eur, kelly_eur))
     kelly_eur = min(kelly_eur, MAX_PER_TRADE_EUR * 2)
-    return round(kelly_eur, 2)
+    return 5.0  # vaste 5 euro - geen Kelly
 
 
 def bepaal_coin_cluster(exp_n: int, win_rate: float,
