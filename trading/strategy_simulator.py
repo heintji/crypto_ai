@@ -359,6 +359,8 @@ def main():
         log(f"Simuleer {len(coins)} coins x 5 strategieen x 7 filters...")
         tot=wins=losses=0
         markt_score_val = 0  # fix: was undefined
+        _fng_waarde = 0; _fng_label = "NEUTRAL"  # fix: undefined
+        _nieuws_r = 0; _oi_r = 0; _btc_dom_r = 0  # fix: undefined
         for sym in coins:
             # Extreme Greed filter: sla over als markt in Extreme Greed
             if markt_score_val <= -2:
@@ -422,7 +424,7 @@ def main():
                         fng_waarde=_fng_waarde,fng_label=_fng_label,
                         funding_r=_fr_r,funding_v=_fr_v,
                         nieuws_r=_nieuws_r,oi_r=_oi_r,btc_dom_r=_btc_dom_r,
-                        cross_score=markt_score_val,cluster=_cluster):
+                        cross_score=markt_score_val):
                         tot+=1; wins+=(1 if oc=="WIN" else 0); losses+=(1 if oc=="LOSS" else 0)
                         if tot<=20:  # log alleen eerste 20 om output kort te houden
                             log(f"  {sig['nm']:<20} {sym:<12} flags={flags:03d} "
