@@ -2655,6 +2655,9 @@ def scan_universe(conn, drempels: Dict) -> int:
             setup_type, why_base = detect_setup_type(candles_4h, candles_1h)
             if setup_type == "UNKNOWN":
                 tel_filter("geen_setup"); update_sessie(symbol_usdt, 0, "geen_setup"); continue
+            # FIX: BREAKOUT_RETEST geblokkeerd  43% WR te laag, alleen TREND_PULLBACK
+            if "BREAKOUT" in setup_type or "RETEST" in setup_type:
+                tel_filter("breakout_geblokkeerd"); update_sessie(symbol_usdt, 0, "breakout_geblokkeerd"); continue
 
             # FIX v4.1: BREAKOUT_RETEST in BEAR blokkeren
             # Shadow data: 149 trades, 28.9% win rate = verliesgevend.
