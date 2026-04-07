@@ -171,7 +171,7 @@ def utc_day_str(offset_days: int = 0) -> str:
 
 def is_trading_hours() -> bool:
     """Controleert of we binnen trading hours zijn (08:00-22:00 UTC)."""
-    return TRADING_HOURS_START <= now_utc().hour < TRADING_HOURS_END
+    return True  # 24/7 trading - geen uren limiet
 
 
 def format_eur(amount: float) -> str:
