@@ -2857,6 +2857,27 @@ def scan_universe(conn, drempels: Dict) -> int:
                 else:
                     _SESSIE["shadow_trades"] += 1
                 trigger_auto_buy(prebuy_id)
+                # Shadow trade aanmaken bij elk signaal
+                try:
+                    with conn.cursor() as _sc:
+                        _sc.execute(
+                            "INSERT INTO experience_trades "
+                            "(trade_key,source,coin,timestamp,setup_type,market_regime,"
+                            "entry,stop,target,outcome,markt_advies,markt_score,created_at,updated_at) "
+                            "VALUES (%s,'SHADOW',%s,%s,%s,%s,%s,%s,%s,'OPEN','',0,NOW(),NOW()) "
+                            "ON CONFLICT (trade_key) DO NOTHING",
+                            (f"SHD_{prebuy_id}",
+                             prebuy.get('symbol','').replace('USDT',''),
+                             prebuy.get('timestamp', __import__('time').time()),
+                             prebuy.get('setup_type','UNKNOWN'),
+                             prebuy.get('regime','UNKNOWN'),
+                             prebuy.get('entry', 0),
+                             prebuy.get('stop', 0),
+                             prebuy.get('target', 0)))
+                        conn.commit()
+                        log(f"Shadow trade: {prebuy.get('symbol')}")
+                except Exception as _se:
+                    log(f"Shadow insert fout: {_se}")
 
             if False:  # prebuy daglimiet verwijderd
                 log(f"Pre-buy daglimiet bereikt: {prebuy_today}")
