@@ -358,7 +358,7 @@ def main():
         coins=get_coins(conn)
         log(f"Simuleer {len(coins)} coins x 5 strategieen x 7 filters...")
         tot=wins=losses=0
-        markt_score_val = 0  # fix: undefined variable
+        markt_score_val = 0  # fix: was undefined
         for sym in coins:
             # Extreme Greed filter: sla over als markt in Extreme Greed
             if markt_score_val <= -2:
