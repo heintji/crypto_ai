@@ -2864,7 +2864,7 @@ def scan_universe(conn, drempels: Dict) -> int:
                             "INSERT INTO experience_trades "
                             "(trade_key,source,coin,timestamp,setup_type,market_regime,"
                             "entry,stop,target,outcome,markt_advies,markt_score,created_at,updated_at) "
-                            "VALUES (%s,'SHADOW',%s,%s,%s,%s,%s,%s,%s,'OPEN','',0,NOW(),NOW()) "
+                            "VALUES (%s,'SHADOW',%s,to_timestamp(%s),%s,%s,%s,%s,%s,'OPEN','',0,NOW(),NOW()) "
                             "ON CONFLICT (trade_key) DO NOTHING",
                             (f"SHD_{prebuy_id}",
                              prebuy.get('symbol','').replace('USDT',''),
