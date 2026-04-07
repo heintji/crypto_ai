@@ -811,7 +811,7 @@ def update_trade_in_db(
 # STATE FILE HELPERS
 # ============================================================
 def load_state() -> Dict[str, Any]:
-    """Laadt open live posities uit experience_trades DB."""
+    """Laadt open live posities uit experience_trades DB (herstart-safe)."""
     conn2 = None
     try:
         conn2 = db_connect()
@@ -1064,6 +1064,8 @@ def process_live_trade(
     if current <= stop or r < 0:
         log(f"🛑 {symbol}: stop geraakt ({current:.6f} ≤ {stop:.6f}) → SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STOP_LOSS"})
+    # exit_reden altijd opslaan
+    trade["exit_reden"] = trade.get("exit_reden", "STOP_LOSS")
         _finalize_trade(symbol, trade, current, result, conn, "STOP_LOSS")
         return True, result.get("ok", False)
 
