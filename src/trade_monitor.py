@@ -894,6 +894,23 @@ def save_state(state: Dict[str, Any]) -> None:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, ensure_ascii=False)
     os.replace(tmp, LIVE_STATE_PATH)
+    # Sync runtime monitor state naar DB (herstart-recovery)
+    try:
+        _conn = db_connect()
+        _cur = _conn.cursor()
+        for _tk, _tr in state.get("positions", {}).items():
+            _cur.execute(
+                "UPDATE experience_trades SET monitor_mode=%s,"
+                "structuur_high=%s,had_over_1r=%s,target_reached=%s,"
+                "max_price_seen=%s,monitor_updated_at=NOW()"
+                " WHERE trade_key=%s AND status='OPEN' AND source='LIVE'",
+                (_tr.get("mode","NORMAAL"),_tr.get("structuur_high",0),
+                 bool(_tr.get("had_over_1r",False)),
+                 bool(_tr.get("target_reached_notified",False)),
+                 _tr.get("max_price_seen",0),_tk))
+        _conn.commit()
+        _cur.close(); _conn.close()
+    except Exception: pass  # state file is primary
 
 
 def get_open_symbols(state: Dict[str, Any]) -> List[str]:
