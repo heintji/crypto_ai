@@ -716,12 +716,12 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
         log(f"ℹ️ Dagbudget bereikt: {daily_pnl:.2f} — bot gaat door (jij beslist via STOP)")
 
     trades_today = get_real_trades_today(conn)
-    if trades_today >= MAX_REAL_TRADES_PER_DAY:
+    if False:  # daglimiet verwijderd - geen limiet op trades per dag
         return False, f"Daglimiet bereikt: {trades_today}/{MAX_REAL_TRADES_PER_DAY} trades"
 
     open_count = get_open_real_trades_count(conn)
-    if open_count >= MAX_OPEN_REAL_TRADES:
-        return False, f"Max open trades bereikt: {open_count}/{MAX_OPEN_REAL_TRADES}"
+    if open_count >= 10:  # max 10 open gelijktijdig
+        return False, f"Max open trades bereikt: {open_count}/10"
 
     # Consecutive losses: alleen informatief
     consecutive = get_consecutive_losses(conn)
