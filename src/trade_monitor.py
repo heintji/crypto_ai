@@ -761,7 +761,7 @@ def update_trade_in_db(
                     trade_key, source, coin,
                     timestamp, entry_time,
                     setup_type, market_regime,
-                    outcome, pnl_eur, bot_confidence,
+                    outcome, pnl_eur, exit_price, bot_confidence,
                     exit_reden, min_price_seen, max_price_seen,
                 max_adverse_r, max_favorable_r, gemiste_winst_r,
                 hold_time_hours, closed_at,
