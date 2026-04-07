@@ -1221,7 +1221,7 @@ def _finalize_trade(
     entry      = safe_float(trade.get("entry"))
     pnl_eur    = safe_float(sell_result.get("pnl_eur"))
     fee_eur    = safe_float(sell_result.get("fee_eur"))
-    outcome    = "WIN" if pnl_eur > 0 else "LOSS"
+    outcome      = "WIN" if (exit_price > entry if entry > 0 else pnl_eur > 0) else "LOSS"
     setup_type = safe_str(trade.get("setup_type"))
     regime     = safe_str(trade.get("regime"))
     score      = safe_int(trade.get("score"))
