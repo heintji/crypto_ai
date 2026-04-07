@@ -1617,6 +1617,21 @@ def place_market_sell(
     if sell_qty <= 0:
         return False, {"error": f"Ongeldige qty: {sell_qty}"}
 
+    # Wallet check voor sell  voorkomt errorCode 212 (te klein) en 216 (ghost)
+    try:
+        _sym = market.replace("-EUR", "")
+        _sdk_chk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
+        _bal = _sdk_chk.balance({"symbol": _sym})
+        _wallet_qty = float(_bal[0].get("available", 0)) if _bal else 0
+        if _wallet_qty < 0.000001:
+            log(f" SELL GEBLOKT {market}: coin niet in wallet (GHOST_TRADE)")
+            return False, {"error": f"GHOST_TRADE: {_sym} niet in wallet"}
+        if _wallet_qty < sell_qty * 0.90:
+            log(f" Sell qty aangepast {market}: DB={sell_qty:.6f} wallet={_wallet_qty:.6f}")
+            sell_qty = round(_wallet_qty * 0.999, 8)
+    except Exception as _we:
+        log(f" wallet pre-sell check: {_we}")
+
     payload = {
         "market":    market,
         "side":      "sell",
