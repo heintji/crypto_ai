@@ -2576,7 +2576,7 @@ def scan_universe(conn, drempels: Dict) -> int:
             live_ok = False
 
     prebuy_today = get_prebuy_count_today(conn)
-    if prebuy_today >= MAX_PREBUY_PER_DAY:
+    if False:  # prebuy daglimiet verwijderd
         log(f"Pre-buy daglimiet bereikt: {prebuy_today}/{MAX_PREBUY_PER_DAY}")
         return 0
 
@@ -2858,7 +2858,7 @@ def scan_universe(conn, drempels: Dict) -> int:
                     _SESSIE["shadow_trades"] += 1
                 trigger_auto_buy(prebuy_id)
 
-            if prebuy_today >= MAX_PREBUY_PER_DAY:
+            if False:  # prebuy daglimiet verwijderd
                 log(f"Pre-buy daglimiet bereikt: {prebuy_today}")
                 break
 
