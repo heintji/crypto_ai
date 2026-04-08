@@ -336,26 +336,26 @@ def report_error(
     uitleg = _claude_analyse(prompt, max_tokens=200) or \
              f"{type(error).__name__}: {str(error)[:100]}"
 
-    pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
-    # rate_key=rate_key,
-    # message=(
-    # f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
-    # f"{'Ã¢ÂÂ' * 30}\n\n"
-    # f"Ã°ÂÂÂ Functie:     {function}\n"
-    # f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-    # f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-    # f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-    # f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-    # f"Ã°ÂÂÂ WAT TE DOEN:\n"
-    # f"1. Check Render logs voor details\n"
-    # f"2. Stuur TRADES voor open posities\n"
-    # f"3. Check Bitvavo account direct\n"
-    # f"4. Stuur STOP als je wil pauzeren\n\n"
-    # f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
-    # f"Open trades worden bewaakt.\n\n"
-    # f"Commands: STATUS | TRADES | STOP"
-    # ),
-    # )
+    send_whatsapp(
+    rate_key=rate_key,
+    message=(
+    f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
+    f"{'Ã¢ÂÂ' * 30}\n\n"
+    f"Ã°ÂÂÂ Functie:     {function}\n"
+    f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
+    f"Ã°ÂÂÂ Open trades: {open_trades}\n"
+    f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
+    f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
+    f"Ã°ÂÂÂ WAT TE DOEN:\n"
+    f"1. Check Render logs voor details\n"
+    f"2. Stuur TRADES voor open posities\n"
+    f"3. Check Bitvavo account direct\n"
+    f"4. Stuur STOP als je wil pauzeren\n\n"
+    f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
+    f"Open trades worden bewaakt.\n\n"
+    f"Commands: STATUS | TRADES | STOP"
+    ),
+    )
 
 
 def log_coach_event(conn, categorie: str, event_type: str,
@@ -2140,7 +2140,7 @@ def verstuur_weekrapport(conn) -> None:
 
         rapport += "Commands: STATUS | TRADES | STOP"
 
-        pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+        send_whatsapp(
         set_bot_state(conn, "weekrapport_datum",
                       now_utc().strftime("%Y-%m-%d"))
         log("Weekrapport verstuurd")
