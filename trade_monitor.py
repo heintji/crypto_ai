@@ -1805,10 +1805,10 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         log(
             f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
-            try: health_update("trade_monitor", "OK", f"{open_count} live posities bewaakt", live=open_count)
-            except Exception: pass
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
+        try: health_update("trade_monitor", "OK", f"{open_count} live posities bewaakt", live=open_count)
+        except Exception: pass
 
         # Sla run status op in bot_state voor dashboard
         try:
