@@ -174,3 +174,22 @@ def write_snapshot():
 # ======================
 if __name__ == "__main__":
     write_snapshot()
+
+# Sla snapshot op in DB
+try:
+    import os, psycopg2
+    _conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    _cur  = _conn.cursor()
+    _cur.execute("""
+        CREATE TABLE IF NOT EXISTS account_snapshots (
+            id SERIAL PRIMARY KEY,
+            ts TIMESTAMPTZ DEFAULT NOW(),
+            balances JSONB
+        )
+    """)
+    import json as _json
+    _cur.execute("INSERT INTO account_snapshots (balances) VALUES (%s)", (_json.dumps(balance),))
+    _conn.commit(); _conn.close()
+    print("[SNAPSHOT] Opgeslagen in DB")
+except Exception as _e:
+    print(f"[SNAPSHOT] DB fout: {_e}")
