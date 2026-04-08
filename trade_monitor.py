@@ -1252,7 +1252,7 @@ def _finalize_trade(
         rate_key=f"trade_closed_{symbol}",
         message=(
                         f"{emoji} TRADE GESLOTEN: {symbol}\n"
-            f"{'='*32}\n"
+            f"{"="*32}\n"
             f"\n"
             f"{res_emoji} Resultaat:   {outcome}\n"
             f"\U0001f4b6 PnL:         EUR{pnl_eur:+.3f}\n"
@@ -1561,7 +1561,7 @@ def stuur_dagrapport(conn) -> None:
         pnl_str = f"+EUR{pnl:.2f}" if pnl >= 0 else f"EUR{pnl:.2f}"
         wr = round(wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
         bericht  = f"\U0001f4ca DAGRAPPORT {datum}\n"
-        bericht += f"{'='*30}\n"
+        bericht += f"{"="*30}\n"
         bericht += f"Trades vandaag: {totaal}\n"
         bericht += f"  Wins:   {wins}\n"
         bericht += f"  Losses: {losses}\n"
