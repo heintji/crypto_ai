@@ -1127,21 +1127,15 @@ def process_live_trade(
             # 60% positie blijft open met stop op break-even.
             entry_p  = safe_float(trade.get("entry"))
             pct_move = (current - entry_p) / entry_p * 100 if entry_p > 0 else 0.0
-            pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
-            # rate_key=f"partial_{symbol}",
-            # message=(
-            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
-            # f"{'Ã¢ÂÂ' * 28}\n\n"
-            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
-            # f"Entry:   {entry_p:.6f}\n"
-            # f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
-            # f"R:       {r:.2f}\n\n"
-            # f"60% positie nog open.\n"
-            # f"Stop staat op break-even.\n"
-            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
-            # f"Commands: TRADES | STATUS"
-            # ),
-            # )
+            send_whatsapp(
+                f"\U0001f4ca PARTIAL SELL: {symbol}\n"
+                f"\n"
+                f"\U0001f4b0 40% verkocht\n"
+                f"\U0001f4c8 R bereikt: {r:.2f}R\n"
+                f"\U0001f6d1 Stop -> break-even: EUR{entry_p:.6f}\n"
+                f"60% positie blijft open",
+                rate_key=f"partial_{symbol}"
+            )
 
     # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("partial_sold_40") and r < 1.0:
