@@ -1,75 +1,75 @@
 # trade_monitor.py
 # ============================================================
-# Crypto AI Bot Ã¢ÂÂ Trade Monitor v3.1
+# Crypto AI Bot Ã¢ÂÂ Trade Monitor v3.1
 # ============================================================
 # Bewaakt alle open live en shadow trades.
 # Voert exits uit op basis van de strategie regels.
 # Draait als Render Background Worker (continue loop).
 #
 # ARCHITECTUUR:
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 # Dit is de BEWAKER van open posities.
 # Hij draait 24/7 als Background Worker op Render.
 # Elke 30 seconden checkt hij alle open trades.
-# Shadow trades lopen ALTIJD parallel Ã¢ÂÂ leerdata.
+# Shadow trades lopen ALTIJD parallel Ã¢ÂÂ leerdata.
 # Live trades alleen als bot_active=true.
 #
 # EXIT LOGICA (jouw strategie):
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-#   Stop bereikt (R < 0)            Ã¢ÂÂ SELL 100%
-#   Max houdtijd bereikt             Ã¢ÂÂ SELL 100% (24u normaal)
-#     BULL regime:                   Ã¢ÂÂ 36u (trend helpt mee)
-#     BEAR regime:                   Ã¢ÂÂ 12u (snel sluiten)
-#   Target bereikt                   Ã¢ÂÂ STRUCTUUR mode (trailing)
-#   STRUCTUUR gebroken (-1%)         Ã¢ÂÂ SELL 100%
-#   1R bereikt Ã¢ÂÂ stop naar breakeven Ã¢ÂÂ trailing stop actief
-#   2R bereikt Ã¢ÂÂ stop naar +1R       Ã¢ÂÂ trailing stop verbeterd
-#   >1R bereikt, terug <1R           Ã¢ÂÂ SELL 40% partial + WhatsApp
-#   3x candles <1R na partial sell   Ã¢ÂÂ SELL rest
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+#   Stop bereikt (R < 0)            Ã¢ÂÂ SELL 100%
+#   Max houdtijd bereikt             Ã¢ÂÂ SELL 100% (24u normaal)
+#     BULL regime:                   Ã¢ÂÂ 36u (trend helpt mee)
+#     BEAR regime:                   Ã¢ÂÂ 12u (snel sluiten)
+#   Target bereikt                   Ã¢ÂÂ STRUCTUUR mode (trailing)
+#   STRUCTUUR gebroken (-1%)         Ã¢ÂÂ SELL 100%
+#   1R bereikt Ã¢ÂÂ stop naar breakeven Ã¢ÂÂ trailing stop actief
+#   2R bereikt Ã¢ÂÂ stop naar +1R       Ã¢ÂÂ trailing stop verbeterd
+#   >1R bereikt, terug <1R           Ã¢ÂÂ SELL 40% partial + WhatsApp
+#   3x candles <1R na partial sell   Ã¢ÂÂ SELL rest
 #
 # KRITIEKE FIXES vs v2.0:
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-# Ã¢ÂÂ load_state/load_shadow_state: isinstance(s, dict) check
-#    Ã¢ÂÂ was: 'list' object has no attribute 'setdefault'
-#    Ã¢ÂÂ crash bij elke run, herstart elke 30s
-# Ã¢ÂÂ WhatsApp rate limiting: max 1x per uur per fouttype
-#    Ã¢ÂÂ was: 429 Twilio limiet door crash-loop spam
-# Ã¢ÂÂ safe_rollback() toegevoegd
-# Ã¢ÂÂ db_connect(): autocommit=False + retries
-# Ã¢ÂÂ finally conn.close() in run_monitor_once
-# Ã¢ÂÂ conn = None initialisatie voor try/finally
-# Ã¢ÂÂ Shadow positions reset als corrupt JSON
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+# Ã¢ÂÂ load_state/load_shadow_state: isinstance(s, dict) check
+#    Ã¢ÂÂ was: 'list' object has no attribute 'setdefault'
+#    Ã¢ÂÂ crash bij elke run, herstart elke 30s
+# Ã¢ÂÂ WhatsApp rate limiting: max 1x per uur per fouttype
+#    Ã¢ÂÂ was: 429 Twilio limiet door crash-loop spam
+# Ã¢ÂÂ safe_rollback() toegevoegd
+# Ã¢ÂÂ db_connect(): autocommit=False + retries
+# Ã¢ÂÂ finally conn.close() in run_monitor_once
+# Ã¢ÂÂ conn = None initialisatie voor try/finally
+# Ã¢ÂÂ Shadow positions reset als corrupt JSON
 #
 # NIEUWE FEATURES v3.0:
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-# Ã¢ÂÂ Regime-afhankelijke max houdtijd (BULL=36u, RANGE=24u, BEAR=12u)
-# Ã¢ÂÂ Trailing stop na 1R (breakeven) en 2R (+1R winst)
-# Ã¢ÂÂ Dagelijkse samenvatting in bot_state voor dashboard
-# Ã¢ÂÂ Uitgebreide MFE/MAE tracking per trade
-# Ã¢ÂÂ Profit factor tracking (doel >1.5)
-# Ã¢ÂÂ Edge decay detectie (sim vs live vergelijking)
-# Ã¢ÂÂ Rolling 7/30-dagen metrics
-# Ã¢ÂÂ Health monitoring met WhatsApp bij problemen
-# Ã¢ÂÂ Per-run statistieken gelogd
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+# Ã¢ÂÂ Regime-afhankelijke max houdtijd (BULL=36u, RANGE=24u, BEAR=12u)
+# Ã¢ÂÂ Trailing stop na 1R (breakeven) en 2R (+1R winst)
+# Ã¢ÂÂ Dagelijkse samenvatting in bot_state voor dashboard
+# Ã¢ÂÂ Uitgebreide MFE/MAE tracking per trade
+# Ã¢ÂÂ Profit factor tracking (doel >1.5)
+# Ã¢ÂÂ Edge decay detectie (sim vs live vergelijking)
+# Ã¢ÂÂ Rolling 7/30-dagen metrics
+# Ã¢ÂÂ Health monitoring met WhatsApp bij problemen
+# Ã¢ÂÂ Per-run statistieken gelogd
 #
 # FIXES v3.1:
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-# Ã¢ÂÂ Fix 1: model string Ã¢ÂÂ claude-sonnet-4-6
-# Ã¢ÂÂ Fix 2: STRUCTUUR mode minimum winst check (target - 0.5%)
-#    Ã¢ÂÂ voorkomt verkoop onder target door fees/slippage
-# Ã¢ÂÂ Fix 3: WhatsApp notificatie bij partial sell 40%
-#    Ã¢ÂÂ jij weet nu altijd wanneer bot 40% verkoopt
-# Ã¢ÂÂ Fix 4: Shadow trades max houdtijd Ã¢ÂÂ 48u (was 24u)
-#    Ã¢ÂÂ meer leerdata per shadow trade
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+# Ã¢ÂÂ Fix 1: model string Ã¢ÂÂ claude-sonnet-4-6
+# Ã¢ÂÂ Fix 2: STRUCTUUR mode minimum winst check (target - 0.5%)
+#    Ã¢ÂÂ voorkomt verkoop onder target door fees/slippage
+# Ã¢ÂÂ Fix 3: WhatsApp notificatie bij partial sell 40%
+#    Ã¢ÂÂ jij weet nu altijd wanneer bot 40% verkoopt
+# Ã¢ÂÂ Fix 4: Shadow trades max houdtijd Ã¢ÂÂ 48u (was 24u)
+#    Ã¢ÂÂ meer leerdata per shadow trade
 #
 # SAMENWERKING MET ANDERE BESTANDEN:
-# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-# Ã¢ÂÂ pending_approvals Ã¢ÂÂ live_trader.py opent trades
-# Ã¢ÂÂ live_state.json   Ã¢ÂÂ bevat open live posities
-# Ã¢ÂÂ shadow_state.json Ã¢ÂÂ bevat open shadow posities
-# Ã¢ÂÂ experience_trades Ã¢ÂÂ schrijft gesloten trades
-# Ã¢ÂÂ bot_state         Ã¢ÂÂ schrijft status en statistieken
-# Ã¢ÂÂ coach_events      Ã¢ÂÂ schrijft events voor ai_coach.py
+# Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+# Ã¢ÂÂ pending_approvals Ã¢ÂÂ live_trader.py opent trades
+# Ã¢ÂÂ live_state.json   Ã¢ÂÂ bevat open live posities
+# Ã¢ÂÂ shadow_state.json Ã¢ÂÂ bevat open shadow posities
+# Ã¢ÂÂ experience_trades Ã¢ÂÂ schrijft gesloten trades
+# Ã¢ÂÂ bot_state         Ã¢ÂÂ schrijft status en statistieken
+# Ã¢ÂÂ coach_events      Ã¢ÂÂ schrijft events voor ai_coach.py
 # ============================================================
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ import requests
 
 
 # ============================================================
-# ENV Ã¢ÂÂ identiek aan alle andere bestanden
+# ENV Ã¢ÂÂ identiek aan alle andere bestanden
 # ============================================================
 DATABASE_URL      = (os.getenv("DATABASE_URL") or "").strip()
 ANTHROPIC_API_KEY = (os.getenv("ANTHROPIC_API_KEY") or "").strip()
@@ -99,7 +99,7 @@ TWILIO_WHATSAPP_FROM = (os.getenv("TWILIO_WHATSAPP_FROM") or "").strip()
 TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO") or "").strip()
 
 # ============================================================
-# FASE 1 LIMIETEN Ã¢ÂÂ identiek aan alle andere bestanden
+# FASE 1 LIMIETEN Ã¢ÂÂ identiek aan alle andere bestanden
 # ============================================================
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "0.50")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
@@ -136,7 +136,7 @@ TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
 BOT_STATE_TABLE = "public.bot_state"
 FORCE_TEST_EXIT = os.getenv("FORCE_TEST_EXIT", "").strip().upper()
 
-# WhatsApp rate limiting Ã¢ÂÂ max 1x per uur per fouttype
+# WhatsApp rate limiting Ã¢ÂÂ max 1x per uur per fouttype
 # FIX: voorkomt 429 Twilio spam bij herhaalde crashes
 _WHATSAPP_SENT: Dict[str, float] = {}
 _WHATSAPP_COOLDOWN_SEC = 3600   # 1 uur
@@ -166,7 +166,7 @@ SHADOW_STATE_PATH = os.path.join(DATA_DIR, "shadow_trades.json")
 
 
 # ============================================================
-# BASIS HELPERS Ã¢ÂÂ identiek aan alle andere bestanden
+# BASIS HELPERS Ã¢ÂÂ identiek aan alle andere bestanden
 # ============================================================
 def now_utc() -> datetime:
     """Geeft huidige UTC tijd terug als timezone-aware datetime."""
@@ -216,7 +216,7 @@ def _calc_fee(amount_eur: float) -> float:
 
 
 # ============================================================
-# WHATSAPP Ã¢ÂÂ met rate limiting
+# WHATSAPP Ã¢ÂÂ met rate limiting
 # ============================================================
 def send_whatsapp(message: str, rate_key: str = "") -> bool:
     """
@@ -226,7 +226,7 @@ def send_whatsapp(message: str, rate_key: str = "") -> bool:
     rate_key: als opgegeven, max 1 bericht per uur per key.
     Voorkomt 429 Twilio spam bij herhaalde crashes.
 
-    FIX vs v2.0: geen rate limiting Ã¢ÂÂ 429 spam bij crash-loop.
+    FIX vs v2.0: geen rate limiting Ã¢ÂÂ 429 spam bij crash-loop.
     Nu: max 1 foutbericht per uur per fouttype.
     """
     if rate_key:
@@ -234,7 +234,7 @@ def send_whatsapp(message: str, rate_key: str = "") -> bool:
         last   = _WHATSAPP_SENT.get(rate_key, 0.0)
         if now_ts - last < _WHATSAPP_COOLDOWN_SEC:
             wacht = int((_WHATSAPP_COOLDOWN_SEC - (now_ts - last)) / 60)
-            log(f"WhatsApp rate limit ({rate_key}) Ã¢ÂÂ wacht nog {wacht}min")
+            log(f"WhatsApp rate limit ({rate_key}) Ã¢ÂÂ wacht nog {wacht}min")
             return False
         _WHATSAPP_SENT[rate_key] = now_ts
 
@@ -256,17 +256,17 @@ def send_whatsapp(message: str, rate_key: str = "") -> bool:
         )
         ok = resp.status_code in (200, 201)
         if ok:
-            log(f"Ã¢ÂÂ WhatsApp verzonden ({len(message)} tekens)")
+            log(f"Ã¢ÂÂ WhatsApp verzonden ({len(message)} tekens)")
         else:
-            log(f"Ã¢ÂÂ WhatsApp {resp.status_code}: {resp.text[:200]}")
+            log(f"Ã¢ÂÂ WhatsApp {resp.status_code}: {resp.text[:200]}")
         return ok
     except Exception as e:
-        log(f"Ã¢ÂÂ WhatsApp fout: {type(e).__name__}: {e}")
+        log(f"Ã¢ÂÂ WhatsApp fout: {type(e).__name__}: {e}")
         return False
 
 
 # ============================================================
-# CLAUDE Ã¢ÂÂ analyse helper
+# CLAUDE Ã¢ÂÂ analyse helper
 # ============================================================
 def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
     """
@@ -308,7 +308,7 @@ def report_error(
     Rapporteert fout via log + WhatsApp (bij KRITIEK/HOOG).
     Rate limiting: max 1x per uur per fout+severity combinatie.
 
-    FIX vs v2.0: geen rate limiting Ã¢ÂÂ 429 Twilio spam.
+    FIX vs v2.0: geen rate limiting Ã¢ÂÂ 429 Twilio spam.
     """
     log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
     _RUN_STATS["fouten"] = _RUN_STATS.get("fouten", 0) + 1
@@ -339,19 +339,19 @@ def report_error(
     send_whatsapp(
     rate_key=rate_key,
     message=(
-    f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
-    f"{'Ã¢ÂÂ' * 30}\n\n"
-    f"Ã°ÂÂÂ Functie:     {function}\n"
-    f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-    f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-    f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-    f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-    f"Ã°ÂÂÂ WAT TE DOEN:\n"
+    f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
+    f"{'Ã¢ÂÂ' * 30}\n\n"
+    f"Ã°ÂÂÂ Functie:     {function}\n"
+    f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
+    f"Ã°ÂÂÂ Open trades: {open_trades}\n"
+    f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
+    f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
+    f"Ã°ÂÂÂ WAT TE DOEN:\n"
     f"1. Check Render logs voor details\n"
     f"2. Stuur TRADES voor open posities\n"
     f"3. Check Bitvavo account direct\n"
     f"4. Stuur STOP als je wil pauzeren\n\n"
-    f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
+    f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
     f"Open trades worden bewaakt.\n\n"
     f"Commands: STATUS | TRADES | STOP"
     ),
@@ -363,7 +363,7 @@ def log_coach_event(conn, categorie: str, event_type: str,
     """
     Logt een event naar coach_events tabel.
     Wordt door ai_coach.py opgepikt voor analyse.
-    Stille fout Ã¢ÂÂ niet kritiek als dit mislukt.
+    Stille fout Ã¢ÂÂ niet kritiek als dit mislukt.
     """
     try:
         with conn.cursor() as cur:
@@ -394,7 +394,7 @@ def claude_analyseer_gesloten_trade(
 ) -> str:
     """
     Claude analyseert elke gesloten trade.
-    Wordt opgeslagen in DB Ã¢ÂÂ NIET via WhatsApp (geen spam).
+    Wordt opgeslagen in DB Ã¢ÂÂ NIET via WhatsApp (geen spam).
     Wordt gebruikt in weekrapport en leeranalyse.
     """
     prompt = (
@@ -402,8 +402,8 @@ def claude_analyseer_gesloten_trade(
         f"Analyseer deze gesloten trade in 2-3 zinnen Nederlands.\n\n"
         f"Coin:        {symbol}\n"
         f"Setup:       {setup_type} / Regime: {regime}\n"
-        f"Entry:       {entry:.6f} Ã¢ÂÂ Exit: {exit_price:.6f}\n"
-        f"PnL:         Ã¢ÂÂ¬{pnl_eur:.4f}\n"
+        f"Entry:       {entry:.6f} Ã¢ÂÂ Exit: {exit_price:.6f}\n"
+        f"PnL:         Ã¢ÂÂ¬{pnl_eur:.4f}\n"
         f"Duur:        {hold_min:.0f} minuten\n"
         f"Score:       {score}\n"
         f"Uitkomst:    {outcome}\n"
@@ -416,7 +416,7 @@ def claude_analyseer_gesloten_trade(
 
 
 # ============================================================
-# DATABASE Ã¢ÂÂ sslmode="require" + retries + autocommit=False
+# DATABASE Ã¢ÂÂ sslmode="require" + retries + autocommit=False
 # ============================================================
 def db_connect(retries: int = DB_CONNECT_RETRIES):
     """
@@ -481,7 +481,7 @@ def set_bot_state(conn, key: str, value: str) -> None:
         conn.commit()
     except Exception as e:
         safe_rollback(conn)
-        log(f"Ã¢ÂÂ Ã¯Â¸Â set_bot_state fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â set_bot_state fout: {e}")
 
 
 def is_bot_active(conn) -> bool:
@@ -562,7 +562,7 @@ def get_rolling_stats(conn, days: int = 7) -> Tuple[int, int, float]:
 
 
 def get_consecutive_losses(conn) -> int:
-    """Opeenvolgende verliezen Ã¢ÂÂ stop bij eerste WIN."""
+    """Opeenvolgende verliezen Ã¢ÂÂ stop bij eerste WIN."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -650,20 +650,20 @@ def check_edge_decay(conn) -> Optional[str]:
 
         if diff > EDGE_DECAY_THRESHOLD and sim_wr > 0 and real_wr > 0:
             return (
-                f"Ã¢ÂÂ¡ EDGE DECAY SIGNAAL\n"
-                f"{'Ã¢ÂÂ' * 30}\n\n"
-                f"Ã°ÂÂÂ VERGELIJKING 30 DAGEN:\n"
-                f"Ã¢ÂÂ¢ Simulatie win rate: {sim_wr:.1f}%\n"
-                f"Ã¢ÂÂ¢ Live win rate:      {real_wr:.1f}%\n"
-                f"Ã¢ÂÂ¢ Verschil:           {diff:.1f}%\n"
-                f"Ã¢ÂÂ¢ Grens:              {EDGE_DECAY_THRESHOLD:.0f}%\n\n"
-                f"Ã°ÂÂÂ¡ WAT DIT BETEKENT:\n"
+                f"Ã¢ÂÂ¡ EDGE DECAY SIGNAAL\n"
+                f"{'Ã¢ÂÂ' * 30}\n\n"
+                f"Ã°ÂÂÂ VERGELIJKING 30 DAGEN:\n"
+                f"Ã¢ÂÂ¢ Simulatie win rate: {sim_wr:.1f}%\n"
+                f"Ã¢ÂÂ¢ Live win rate:      {real_wr:.1f}%\n"
+                f"Ã¢ÂÂ¢ Verschil:           {diff:.1f}%\n"
+                f"Ã¢ÂÂ¢ Grens:              {EDGE_DECAY_THRESHOLD:.0f}%\n\n"
+                f"Ã°ÂÂÂ¡ WAT DIT BETEKENT:\n"
                 f"Strategie presteert live anders dan in simulatie.\n"
                 f"Mogelijke oorzaken:\n"
-                f"Ã¢ÂÂ¢ Markt is veranderd (regime shift)\n"
-                f"Ã¢ÂÂ¢ Fees/slippage niet in sim\n"
-                f"Ã¢ÂÂ¢ Entry timing verschilt live\n\n"
-                f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
+                f"Ã¢ÂÂ¢ Markt is veranderd (regime shift)\n"
+                f"Ã¢ÂÂ¢ Fees/slippage niet in sim\n"
+                f"Ã¢ÂÂ¢ Entry timing verschilt live\n\n"
+                f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
                 f"Stuur HEALTH voor Claude analyse.\n\n"
                 f"Commands: HEALTH | STOP | STATUS"
             )
@@ -790,10 +790,10 @@ def update_trade_in_db(
                 ))
 
         conn.commit()
-        log(f"Ã¢ÂÂ DB bijgewerkt: {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f}")
+        log(f"Ã¢ÂÂ DB bijgewerkt: {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f}")
     except Exception as e:
         safe_rollback(conn)
-        log(f"Ã¢ÂÂ Ã¯Â¸Â update_trade_in_db fout ({symbol}): {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â update_trade_in_db fout ({symbol}): {e}")
 
 
 # ============================================================
@@ -813,7 +813,7 @@ def load_state() -> Dict[str, Any]:
             positions[key] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "peak_price": float(r[13] or r[3] or 0)}
         return {"positions": positions, "open_trades": list(positions.keys())}
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â load_state DB fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â load_state DB fout: {e}")
         return {"positions": {}, "open_trades": []}
     finally:
         if conn2:
@@ -821,7 +821,7 @@ def load_state() -> Dict[str, Any]:
             except: pass
 
 def save_state(state: Dict[str, Any]) -> None:
-    """Slaat state op Ã¢ÂÂ atomisch via tmp file."""
+    """Slaat state op Ã¢ÂÂ atomisch via tmp file."""
     _ensure_dir(LIVE_STATE_PATH)
     tmp = LIVE_STATE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -847,9 +847,9 @@ def load_shadow_state() -> Dict[str, Any]:
     try:
         with open(SHADOW_STATE_PATH, "r", encoding="utf-8") as f:
             s = json.load(f)
-        # FIX: corrupt JSON (list ipv dict) Ã¢ÂÂ reset
+        # FIX: corrupt JSON (list ipv dict) Ã¢ÂÂ reset
         if not isinstance(s, dict):
-            log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_trades.json was geen dict ({type(s).__name__}) Ã¢ÂÂ reset")
+            log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_trades.json was geen dict ({type(s).__name__}) Ã¢ÂÂ reset")
             s = {}
     except Exception:
         s = {}
@@ -857,13 +857,13 @@ def load_shadow_state() -> Dict[str, Any]:
     s.setdefault("open_trades", [])
     # Zorg dat positions een dict is, niet een list
     if not isinstance(s["positions"], dict):
-        log("Ã¢ÂÂ Ã¯Â¸Â shadow positions was geen dict Ã¢ÂÂ reset naar leeg")
+        log("Ã¢ÂÂ Ã¯Â¸Â shadow positions was geen dict Ã¢ÂÂ reset naar leeg")
         s["positions"] = {}
     return s
 
 
 def save_shadow_state(state: Dict[str, Any]) -> None:
-    """Slaat shadow state op Ã¢ÂÂ atomisch via tmp file."""
+    """Slaat shadow state op Ã¢ÂÂ atomisch via tmp file."""
     _ensure_dir(SHADOW_STATE_PATH)
     tmp = SHADOW_STATE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -889,7 +889,7 @@ def get_current_price_bitvavo(market: str) -> Optional[float]:
         if resp.ok:
             return safe_float(resp.json().get("price"))
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo prijs fout ({market}): {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo prijs fout ({market}): {e}")
     return None
 
 
@@ -904,12 +904,12 @@ def get_current_price_binance(symbol_usdt: str) -> Optional[float]:
         if resp.ok:
             return safe_float(resp.json().get("price"))
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Binance prijs fout ({symbol_usdt}): {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Binance prijs fout ({symbol_usdt}): {e}")
     return None
 
 
 def get_price(symbol_usdt: str, market: str) -> Optional[float]:
-    """Haalt prijs op Ã¢ÂÂ Bitvavo eerst, Binance als fallback."""
+    """Haalt prijs op Ã¢ÂÂ Bitvavo eerst, Binance als fallback."""
     price = get_current_price_bitvavo(market)
     if price and price > 0:
         return price
@@ -936,10 +936,10 @@ def _execute_sell(
             result = live_sell(symbol, fraction=fraction, meta=meta)
             return result or {"ok": False, "reason": "GEEN_RESULT"}
         except ImportError as e:
-            log(f"Ã¢ÂÂ live_trader import fout ({symbol}): {e}")
+            log(f"Ã¢ÂÂ live_trader import fout ({symbol}): {e}")
             return {"ok": False, "reason": f"Import fout: {e}"}
     except Exception as e:
-        log(f"Ã¢ÂÂ Sell call fout ({symbol}): {type(e).__name__}: {e}")
+        log(f"Ã¢ÂÂ Sell call fout ({symbol}): {type(e).__name__}: {e}")
         pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
         return {"ok": False, "reason": str(e)}
 
@@ -966,7 +966,7 @@ def _holding_minutes(trade: Dict[str, Any]) -> float:
 
 
 # ============================================================
-# EXIT LOGICA Ã¢ÂÂ per live trade
+# EXIT LOGICA Ã¢ÂÂ per live trade
 # ============================================================
 def process_live_trade(
     symbol: str,
@@ -974,18 +974,18 @@ def process_live_trade(
     conn,
 ) -> Tuple[bool, bool]:
     """
-    Verwerkt ÃÂ©ÃÂ©n open live trade.
+    Verwerkt ÃÂ©ÃÂ©n open live trade.
 
     EXIT LOGICA:
-    1. Max houdtijd (regime-afhankelijk)  Ã¢ÂÂ SELL 100%
-    2. Stop bereikt (R < 0)               Ã¢ÂÂ SELL 100%
-    3. Target bereikt                      Ã¢ÂÂ STRUCTUUR mode
-    4. STRUCTUUR gebroken (-1%)            Ã¢ÂÂ SELL 100%
-       FIX v3.1: minimum winst check Ã¢ÂÂ niet verkopen onder target - 0.5%
-    5. 1R bereikt Ã¢ÂÂ trailing stop actief
-    6. 2R bereikt Ã¢ÂÂ trailing stop verbeterd
-    7. Terug <1R na >1R                   Ã¢ÂÂ SELL 40% partial + WhatsApp
-    8. 3x candles <1R na partial          Ã¢ÂÂ SELL rest
+    1. Max houdtijd (regime-afhankelijk)  Ã¢ÂÂ SELL 100%
+    2. Stop bereikt (R < 0)               Ã¢ÂÂ SELL 100%
+    3. Target bereikt                      Ã¢ÂÂ STRUCTUUR mode
+    4. STRUCTUUR gebroken (-1%)            Ã¢ÂÂ SELL 100%
+       FIX v3.1: minimum winst check Ã¢ÂÂ niet verkopen onder target - 0.5%
+    5. 1R bereikt Ã¢ÂÂ trailing stop actief
+    6. 2R bereikt Ã¢ÂÂ trailing stop verbeterd
+    7. Terug <1R na >1R                   Ã¢ÂÂ SELL 40% partial + WhatsApp
+    8. 3x candles <1R na partial          Ã¢ÂÂ SELL rest
 
     Geeft (changed, sold) terug.
     """
@@ -1007,7 +1007,7 @@ def process_live_trade(
 
     current  = get_price(symbol, market)
     if current is None or current <= 0:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Geen prijs voor {symbol} Ã¢ÂÂ skip")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Geen prijs voor {symbol} Ã¢ÂÂ skip")
         return False, False
 
     r        = _calc_r(entry, stop, current)
@@ -1027,11 +1027,11 @@ def process_live_trade(
 
     # FORCE TEST EXIT
     if FORCE_TEST_EXIT and FORCE_TEST_EXIT == symbol.upper():
-        log(f"Ã¢ÂÂ¡ FORCE_TEST_EXIT: {symbol}")
+        log(f"Ã¢ÂÂ¡ FORCE_TEST_EXIT: {symbol}")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "FORCE_TEST"})
         return True, result.get("ok", False)
 
-    # Ã¢ÂÂÃ¢ÂÂ 1. Max houdtijd Ã¢ÂÂ regime-afhankelijk Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 1. Max houdtijd Ã¢ÂÂ regime-afhankelijk Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     # BULL: langer vasthouden (36u), trend werkt mee
     # RANGE: normaal (24u)
     # BEAR: snel sluiten (12u), verhoogd risico
@@ -1044,27 +1044,27 @@ def process_live_trade(
         max_hold = MAX_HOLD_HOURS          # 24u
 
     if hold_min >= max_hold * 60:
-        log(f"Ã¢ÂÂ° {symbol}: max houdtijd ({hold_min:.0f}min, BTC={btc_regime}) Ã¢ÂÂ SELL 100%")
+        log(f"Ã¢ÂÂ° {symbol}: max houdtijd ({hold_min:.0f}min, BTC={btc_regime}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "MAX_HOLD_TIME"})
         _finalize_trade(symbol, trade, current, result, conn, "MAX_HOLD_TIME")
         return True, result.get("ok", False)
 
-    # Ã¢ÂÂÃ¢ÂÂ 2. Stop loss Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 2. Stop loss Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if current <= stop or r < 0:
-        log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
+        log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STOP_LOSS"})
         _finalize_trade(symbol, trade, current, result, conn, "STOP_LOSS")
         return True, result.get("ok", False)
 
-    # Ã¢ÂÂÃ¢ÂÂ 3. Target bereikt Ã¢ÂÂ STRUCTUUR mode Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 3. Target bereikt Ã¢ÂÂ STRUCTUUR mode Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if target > 0 and current >= target and not trade.get("target_reached_notified"):
         trade["target_reached_notified"] = True
         trade["mode"]           = "STRUCTUUR"
         trade["structuur_high"] = current
-        log(f"Ã°ÂÂÂ¯ {symbol}: target bereikt @ {current:.6f} Ã¢ÂÂ STRUCTUUR mode")
+        log(f"Ã°ÂÂÂ¯ {symbol}: target bereikt @ {current:.6f} Ã¢ÂÂ STRUCTUUR mode")
         changed = True
 
-    # Ã¢ÂÂÃ¢ÂÂ 4. STRUCTUUR mode Ã¢ÂÂ trailing exit Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 4. STRUCTUUR mode Ã¢ÂÂ trailing exit Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("mode") == "STRUCTUUR":
         structuur_high = safe_float(trade.get("structuur_high"), current)
         if current > structuur_high:
@@ -1077,17 +1077,17 @@ def process_live_trade(
             # Zo blijft de trade altijd winstgevend na kosten.
             min_winst_prijs = target * 0.995
             if current < min_winst_prijs:
-                log(f"Ã°ÂÂÂ {symbol}: structuur gebroken @ {current:.6f} "
-                    f"(min winst prijs={min_winst_prijs:.6f}) Ã¢ÂÂ SELL 100%")
+                log(f"Ã°ÂÂÂ {symbol}: structuur gebroken @ {current:.6f} "
+                    f"(min winst prijs={min_winst_prijs:.6f}) Ã¢ÂÂ SELL 100%")
                 result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STRUCTUUR_BREAK"})
                 _finalize_trade(symbol, trade, current, result, conn, "STRUCTUUR_BREAK")
                 return True, result.get("ok", False)
             else:
-                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: structuur trekt terug maar boven min winst "
-                    f"({current:.6f} > {min_winst_prijs:.6f}) Ã¢ÂÂ wachten op herstel")
+                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: structuur trekt terug maar boven min winst "
+                    f"({current:.6f} > {min_winst_prijs:.6f}) Ã¢ÂÂ wachten op herstel")
         return changed, False
 
-    # Ã¢ÂÂÃ¢ÂÂ 5. Trailing stop na 1R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 5. Trailing stop na 1R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if r >= 1.0 and not trade.get("had_over_1r"):
         trade["had_over_1r"]    = True
         trade["max_price_seen"] = max(current, safe_float(trade.get("max_price_seen"), current))
@@ -1096,9 +1096,9 @@ def process_live_trade(
         if entry_price > 0:
             trade["stop_loss"] = entry_price
             trade["stop"]      = entry_price
-            log(f"Ã°ÂÂÂ {symbol}: 1R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar break-even {entry_price:.6f}")
+            log(f"Ã°ÂÂÂ {symbol}: 1R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar break-even {entry_price:.6f}")
 
-    # Ã¢ÂÂÃ¢ÂÂ 6. Trailing stop na 2R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 6. Trailing stop na 2R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if r >= 2.0 and not trade.get("had_over_2r"):
         trade["had_over_2r"] = True
         changed = True
@@ -1110,18 +1110,18 @@ def process_live_trade(
             new_stop = entry_price + risk   # +1R winst als floor
             trade["stop_loss"] = new_stop
             trade["stop"]      = new_stop
-            log(f"Ã°ÂÂÂ {symbol}: 2R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar +1R {new_stop:.6f}")
+            log(f"Ã°ÂÂÂ {symbol}: 2R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar +1R {new_stop:.6f}")
 
-    # Ã¢ÂÂÃ¢ÂÂ 7. Partial sell Ã¢ÂÂ terug <1R na >1R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 7. Partial sell Ã¢ÂÂ terug <1R na >1R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("had_over_1r") and not trade.get("partial_sold_40") and r < 1.0:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: terug <1R na >1R (R={r:.2f}) Ã¢ÂÂ SELL 40%")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: terug <1R na >1R (R={r:.2f}) Ã¢ÂÂ SELL 40%")
         result = _execute_sell(symbol, 0.40, meta={"exit_reden": "PARTIAL_40"})
         if result.get("ok"):
             trade["partial_sold_40"]      = True
             trade["below_1r_count"]       = 0
             trade["last_candle_check_ts"] = 0
             changed = True
-            log(f"Ã¢ÂÂ {symbol}: 40% verkocht")
+            log(f"Ã¢ÂÂ {symbol}: 40% verkocht")
             # FIX v3.1: WhatsApp notificatie bij partial sell
             # Zodat jij altijd weet wanneer de bot 40% heeft verkocht.
             # 60% positie blijft open met stop op break-even.
@@ -1130,20 +1130,20 @@ def process_live_trade(
             pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
             # rate_key=f"partial_{symbol}",
             # message=(
-            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
-            # f"{'Ã¢ÂÂ' * 28}\n\n"
-            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
+            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
+            # f"{'Ã¢ÂÂ' * 28}\n\n"
+            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
             # f"Entry:   {entry_p:.6f}\n"
             # f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
             # f"R:       {r:.2f}\n\n"
             # f"60% positie nog open.\n"
             # f"Stop staat op break-even.\n"
-            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
+            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
             # f"Commands: TRADES | STATUS"
             # ),
             # )
 
-    # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("partial_sold_40") and r < 1.0:
         timeframe = safe_str(trade.get("timeframe"), "4h")
         if "1h" in timeframe.lower():
@@ -1161,7 +1161,7 @@ def process_live_trade(
             log(f"  {symbol}: below_1r_count={trade['below_1r_count']}/3")
 
             if trade["below_1r_count"] >= 3:
-                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: 3 candles <1R Ã¢ÂÂ SELL rest")
+                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: 3 candles <1R Ã¢ÂÂ SELL rest")
                 result = _execute_sell(symbol, 1.0, meta={"exit_reden": "BELOW_1R_3X"})
                 _finalize_trade(symbol, trade, current, result, conn, "BELOW_1R_3X")
                 return True, result.get("ok", False)
@@ -1223,7 +1223,7 @@ def _finalize_trade(
     exit_r = round((exit_price - entry) / risk, 2) if risk > 0 else 0.0
 
     log(
-        f"Ã°ÂÂÂ {symbol} gesloten: {outcome} Ã¢ÂÂ¬{pnl_eur:.4f} | "
+        f"Ã°ÂÂÂ {symbol} gesloten: {outcome} Ã¢ÂÂ¬{pnl_eur:.4f} | "
         f"R={exit_r:.2f} | MFE={mfe_r:.2f}R MAE={mae_r:.2f}R | "
         f"{exit_reden}"
     )
@@ -1247,7 +1247,7 @@ def _finalize_trade(
     r1_txt = "✅ 1R bereikt" if mfe_r >= 1.0 else "❌ 1R NIET bereikt"
     r2_txt = "✅ 2R bereikt" if mfe_r >= 2.0 else "❌ 2R niet bereikt"
     tgt_txt = "✅ Target bereikt" if exit_reden in ("TARGET", "TARGET_REACHED") else "❌ Target niet bereikt"
-    emoji = "Ã¢ÂÂ" if outcome == "WIN" else "Ã¢ÂÂ"
+    emoji = "Ã¢ÂÂ" if outcome == "WIN" else "Ã¢ÂÂ"
     send_whatsapp(
         rate_key=f"trade_closed_{symbol}",
         message=(
@@ -1273,7 +1273,7 @@ def _finalize_trade(
         event_type   = f"TRADE_{outcome}",
         omschrijving = (
             f"{symbol} {outcome} {exit_reden} "
-            f"Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f} "
+            f"Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f} "
             f"MFE={mfe_r:.2f}R MAE={mae_r:.2f}R"
         ),
         ernst = "LAAG" if outcome == "WIN" else "MEDIUM",
@@ -1283,7 +1283,7 @@ def _finalize_trade(
     if outcome == "WIN":
         _RUN_STATS["live_closed"] = _RUN_STATS.get("live_closed", 0) + 1
 
-    # Consecutive loss check Ã¢ÂÂ INFORMATIEF, bot gaat door
+    # Consecutive loss check Ã¢ÂÂ INFORMATIEF, bot gaat door
     consecutive = get_consecutive_losses(conn)
     if consecutive >= MAX_CONSECUTIVE_LOSSES:
         wins_7, losses_7, pnl_7   = get_rolling_stats(conn, 7)
@@ -1297,17 +1297,17 @@ def _finalize_trade(
         pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
         # rate_key=f"consec_losses_{consecutive}",
         # message=(
-        # f"Ã¢ÂÂ Ã¯Â¸Â SIGNAAL Ã¢ÂÂ {consecutive} VERLIEZEN OP RIJ\n"
-        # f"{'Ã¢ÂÂ' * 30}\n\n"
-        # f"Ã°ÂÂªÂ Laatste verlies: {symbol}\n"
-        # f"Ã°ÂÂÂ Verlies op rij:  {consecutive}/{MAX_CONSECUTIVE_LOSSES}\n\n"
-        # f"Ã°ÂÂÂ STATISTIEKEN:\n"
-        # f"Ã¢ÂÂ¢ Win rate 7d:  {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-        # f"Ã¢ÂÂ¢ Win rate 30d: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
-        # f"Ã¢ÂÂ¢ PnL 7d: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
-        # f"Ã¢ÂÂ¢ Profit Factor 30d: {pf30:.2f}"
-        # f" {'Ã¢ÂÂ' if pf30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
-        # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
+        # f"Ã¢ÂÂ Ã¯Â¸Â SIGNAAL Ã¢ÂÂ {consecutive} VERLIEZEN OP RIJ\n"
+        # f"{'Ã¢ÂÂ' * 30}\n\n"
+        # f"Ã°ÂÂªÂ Laatste verlies: {symbol}\n"
+        # f"Ã°ÂÂÂ Verlies op rij:  {consecutive}/{MAX_CONSECUTIVE_LOSSES}\n\n"
+        # f"Ã°ÂÂÂ STATISTIEKEN:\n"
+        # f"Ã¢ÂÂ¢ Win rate 7d:  {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+        # f"Ã¢ÂÂ¢ Win rate 30d: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
+        # f"Ã¢ÂÂ¢ PnL 7d: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+        # f"Ã¢ÂÂ¢ Profit Factor 30d: {pf30:.2f}"
+        # f" {'Ã¢ÂÂ' if pf30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
+        # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
         # f"Stuur STOP als je wil pauzeren.\n\n"
         # f"Commands: STOP | STATUS | TRADES"
         # ),
@@ -1338,18 +1338,18 @@ def _finalize_trade(
                 pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
                 # rate_key="pf_laag",
                 # message=(
-                # f"Ã°ÂÂÂ PROFIT FACTOR LAAG\n"
-                # f"{'Ã¢ÂÂ' * 30}\n\n"
-                # f"Ã°ÂÂÂ Profit Factor 30d: {pf:.2f}\n"
-                # f"Ã°ÂÂÂ¯ Doel:              >1.5\n\n"
-                # f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
-                # f"Ã¢ÂÂ¢ Trades: {trade_count_30d}\n"
-                # f"Ã¢ÂÂ¢ WR: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
-                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
-                # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
-                # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n\n"
-                # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n\n"
+                # f"Ã°ÂÂÂ PROFIT FACTOR LAAG\n"
+                # f"{'Ã¢ÂÂ' * 30}\n\n"
+                # f"Ã°ÂÂÂ Profit Factor 30d: {pf:.2f}\n"
+                # f"Ã°ÂÂÂ¯ Doel:              >1.5\n\n"
+                # f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
+                # f"Ã¢ÂÂ¢ Trades: {trade_count_30d}\n"
+                # f"Ã¢ÂÂ¢ WR: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
+                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
+                # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
+                # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n\n"
+                # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n\n"
                 # f"Commands: STOP | STATUS | RAPPORT"
                 # ),
                 # )
@@ -1376,7 +1376,7 @@ def evaluate_shadow_for_symbol(
     conn,
 ) -> Tuple[bool, bool]:
     """
-    Verwerkt ÃÂ©ÃÂ©n open shadow trade.
+    Verwerkt ÃÂ©ÃÂ©n open shadow trade.
     Logt uitkomst naar experience_trades met source=SHADOW.
     Geeft (changed, closed) terug.
 
@@ -1395,7 +1395,7 @@ def evaluate_shadow_for_symbol(
     changed  = False
 
     # FIX v3.1: shadow trades krijgen 48u houdtijd (live=24u)
-    # Meer leerdata per trade Ã¢ÂÂ geen financieel risico bij verlenging
+    # Meer leerdata per trade Ã¢ÂÂ geen financieel risico bij verlenging
     shadow_max_hold_min = MAX_HOLD_HOURS * 2 * 60  # 48u in minuten
     if hold_min >= shadow_max_hold_min:
         _log_shadow_outcome(symbol, shadow_trade, current, "LOSS", "MAX_HOLD_TIME", conn)
@@ -1426,7 +1426,7 @@ def evaluate_shadow_for_symbol(
         shadow_trade["had_over_1r"] = True
         changed = True
 
-    # Structuur fail Ã¢ÂÂ terug <0.5R na >1R
+    # Structuur fail Ã¢ÂÂ terug <0.5R na >1R
     if shadow_trade.get("had_over_1r") and r < 0.5:
         _log_shadow_outcome(symbol, shadow_trade, current, "LOSS", "STRUCTUUR_FAIL", conn)
         return True, True
@@ -1509,13 +1509,13 @@ def _log_shadow_outcome(
             ))
         conn.commit()
         log(
-            f"Ã°ÂÂÂ­ Shadow {symbol}: {outcome} {exit_reden} "
-            f"Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f} "
+            f"Ã°ÂÂÂ­ Shadow {symbol}: {outcome} {exit_reden} "
+            f"Ã¢ÂÂ¬{pnl_eur:.4f} R={exit_r:.2f} "
             f"MFE={mfe_r:.2f}R MAE={mae_r:.2f}R {hold_min:.0f}min"
         )
     except Exception as e:
         safe_rollback(conn)
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow DB log fout ({symbol}): {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow DB log fout ({symbol}): {e}")
 
 
 # ============================================================
@@ -1588,7 +1588,7 @@ def stuur_dagrapport(conn) -> None:
 
 def run_monitor_once(target_symbol: Optional[str] = None) -> None:
     """
-    ÃÂÃÂ©n run van de monitor.
+    ÃÂÃÂ©n run van de monitor.
 
     STAPPEN:
     1. DB verbinding (met retries)
@@ -1617,7 +1617,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         return
 
     try:
-        # Ã¢ÂÂÃ¢ÂÂ Bot state Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Bot state Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         bot_active = is_bot_active(conn)
         bot_paused = is_bot_paused(conn)
 
@@ -1635,15 +1635,15 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             safe_rollback(conn)
 
         if not bot_active:
-            log("Bot gestopt Ã¢ÂÂ alleen open trades bewaken")
+            log("Bot gestopt Ã¢ÂÂ alleen open trades bewaken")
         elif bot_paused:
-            log("Bot gepauzeerd Ã¢ÂÂ alleen open trades bewaken")
+            log("Bot gepauzeerd Ã¢ÂÂ alleen open trades bewaken")
 
-        # Ã¢ÂÂÃ¢ÂÂ Daily PnL check Ã¢ÂÂ INFORMATIEF Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Daily PnL check Ã¢ÂÂ INFORMATIEF Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         wins_v, losses_v, daily_pnl = get_daily_pnl(conn)
         daily_stop = float(get_bot_state(conn, "daily_stop_loss_eur", str(DAILY_STOP_LOSS_EUR)) or DAILY_STOP_LOSS_EUR)
         if daily_pnl <= -daily_stop and bot_active:
-            log(f"Ã¢ÂÂ¹Ã¯Â¸Â Dagbudget bereikt: Ã¢ÂÂ¬{daily_pnl:.2f} Ã¢ÂÂ bot gaat door")
+            log(f"Ã¢ÂÂ¹Ã¯Â¸Â Dagbudget bereikt: Ã¢ÂÂ¬{daily_pnl:.2f} Ã¢ÂÂ bot gaat door")
             wins_7, losses_7, pnl_7 = get_rolling_stats(conn, 7)
             t7   = wins_7 + losses_7
             wr7  = (wins_7 / t7 * 100) if t7 > 0 else 0.0
@@ -1653,24 +1653,24 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
             # rate_key="dagbudget",
             # message=(
-            # f"Ã°ÂÂÂ DAGBUDGET BEREIKT\n"
-            # f"{'Ã¢ÂÂ' * 30}\n\n"
-            # f"Ã°ÂÂÂ¶ Verlies vandaag:  Ã¢ÂÂ¬{abs(daily_pnl):.2f}\n"
-            # f"Ã°ÂÂÂ Dagbudget:        Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}\n\n"
-            # f"Ã°ÂÂÂ VANDAAG:\n"
-            # f"Ã¢ÂÂ¢ Wins: {wins_v} | Losses: {losses_v}\n\n"
-            # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
-            # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-            # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
-            # f"Ã¢ÂÂ¢ PF 30d: {pf30:.2f}\n\n"
-            # f"Ã°ÂÂÂ Open trades: {open_n} (worden bewaakt)\n\n"
-            # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
+            # f"Ã°ÂÂÂ DAGBUDGET BEREIKT\n"
+            # f"{'Ã¢ÂÂ' * 30}\n\n"
+            # f"Ã°ÂÂÂ¶ Verlies vandaag:  Ã¢ÂÂ¬{abs(daily_pnl):.2f}\n"
+            # f"Ã°ÂÂÂ Dagbudget:        Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}\n\n"
+            # f"Ã°ÂÂÂ VANDAAG:\n"
+            # f"Ã¢ÂÂ¢ Wins: {wins_v} | Losses: {losses_v}\n\n"
+            # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
+            # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+            # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+            # f"Ã¢ÂÂ¢ PF 30d: {pf30:.2f}\n\n"
+            # f"Ã°ÂÂÂ Open trades: {open_n} (worden bewaakt)\n\n"
+            # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
             # f"Stuur STOP als je wil pauzeren.\n\n"
             # f"Commands: STOP | STATUS | TRADES"
             # ),
             # )
 
-        # Ã¢ÂÂÃ¢ÂÂ LIVE TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ LIVE TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         state   = load_state()
         symbols = get_open_symbols(state)
 
@@ -1685,7 +1685,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             if not trade:
                 continue
             if is_coin_blacklisted(conn, symbol):
-                log(f"Ã¢ÂÂ« {symbol} op blacklist Ã¢ÂÂ trade al open, bewaken")
+                log(f"Ã¢ÂÂ« {symbol} op blacklist Ã¢ÂÂ trade al open, bewaken")
             try:
                 changed, sold = process_live_trade(symbol, trade, conn)
                 if changed:
@@ -1703,7 +1703,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         if live_changed:
             save_state(state)
 
-        # Ã¢ÂÂÃ¢ÂÂ SHADOW TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ SHADOW TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         try:
             shadow_state   = load_shadow_state()
             shadow_symbols = get_open_shadow_symbols(shadow_state)
@@ -1738,21 +1738,21 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
                         _RUN_STATS["shadow_closed"] = \
                             _RUN_STATS.get("shadow_closed", 0) + 1
                 except Exception as e:
-                    log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow trade fout ({symbol}): {e}")
+                    log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow trade fout ({symbol}): {e}")
 
             if shadow_changed:
                 save_shadow_state(shadow_state)
 
         except Exception as e:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow monitor fout: {e}")
+            log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow monitor fout: {e}")
 
-        # Ã¢ÂÂÃ¢ÂÂ Positielimiet check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Positielimiet check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         check_positie_limieten(conn)
 
-        # Ã¢ÂÂÃ¢ÂÂ Stale trade detectie Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Stale trade detectie Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         detecteer_stale_trades(conn)
 
-        # Ã¢ÂÂÃ¢ÂÂ Health check elke 20 runs (~10 minuten) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Health check elke 20 runs (~10 minuten) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         if _RUN_STATS.get("runs", 0) % 20 == 1:
             health = voer_health_check_uit(conn)
             log_health_check(health)
@@ -1768,21 +1768,21 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
                 # ),
                 # )
 
-        # Ã¢ÂÂÃ¢ÂÂ Weekrapport check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Weekrapport check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         if is_weekrapport_tijd():
             verstuur_weekrapport(conn)
 
-        # Ã¢ÂÂÃ¢ÂÂ Dashboard update elke 5 runs Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Dashboard update elke 5 runs Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         if _RUN_STATS.get("runs", 0) % 5 == 0:
             update_monitor_dashboard(conn)
 
-        # Ã¢ÂÂÃ¢ÂÂ Run statistieken Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Ã¢ÂÂÃ¢ÂÂ Run statistieken Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         open_live   = len(load_state().get("positions", {}))
         open_shadow = len(load_shadow_state().get("positions", {}))
         elapsed     = round(time.time() - run_start, 2)
 
         log(
-            f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
+            f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
 
@@ -1802,7 +1802,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
                      open_trades=len(load_state().get("positions", {})))
 
     finally:
-        # ALTIJD sluiten Ã¢ÂÂ FIX: v2.0 had geen finally block
+        # ALTIJD sluiten Ã¢ÂÂ FIX: v2.0 had geen finally block
         if conn:
             try:
                 conn.close()
@@ -1811,7 +1811,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
 
 # ============================================================
-# HEALTH MONITORING Ã¢ÂÂ v3.0
+# HEALTH MONITORING Ã¢ÂÂ v3.0
 # ============================================================
 def voer_health_check_uit(conn) -> Dict[str, Any]:
     """
@@ -1819,21 +1819,21 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     Wordt elke 10 minuten uitgevoerd (elke 20 runs bij 30s interval).
 
     Controles:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    DB            Ã¢ÂÂ SELECT 1 ping
-    Bitvavo API   Ã¢ÂÂ /v2/markets ping
-    Binance API   Ã¢ÂÂ /api/v3/ping
-    Claude API    Ã¢ÂÂ korte test prompt
-    State files   Ã¢ÂÂ readable en valid JSON
-    BTC data      Ã¢ÂÂ niet ouder dan 5 uur
-    Open trades   Ã¢ÂÂ alle trades hebben geldige entry/stop/target
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    DB            Ã¢ÂÂ SELECT 1 ping
+    Bitvavo API   Ã¢ÂÂ /v2/markets ping
+    Binance API   Ã¢ÂÂ /api/v3/ping
+    Claude API    Ã¢ÂÂ korte test prompt
+    State files   Ã¢ÂÂ readable en valid JSON
+    BTC data      Ã¢ÂÂ niet ouder dan 5 uur
+    Open trades   Ã¢ÂÂ alle trades hebben geldige entry/stop/target
 
     Ernst niveaus:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    KRITIEK  Ã¢ÂÂ WhatsApp direct + bot moet handmatig gecheckt worden
-    HOOG     Ã¢ÂÂ WhatsApp + logmelding
-    MEDIUM   Ã¢ÂÂ alleen log
-    LAAG     Ã¢ÂÂ stil
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    KRITIEK  Ã¢ÂÂ WhatsApp direct + bot moet handmatig gecheckt worden
+    HOOG     Ã¢ÂÂ WhatsApp + logmelding
+    MEDIUM   Ã¢ÂÂ alleen log
+    LAAG     Ã¢ÂÂ stil
     """
     health: Dict[str, Any] = {
         "database":       False,
@@ -1848,7 +1848,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
         "score":          0,
     }
 
-    # Ã¢ÂÂÃ¢ÂÂ Database Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Database Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT 1")
@@ -1857,7 +1857,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
         safe_rollback(conn)
         health["problemen"].append(f"DB fout: {e}")
 
-    # Ã¢ÂÂÃ¢ÂÂ Bitvavo API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Bitvavo API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         resp = requests.get("https://api.bitvavo.com/v2/markets", timeout=10)
         health["bitvavo_api"] = resp.ok
@@ -1866,7 +1866,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     except Exception as e:
         health["problemen"].append(f"Bitvavo onbereikbaar: {e}")
 
-    # Ã¢ÂÂÃ¢ÂÂ Binance API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Binance API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         resp = requests.get("https://api.binance.com/api/v3/ping", timeout=5)
         health["binance_api"] = resp.ok
@@ -1875,7 +1875,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     except Exception as e:
         health["problemen"].append(f"Binance onbereikbaar: {e}")
 
-    # Ã¢ÂÂÃ¢ÂÂ Claude API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Claude API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if ANTHROPIC_API_KEY:
         test = _claude_analyse("Zeg alleen OK.", 10)
         health["claude_api"] = bool(test)
@@ -1884,7 +1884,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     else:
         health["waarschuwingen"].append("ANTHROPIC_API_KEY niet ingesteld")
 
-    # Ã¢ÂÂÃ¢ÂÂ State files Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ State files Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         state  = load_state()
         shadow = load_shadow_state()
@@ -1902,7 +1902,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     except Exception as e:
         health["problemen"].append(f"State file fout: {e}")
 
-    # Ã¢ÂÂÃ¢ÂÂ BTC data versheid Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ BTC data versheid Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -1923,7 +1923,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
         safe_rollback(conn)
         health["waarschuwingen"].append("BTC data check mislukt")
 
-    # Ã¢ÂÂÃ¢ÂÂ Open trades validatie Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Open trades validatie Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
         state = load_state()
         alle_valide = True
@@ -1940,7 +1940,7 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Ã¢ÂÂÃ¢ÂÂ Score berekening Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Score berekening Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     kritieke = sum(1 for k, v in health.items() if isinstance(v, bool) and v)
     totaal   = sum(1 for v in health.values() if isinstance(v, bool))
     health["score"] = int(kritieke / max(totaal, 1) * 100)
@@ -1957,13 +1957,13 @@ def log_health_check(health: Dict[str, Any]) -> None:
         f"Claude:{'+' if health['claude_api'] else '-'} "
         f"BTCdata:{'+' if health['btc_data_vers'] else '-'}")
     for p in health["problemen"]:
-        log(f"  Ã¢ÂÂ Probleem: {p}")
+        log(f"  Ã¢ÂÂ Probleem: {p}")
     for w in health["waarschuwingen"]:
-        log(f"  Ã¢ÂÂ Ã¯Â¸Â Waarschuwing: {w}")
+        log(f"  Ã¢ÂÂ Ã¯Â¸Â Waarschuwing: {w}")
 
 
 # ============================================================
-# OPEN TRADE OVERZICHT Ã¢ÂÂ voor WhatsApp TRADES commando
+# OPEN TRADE OVERZICHT Ã¢ÂÂ voor WhatsApp TRADES commando
 # ============================================================
 def get_open_trade_overzicht(conn) -> str:
     """
@@ -1972,7 +1972,7 @@ def get_open_trade_overzicht(conn) -> str:
     Geeft een opgemaakte string terug klaar voor WhatsApp.
 
     Toont per trade:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     - Coin + setup type
     - Entry prijs + huidige prijs
     - R-multiple huidig
@@ -1988,13 +1988,13 @@ def get_open_trade_overzicht(conn) -> str:
     shadow_pos = shadow.get("positions") or {}
 
     if not live_pos and not shadow_pos:
-        return "Ã°ÂÂÂ Geen open trades op dit moment."
+        return "Ã°ÂÂÂ Geen open trades op dit moment."
 
-    lines = [f"Ã°ÂÂÂ OPEN TRADES Ã¢ÂÂ {now_utc().strftime('%H:%M UTC')}", ""]
+    lines = [f"Ã°ÂÂÂ OPEN TRADES Ã¢ÂÂ {now_utc().strftime('%H:%M UTC')}", ""]
 
-    # Ã¢ÂÂÃ¢ÂÂ Live trades Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Live trades Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if live_pos:
-        lines.append(f"Ã°ÂÂÂ´ LIVE ({len(live_pos)}x):")
+        lines.append(f"Ã°ÂÂÂ´ LIVE ({len(live_pos)}x):")
         for symbol, trade in live_pos.items():
             entry    = safe_float(trade.get("entry"))
             stop     = safe_float(trade.get("stop_loss") or trade.get("stop"))
@@ -2026,13 +2026,13 @@ def get_open_trade_overzicht(conn) -> str:
                 f"  Tijd:  {hold_u:.1f}u | MFE={mfe_r:.2f}R MAE={mae_r:.2f}R"
             )
     else:
-        lines.append("Ã°ÂÂÂ´ LIVE: geen open trades")
+        lines.append("Ã°ÂÂÂ´ LIVE: geen open trades")
 
     lines.append("")
 
-    # Ã¢ÂÂÃ¢ÂÂ Shadow trades Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    # Ã¢ÂÂÃ¢ÂÂ Shadow trades Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if shadow_pos:
-        lines.append(f"Ã°ÂÂÂ­ SHADOW ({len(shadow_pos)}x):")
+        lines.append(f"Ã°ÂÂÂ­ SHADOW ({len(shadow_pos)}x):")
         for symbol, trade in list(shadow_pos.items())[:5]:  # Max 5 tonen
             entry    = safe_float(trade.get("entry"))
             stop     = safe_float(trade.get("stop_loss") or trade.get("stop"))
@@ -2055,13 +2055,13 @@ def get_open_trade_overzicht(conn) -> str:
         if len(shadow_pos) > 5:
             lines.append(f"  ... en {len(shadow_pos) - 5} meer")
     else:
-        lines.append("Ã°ÂÂÂ­ SHADOW: geen open trades")
+        lines.append("Ã°ÂÂÂ­ SHADOW: geen open trades")
 
     return "\n".join(lines)
 
 
 # ============================================================
-# WEEKRAPPORT Ã¢ÂÂ v3.0
+# WEEKRAPPORT Ã¢ÂÂ v3.0
 # ============================================================
 def is_weekrapport_tijd() -> bool:
     """
@@ -2118,11 +2118,11 @@ def verstuur_weekrapport(conn) -> None:
             f"tot {now_utc().strftime('%d/%m/%Y')}\n\n"
             f"STATISTIEKEN DEZE WEEK:\n"
             f"Trades: {t7} | Wins: {wins_7} | Losses: {losses_7}\n"
-            f"Win rate: {wr7:.1f}% | PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+            f"Win rate: {wr7:.1f}% | PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
             f"Profit Factor: {pf_7:.2f} (doel >1.5)\n\n"
             f"STATISTIEKEN LAATSTE 30 DAGEN:\n"
             f"Trades: {t30} | WR: {wr30:.1f}% | PF: {pf_30:.2f}\n"
-            f"PnL 30d: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
+            f"PnL 30d: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
             f"BTC regime: {btc_regime}\n"
             f"Beste setup: {beste_setup[0]} (WR={beste_setup[1].get('wr', 0)*100:.0f}%)\n\n"
             f"Geef inzichten en concrete aanbevelingen voor volgende week."
@@ -2130,22 +2130,22 @@ def verstuur_weekrapport(conn) -> None:
         claude_txt = _claude_analyse(prompt, max_tokens=400)
 
         rapport = (
-            f"Ã°ÂÂÂ WEEKRAPPORT Ã¢ÂÂ {now_utc().strftime('%d/%m/%Y')}\n"
-            f"{'Ã¢ÂÂ' * 32}\n\n"
-            f"Ã°ÂÂÂ DEZE WEEK:\n"
-            f"Ã¢ÂÂ¢ Trades:  {t7} ({wins_7}W / {losses_7}L)\n"
-            f"Ã¢ÂÂ¢ Win rate: {wr7:.1f}%\n"
-            f"Ã¢ÂÂ¢ PnL:     {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
-            f"Ã¢ÂÂ¢ PF:      {pf_7:.2f} {'Ã¢ÂÂ' if pf_7>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
-            f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
-            f"Ã¢ÂÂ¢ Win rate: {wr30:.1f}% ({t30} trades)\n"
-            f"Ã¢ÂÂ¢ PnL:     {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n"
-            f"Ã¢ÂÂ¢ PF:      {pf_30:.2f} {'Ã¢ÂÂ' if pf_30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
-            f"Ã°ÂÂ§Â  BTC regime: {btc_regime}\n\n"
+            f"Ã°ÂÂÂ WEEKRAPPORT Ã¢ÂÂ {now_utc().strftime('%d/%m/%Y')}\n"
+            f"{'Ã¢ÂÂ' * 32}\n\n"
+            f"Ã°ÂÂÂ DEZE WEEK:\n"
+            f"Ã¢ÂÂ¢ Trades:  {t7} ({wins_7}W / {losses_7}L)\n"
+            f"Ã¢ÂÂ¢ Win rate: {wr7:.1f}%\n"
+            f"Ã¢ÂÂ¢ PnL:     {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+            f"Ã¢ÂÂ¢ PF:      {pf_7:.2f} {'Ã¢ÂÂ' if pf_7>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
+            f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
+            f"Ã¢ÂÂ¢ Win rate: {wr30:.1f}% ({t30} trades)\n"
+            f"Ã¢ÂÂ¢ PnL:     {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n"
+            f"Ã¢ÂÂ¢ PF:      {pf_30:.2f} {'Ã¢ÂÂ' if pf_30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
+            f"Ã°ÂÂ§Â  BTC regime: {btc_regime}\n\n"
         )
 
         if claude_txt:
-            rapport += f"Ã°ÂÂ¤Â Claude analyse:\n{claude_txt}\n\n"
+            rapport += f"Ã°ÂÂ¤Â Claude analyse:\n{claude_txt}\n\n"
 
         rapport += "Commands: STATUS | TRADES | STOP"
 
@@ -2155,7 +2155,7 @@ def verstuur_weekrapport(conn) -> None:
         log("Weekrapport verstuurd")
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Weekrapport fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Weekrapport fout: {e}")
 
 
 def _get_setup_stats(conn, days: int = 7) -> Dict[str, Any]:
@@ -2208,20 +2208,20 @@ def update_monitor_dashboard(conn) -> None:
     Wordt gelezen door app.py dashboard.
 
     Statistieken opgeslagen:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    monitor_status       Ã¢ÂÂ ACTIEF / GESTOPT / GEPAUZEERD
-    monitor_uptime_min   Ã¢ÂÂ minuten dat monitor draait
-    monitor_runs_totaal  Ã¢ÂÂ totaal runs deze sessie
-    monitor_live_open    Ã¢ÂÂ aantal open live trades
-    monitor_shadow_open  Ã¢ÂÂ aantal open shadow trades
-    monitor_live_gesloten Ã¢ÂÂ live trades gesloten deze sessie
-    monitor_shadow_gesloten Ã¢ÂÂ shadow trades gesloten
-    monitor_fouten       Ã¢ÂÂ fouten deze sessie
-    monitor_pf_30d       Ã¢ÂÂ profit factor laatste 30 dagen
-    monitor_wr_7d        Ã¢ÂÂ win rate laatste 7 dagen
-    monitor_pnl_vandaag  Ã¢ÂÂ PnL vandaag
-    monitor_btc_regime   Ã¢ÂÂ huidig BTC regime
-    monitor_versie       Ã¢ÂÂ 3.1
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    monitor_status       Ã¢ÂÂ ACTIEF / GESTOPT / GEPAUZEERD
+    monitor_uptime_min   Ã¢ÂÂ minuten dat monitor draait
+    monitor_runs_totaal  Ã¢ÂÂ totaal runs deze sessie
+    monitor_live_open    Ã¢ÂÂ aantal open live trades
+    monitor_shadow_open  Ã¢ÂÂ aantal open shadow trades
+    monitor_live_gesloten Ã¢ÂÂ live trades gesloten deze sessie
+    monitor_shadow_gesloten Ã¢ÂÂ shadow trades gesloten
+    monitor_fouten       Ã¢ÂÂ fouten deze sessie
+    monitor_pf_30d       Ã¢ÂÂ profit factor laatste 30 dagen
+    monitor_wr_7d        Ã¢ÂÂ win rate laatste 7 dagen
+    monitor_pnl_vandaag  Ã¢ÂÂ PnL vandaag
+    monitor_btc_regime   Ã¢ÂÂ huidig BTC regime
+    monitor_versie       Ã¢ÂÂ 3.1
     """
     try:
         uptime_min = 0.0
@@ -2268,24 +2268,24 @@ def update_monitor_dashboard(conn) -> None:
             set_bot_state(conn, key, value)
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Dashboard update fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Dashboard update fout: {e}")
 
 
 # ============================================================
-# POSITIE GROOTTE MONITOR Ã¢ÂÂ bescherming
+# POSITIE GROOTTE MONITOR Ã¢ÂÂ bescherming
 # ============================================================
 def check_positie_limieten(conn) -> None:
     """
     Controleert of open posities binnen de Fase 1 limieten vallen.
-    Geeft informatieve log melding Ã¢ÂÂ sluit GEEN posities automatisch.
+    Geeft informatieve log melding Ã¢ÂÂ sluit GEEN posities automatisch.
 
     Controles:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    MAX_OPEN_REAL_TRADES  Ã¢ÂÂ max 5 gelijktijdig open live
-    MAX_PER_TRADE_EUR     Ã¢ÂÂ elke positie max Ã¢ÂÂ¬0.50
-    DAILY_STOP_LOSS_EUR   Ã¢ÂÂ dagverlies max Ã¢ÂÂ¬5.00
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    MAX_OPEN_REAL_TRADES  Ã¢ÂÂ max 5 gelijktijdig open live
+    MAX_PER_TRADE_EUR     Ã¢ÂÂ elke positie max Ã¢ÂÂ¬0.50
+    DAILY_STOP_LOSS_EUR   Ã¢ÂÂ dagverlies max Ã¢ÂÂ¬5.00
 
-    Als een limiet overschreden is Ã¢ÂÂ log + WhatsApp (informatief).
+    Als een limiet overschreden is Ã¢ÂÂ log + WhatsApp (informatief).
     Bot sluit NOOIT automatisch posities op basis van limieten.
     Jij beslist via STOP of SELL commando's.
     """
@@ -2297,7 +2297,7 @@ def check_positie_limieten(conn) -> None:
         # Open trade limiet
         if n_open > MAX_OPEN_REAL_TRADES:
             log(
-                f"Ã¢ÂÂ Ã¯Â¸Â Positielimiet overschreden: {n_open}/{MAX_OPEN_REAL_TRADES} "
+                f"Ã¢ÂÂ Ã¯Â¸Â Positielimiet overschreden: {n_open}/{MAX_OPEN_REAL_TRADES} "
                 f"open live trades. multi_coin_score.py zou geen nieuwe moeten openen."
             )
 
@@ -2306,24 +2306,24 @@ def check_positie_limieten(conn) -> None:
             amount = safe_float(trade.get("amount_eur") or trade.get("invested_eur"))
             if amount > MAX_PER_TRADE_EUR * 2:
                 log(
-                    f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: grote positie Ã¢ÂÂ¬{amount:.2f} "
-                    f"(Fase 1 max = Ã¢ÂÂ¬{MAX_PER_TRADE_EUR:.2f})"
+                    f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: grote positie Ã¢ÂÂ¬{amount:.2f} "
+                    f"(Fase 1 max = Ã¢ÂÂ¬{MAX_PER_TRADE_EUR:.2f})"
                 )
 
         # Dagverlies check
         _, _, daily_pnl = get_daily_pnl(conn)
         if daily_pnl < -DAILY_STOP_LOSS_EUR:
             log(
-                f"Ã¢ÂÂ¹Ã¯Â¸Â Dagbudget overschreden: Ã¢ÂÂ¬{daily_pnl:.2f} "
-                f"(limiet = Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}) Ã¢ÂÂ informatief"
+                f"Ã¢ÂÂ¹Ã¯Â¸Â Dagbudget overschreden: Ã¢ÂÂ¬{daily_pnl:.2f} "
+                f"(limiet = Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}) Ã¢ÂÂ informatief"
             )
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Positielimiet check fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Positielimiet check fout: {e}")
 
 
 # ============================================================
-# STALE TRADE DETECTIE Ã¢ÂÂ v3.0
+# STALE TRADE DETECTIE Ã¢ÂÂ v3.0
 # ============================================================
 def detecteer_stale_trades(conn) -> None:
     """
@@ -2331,13 +2331,13 @@ def detecteer_stale_trades(conn) -> None:
     Dit kan gebeuren als de monitor een tijdje offline was.
 
     Een trade is 'stale' als:
-    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+    Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     - last_check meer dan 10 minuten geleden
     - opened_at meer dan MAX_HOLD_HOURS * 2 geleden (overdosis houdtijd)
     - entry, stop of target ontbreekt
 
     Actie: log melding + WhatsApp bij ernstige stale trades.
-    Sluit NOOIT automatisch Ã¢ÂÂ jij beslist.
+    Sluit NOOIT automatisch Ã¢ÂÂ jij beslist.
     """
     try:
         state = load_state()
@@ -2354,7 +2354,7 @@ def detecteer_stale_trades(conn) -> None:
             if last_check > 0:
                 min_since_check = (now_ts - last_check) / 60
                 if min_since_check > 10:
-                    log(f"Ã¢ÂÂ Ã¯Â¸Â Stale trade: {symbol} Ã¢ÂÂ "
+                    log(f"Ã¢ÂÂ Ã¯Â¸Â Stale trade: {symbol} Ã¢ÂÂ "
                         f"laatste check was {min_since_check:.0f}min geleden")
 
             # Check: extreme houdtijd
@@ -2362,19 +2362,19 @@ def detecteer_stale_trades(conn) -> None:
                 uren_open = (now_ts - opened_at) / 3600
                 max_ooit  = MAX_HOLD_HOURS * 2  # Absoluut maximum
                 if uren_open > max_ooit:
-                    log(f"Ã°ÂÂÂ¨ {symbol}: extreem lang open ({uren_open:.0f}u) Ã¢ÂÂ "
+                    log(f"Ã°ÂÂÂ¨ {symbol}: extreem lang open ({uren_open:.0f}u) Ã¢ÂÂ "
                         f"check Bitvavo manueel!")
                     pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
                     # rate_key=f"stale_{symbol}",
                     # message=(
-                    # f"Ã¢ÂÂ Ã¯Â¸Â STALE TRADE DETECTIE\n"
-                    # f"{'Ã¢ÂÂ' * 28}\n\n"
-                    # f"Ã°ÂÂªÂ Coin: {symbol}\n"
-                    # f"Ã¢ÂÂ° Open: {uren_open:.0f} uur\n"
-                    # f"Ã°ÂÂÂ¯ Max verwacht: {max_ooit:.0f}u\n\n"
+                    # f"Ã¢ÂÂ Ã¯Â¸Â STALE TRADE DETECTIE\n"
+                    # f"{'Ã¢ÂÂ' * 28}\n\n"
+                    # f"Ã°ÂÂªÂ Coin: {symbol}\n"
+                    # f"Ã¢ÂÂ° Open: {uren_open:.0f} uur\n"
+                    # f"Ã°ÂÂÂ¯ Max verwacht: {max_ooit:.0f}u\n\n"
                     # f"Entry: {entry:.6f}\n"
                     # f"Stop:  {stop:.6f}\n\n"
-                    # f"Ã°ÂÂÂ¡ Check Bitvavo handmatig\n"
+                    # f"Ã°ÂÂÂ¡ Check Bitvavo handmatig\n"
                     # f"en sluit indien nodig.\n\n"
                     # f"Commands: TRADES | STATUS"
                     # ),
@@ -2382,11 +2382,11 @@ def detecteer_stale_trades(conn) -> None:
 
             # Check: ontbrekende kritieke data
             if entry <= 0 or stop <= 0:
-                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: ontbrekende entry of stop Ã¢ÂÂ "
+                log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: ontbrekende entry of stop Ã¢ÂÂ "
                     f"trade kan niet correct gemonitord worden")
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Stale trade detectie fout: {e}")
+        log(f"Ã¢ÂÂ Ã¯Â¸Â Stale trade detectie fout: {e}")
 
 
 # ============================================================
@@ -2394,24 +2394,24 @@ def detecteer_stale_trades(conn) -> None:
 # ============================================================
 def run_monitor_loop() -> None:
     """
-    Continue monitor loop Ã¢ÂÂ draait als Render Background Worker.
+    Continue monitor loop Ã¢ÂÂ draait als Render Background Worker.
     Interval: 30 seconden (configureerbaar via MONITOR_INTERVAL_SEC).
     """
     log("=" * 60)
-    log("Trade Monitor v3.1 Ã¢ÂÂ gestart")
+    log("Trade Monitor v3.1 Ã¢ÂÂ gestart")
     log("=" * 60)
-    log(f"Database:     {'Ã¢ÂÂ' if DATABASE_URL else 'Ã¢ÂÂ ONTBREEKT'}")
-    log(f"Twilio:       {'Ã¢ÂÂ' if TWILIO_ACCOUNT_SID else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
-    log(f"Claude API:   {'Ã¢ÂÂ' if ANTHROPIC_API_KEY else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
+    log(f"Database:     {'Ã¢ÂÂ' if DATABASE_URL else 'Ã¢ÂÂ ONTBREEKT'}")
+    log(f"Twilio:       {'Ã¢ÂÂ' if TWILIO_ACCOUNT_SID else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
+    log(f"Claude API:   {'Ã¢ÂÂ' if ANTHROPIC_API_KEY else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
     log(f"Interval:     {MONITOR_INTERVAL_SEC}s")
     log(f"Max hold:     {MAX_HOLD_HOURS}u live | {MAX_HOLD_HOURS*2:.0f}u shadow")
     log(f"Cooldown:     {COIN_COOLDOWN_HOURS}u na verlies")
     log(f"Fee+slip:     {TOTAL_COST_PCT*100:.2f}%")
-    log(f"Daily stop:   Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f} (informatief)")
+    log(f"Daily stop:   Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f} (informatief)")
     log(f"Cons. losses: {MAX_CONSECUTIVE_LOSSES} (informatief)")
     log(f"WA cooldown:  {_WHATSAPP_COOLDOWN_SEC//60}min per fouttype")
     log(f"Data dir:     {DATA_DIR}")
-    log(f"Bot stopt:    NOOIT automatisch Ã¢ÂÂ jij via STOP")
+    log(f"Bot stopt:    NOOIT automatisch Ã¢ÂÂ jij via STOP")
     log("=" * 60)
 
     _RUN_STATS["start_ts"] = time.time()
@@ -2423,7 +2423,7 @@ def run_monitor_loop() -> None:
         except Exception:
             pass
         except Exception as e:
-            log(f"Ã¢ÂÂ Monitor loop fout: {type(e).__name__}: {e}")
+            log(f"Ã¢ÂÂ Monitor loop fout: {type(e).__name__}: {e}")
         # HEARTBEAT naar bot_state na elke monitor run
         try:
             _hb = db_connect()
@@ -2440,13 +2440,13 @@ def run_monitor_loop() -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trade Monitor v3.1")
     parser.add_argument("--once",   action="store_true",
-                        help="ÃÂÃÂ©n monitor run en stoppen")
+                        help="ÃÂÃÂ©n monitor run en stoppen")
     parser.add_argument("--symbol", type=str, default=None,
                         help="Alleen dit symbool monitoren (bijv. ETHUSDT)")
     args = parser.parse_args()
 
     if args.once or args.symbol:
-        log(f"ÃÂÃÂ©n monitor run{f' voor {args.symbol}' if args.symbol else ''}...")
+        log(f"ÃÂÃÂ©n monitor run{f' voor {args.symbol}' if args.symbol else ''}...")
         run_monitor_once(target_symbol=args.symbol)
     else:
         run_monitor_loop()
