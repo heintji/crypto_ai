@@ -29,6 +29,12 @@ from __future__ import annotations
 import os, sys, time, math, requests, psycopg2
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple, Dict, Any
+try:
+    from bot_health_helper import health_update, health_fout
+except ImportError:
+    def health_update(*a, **k): pass
+    def health_fout(*a, **k): pass
+
 
 DATABASE_URL       = os.environ.get("DATABASE_URL", "")
 DB_CONNECT_RETRIES = 3
@@ -437,3 +443,8 @@ def main():
     log("="*60); log("Simulator klaar"); log("="*60)
 
 if __name__=="__main__": main()
+
+try:
+    health_update("strategy_sim", "OK", "simulatie klaar")
+except Exception:
+    pass
