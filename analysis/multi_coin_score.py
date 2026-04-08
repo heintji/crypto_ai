@@ -94,6 +94,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import psycopg2
 import psycopg2.extras
 import requests
+try:
+    from bot_health_helper import health_update, health_fout
+except ImportError:
+    def health_update(*a, **k): pass
+    def health_fout(*a, **k): pass
+
 
 
 # ============================================================
@@ -1332,6 +1338,8 @@ def update_coin_blacklist_whitelist(conn) -> None:
         if wl_verwijderd:
             log(f"Whitelist -{len(wl_verwijderd)}: {', '.join(wl_verwijderd[:5])}")
         log(f"BL/WL update klaar: {len(nieuwe_bl)} blacklisted, {len(nieuwe_wl)} whitelisted")
+        try: health_update("multi_coin_score", "OK", f"scan klaar")
+        except Exception: pass
     except Exception as e:
         safe_rollback(conn)
         log(f"BL/WL update fout: {e}")
