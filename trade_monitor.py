@@ -1058,6 +1058,20 @@ def process_live_trade(
         return True, result.get("ok", False)
 
     # Ã¢ÂÂÃ¢ÂÂ 2. Stop loss Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+
+    # ── Trailing stop: volg prijs omhoog ──────────────────────────
+    if current > entry:
+        trailing_stop_prijs = current * (1 - TRAILING_STOP_PCT)
+        if trailing_stop_prijs > stop:
+            stop = trailing_stop_prijs
+            log(f"Trailing stop {symbol}: nieuw stop={stop:.6f} (prijs={current:.6f})")
+            try:
+                cur.execute(
+                    "UPDATE experience_trades SET stop_loss=%s WHERE trade_key=%s",
+                    (stop, trade_key))
+                conn.commit()
+            except Exception: pass
+
     if current <= stop or r < 0:
         log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STOP_LOSS"})
