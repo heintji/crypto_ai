@@ -78,7 +78,7 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 # ============================================================
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
-MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "5")
+MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "10")
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES")         or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   or "2")
@@ -1628,6 +1628,10 @@ def place_market_sell(
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
         data = sdk.placeOrder(market, "sell", "market", {"amount": str(sell_qty), "operatorId": BITVAVO_OPERATOR_ID})
+        _err_code = data.get("errorCode", 0) if isinstance(data, dict) else 0
+        if _err_code in (212, 216):
+            log("Ghost close error " + str(_err_code) + " (" + symbol + "): coins in wallet")
+            return {"ok": False, "ghost": True, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
         log(f"Ã¢ÂÂ SELL exception ({market}): {e}")
@@ -2197,6 +2201,15 @@ def main_loop():
                         log(f"Shadow fout: {_se}")
 
         except Exception as e:
+            # DB reconnect bij SSL/connection fout
+            _em = str(e).lower(); _en = type(e).__name__
+            if any(x in _em or x in _en for x in ("ssl","connection","operational","closed")):
+                log("DB reconnect na " + _en)
+                try:
+                    conn = db_connect()
+                    log("DB reconnect OK")
+                except Exception as _re:
+                    log("DB reconnect mislukt: " + str(_re))
             log(f"Ã¢ÂÂ Loop fout: {e}")
             try:
                 conn.rollback()
