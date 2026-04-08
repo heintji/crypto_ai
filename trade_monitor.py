@@ -139,7 +139,7 @@ FORCE_TEST_EXIT = os.getenv("FORCE_TEST_EXIT", "").strip().upper()
 # WhatsApp rate limiting Ã¢ÂÂ max 1x per uur per fouttype
 # FIX: voorkomt 429 Twilio spam bij herhaalde crashes
 _WHATSAPP_SENT: Dict[str, float] = {}
-_WHATSAPP_COOLDOWN_SEC = 3600   # 1 uur
+_WHATSAPP_COOLDOWN_SEC = 14400  # 4 uur — minder spam bij fouten
 
 # Run statistieken (in-memory, reset per run)
 _RUN_STATS: Dict[str, Any] = {
@@ -1347,12 +1347,12 @@ def _finalize_trade(
     except Exception:
         pass
 
-    # Edge decay check elke 20 trades
+    # Edge decay check elke 20 trades (geen WhatsApp — alleen log)
     try:
         if trade_count_30d > 0 and trade_count_30d % 20 == 0:
             decay_msg = check_edge_decay(conn)
             if decay_msg:
-                send_whatsapp(rate_key="edge_decay", message=decay_msg)
+                log(f"[EDGE_DECAY] {decay_msg[:200]}")
     except Exception:
         pass
 
