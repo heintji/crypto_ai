@@ -2200,7 +2200,7 @@ def main_loop():
                     SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
                     FROM pending_approvals
                     WHERE status = 'PENDING'
-                    AND score >= 80 AND score < 90
+                    AND score >= 80  -- alle signalen 80+ krijgen shadow trade
                     AND expires_at > NOW()
                     ORDER BY score DESC
                     LIMIT 10
