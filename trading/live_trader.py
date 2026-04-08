@@ -1662,7 +1662,7 @@ def place_market_sell(
         data = sdk.placeOrder(market, "sell", "market", {"amount": str(sell_qty), "operatorId": BITVAVO_OPERATOR_ID})
         _err_code = data.get("errorCode", 0) if isinstance(data, dict) else 0
         if _err_code in (212, 216):
-            log("Ghost close error " + str(_err_code) + " (" + symbol + "): sell gefaald")
+            log("Ghost close error " + str(_err_code) + " (" + market + "): sell gefaald")
             return {"ok": False, "ghost": True, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
