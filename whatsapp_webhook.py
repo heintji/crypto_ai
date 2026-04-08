@@ -322,7 +322,7 @@ Geef in 3 korte zinnen Nederlands:
 
     send_whatsapp(
         f"🚨 WEBHOOK FOUT — {severity}\n"
-        f"{'─' * 30}\n\n"
+        f"{"─"*30}\n\n"
         f"📁 Functie:     {function}\n"
         f"🪙 Coin:        {symbol or '—'}\n"
         f"📂 Open trades: {open_trades}\n"
@@ -1255,7 +1255,7 @@ def build_daily_rapport(conn) -> str:
 
     bericht = (
         f"📊 DAGRAPPORT — {gisteren}\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"{status_line}\n\n"
         f"💶 ECHTE TRADES:\n"
         f"• Wins: {w_real} | Losses: {l_real}\n"
@@ -1270,7 +1270,7 @@ def build_daily_rapport(conn) -> str:
         f" {'✅' if pf_30d >= 1.5 else '⚠️'}\n"
         f"{open_tekst}\n"
         f"🧠 Claude:\n{claude_tekst}\n\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"Commands: STOP | STATUS | TRADES"
     )
 
@@ -1334,7 +1334,7 @@ def build_weekly_rapport(conn) -> str:
 
     return (
         f"📅 WEEKRAPPORT\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"{status_line}\n\n"
         f"💶 ECHTE TRADES DEZE WEEK:\n"
         f"• Wins:     {w7}\n"
@@ -1344,7 +1344,7 @@ def build_weekly_rapport(conn) -> str:
         f"📈 Profit Factor 30d: {pf30:.2f}"
         f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
         f"🧠 Claude analyse:\n{claude_tekst}\n\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"Commands: STOP | STATUS | RAPPORT"
     )
 
@@ -1393,7 +1393,7 @@ def build_monthly_rapport(conn) -> str:
 
     return (
         f"📆 MAANDRAPPORT (30 dagen)\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"{status_line}\n\n"
         f"💶 RESULTAAT:\n"
         f"• Wins:        {w30}\n"
@@ -1406,7 +1406,7 @@ def build_monthly_rapport(conn) -> str:
         f"• Live: {live_wr:.1f}%\n"
         f"• Diff: {sim_wr-live_wr:.1f}% {'⚠️' if sim_wr-live_wr>10 else '✅'}\n\n"
         f"🧠 Claude:\n{claude_tekst}\n\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"Commands: STOP | STATUS | HEALTH"
     )
 
@@ -1442,7 +1442,7 @@ def build_status_bericht(conn) -> str:
 
     return (
         f"📊 BOT STATUS\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"{status_line}"
         f"{pause_info}\n\n"
         f"💶 VANDAAG:\n"
@@ -1477,7 +1477,7 @@ def build_trades_bericht(conn) -> str:
     if not open_trades:
         return (
             f"📂 OPEN TRADES\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"{status_line}\n\n"
             f"Geen open live trades.\n\n"
             f"Commands: STATUS | RAPPORT"
@@ -1485,7 +1485,7 @@ def build_trades_bericht(conn) -> str:
 
     tekst = (
         f"📂 OPEN TRADES ({len(open_trades)})\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"{status_line}\n\n"
     )
 
@@ -1519,7 +1519,7 @@ def build_help_bericht() -> str:
     """Bouwt het HELP bericht met alle commands."""
     return (
         f"🤖 CRYPTO AI BOT — COMMANDS\n"
-        f"{'─' * 32}\n\n"
+        f"{"─"*32}\n\n"
         f"🟢 CONTROLE:\n"
         f"START        → bot begint traden\n"
         f"STOP         → bot stopt (jij beslist)\n\n"
@@ -1539,7 +1539,7 @@ def build_help_bericht() -> str:
         f"ANALYSEKORT  → snel overzicht 30d\n\n"
         f"ℹ️ OVERIG:\n"
         f"HELP         → dit bericht\n\n"
-        f"{'─' * 32}\n"
+        f"{"─"*32}\n"
         f"⚙️ FASE 1 LIMIETEN:\n"
         f"• Max per trade: €{MAX_PER_TRADE_EUR:.2f}\n"
         f"• Max trades/dag: {MAX_REAL_TRADES_PER_DAY}\n"
@@ -1567,7 +1567,7 @@ def process_command(body: str, conn) -> str:
         pf30  = get_profit_factor(conn, 30)
         return (
             f"🟢 BOT GESTART\n"
-            f"{'─' * 32}\n\n"
+            f"{"─"*32}\n\n"
             f"Bot is nu actief en handelt automatisch.\n\n"
             f"📊 VANDAAG TOT NU TOE:\n"
             f"• Trades: {tot_v} ({w_v}W/{l_v}L)\n"
@@ -1587,7 +1587,7 @@ def process_command(body: str, conn) -> str:
         open_count = get_open_real_trades_count(conn)
         return (
             f"🔴 BOT GESTOPT\n"
-            f"{'─' * 32}\n\n"
+            f"{"─"*32}\n\n"
             f"Bot handelt geen nieuwe trades meer.\n\n"
             f"📂 Open trades: {open_count}\n"
             f"(worden nog wel bewaakt door trade_monitor)\n\n"
@@ -1616,12 +1616,12 @@ def process_command(body: str, conn) -> str:
         pf30         = get_profit_factor(conn, 30)
         return (
             f"🧠 CLAUDE LEERANALYSE\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"{status_line}\n\n"
             f"📈 Profit Factor 30d: {pf30:.2f}"
             f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
             f"{leer_analyse}\n\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"Commands: STATUS | RAPPORT | STOP"
         )
 
@@ -1630,10 +1630,10 @@ def process_command(body: str, conn) -> str:
         health_tekst = claude_health_check(conn)
         return (
             f"🏥 HEALTH CHECK\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"{status_line}\n\n"
             f"🧠 Claude health analyse:\n{health_tekst}\n\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"Commands: STATUS | ADVIES | ANALYSE | STOP"
         )
 
@@ -1647,7 +1647,7 @@ def process_command(body: str, conn) -> str:
 
         send_whatsapp(
             f"🧠 AI COACH GESTART\n"
-            f"{'─' * 32}\n\n"
+            f"{"─"*32}\n\n"
             f"Analyse periode: {dagen} dagen\n"
             f"Dit duurt 20-60 seconden...\n\n"
             f"Claude analyseert:\n"
@@ -1684,7 +1684,7 @@ def process_command(body: str, conn) -> str:
             log(f"❌ AI Coach fout: {type(e).__name__}: {e}")
             return (
                 f"❌ AI COACH FOUT\n"
-                f"{'─' * 32}\n\n"
+                f"{"─"*32}\n\n"
                 f"Fout: {type(e).__name__}\n"
                 f"{str(e)[:150]}\n\n"
                 f"Check Render logs voor details.\n"
@@ -1975,10 +1975,10 @@ def send_health_check():
 
         bericht = (
             f"🏥 WEKELIJKSE HEALTH CHECK\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"{status_line}\n\n"
             f"🧠 Claude health rapport:\n{health_tekst}\n\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"Commands: STATUS | ADVIES | STOP"
         )
 
@@ -2008,12 +2008,12 @@ def send_leeranalyse():
 
         bericht = (
             f"🧠 CLAUDE LEERANALYSE\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"{status_line}\n\n"
             f"📈 Profit Factor 30d: {pf30:.2f}"
             f" {'✅' if pf30 >= 1.5 else '⚠️'}\n\n"
             f"{leer_analyse}\n\n"
-            f"{'─' * 32}\n"
+            f"{"─"*32}\n"
             f"Commands: STATUS | RAPPORT | STOP"
         )
 
