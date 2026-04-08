@@ -49,6 +49,25 @@ import psycopg2
 import psycopg2.extras
 import requests
 
+# ── Bot health heartbeat ──────────────────────────────
+def _schrijf_heartbeat(status='OK', details=''):
+    try:
+        import psycopg2, os as _os
+        _db = psycopg2.connect(_os.environ['DATABASE_URL'])
+        _c  = _db.cursor()
+        _c.execute("""
+            UPDATE bot_health SET status=%s, laatste_run=NOW(), details=%s
+            WHERE service=%s
+        """, (status, details[:200] if details else '', 'build_btc_regime'))
+        if _c.rowcount == 0:
+            _c.execute("INSERT INTO bot_health (service, status, laatste_run, details) VALUES (%s,%s,NOW(),%s)",
+                ('build_btc_regime', status, details[:200] if details else ''))
+        _db.commit()
+        _db.close()
+    except Exception as _hbe:
+        print(f'[HEALTH] heartbeat fout: {_hbe}')
+
+
 
 # ============================================================
 # ENV — identiek aan alle andere bestanden
@@ -888,6 +907,8 @@ def print_regime_summary(conn) -> None:
 # ============================================================
 # MAIN
 # ============================================================
+_schrijf_heartbeat('OK', 'btc_regime bijgewerkt')
+
 if __name__ == "__main__":
 
     start_ts = now_utc()
