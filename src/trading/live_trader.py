@@ -79,6 +79,9 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
 MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "10")
+MAX_HOLD_HOURS            = int(os.getenv("MAX_HOLD_HOURS")              or "48")   # max uren per trade
+MIN_SCORE_TO_TRADE        = int(os.getenv("MIN_SCORE_TO_TRADE")          or "70")   # min score om te kopen
+TRADER_MODE               = os.getenv("TRADER_MODE", "LIVE")             # LIVE of PAPER
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES")         or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   or "2")
@@ -309,7 +312,6 @@ Geef in 3 zinnen Nederlands:
 
     # Rate limited per severity+function combinatie Ã¢ÂÂ geen spam
     wa_key = f"error_{severity}_{function.replace('.', '_')}"
-    send_whatsapp_rate_limited(
         f"Ã°ÂÂÂ¨ LIVE TRADER FOUT Ã¢ÂÂ {severity}\n"
         f"{'Ã¢ÂÂ' * 30}\n\n"
         f"Ã°ÂÂÂ Functie:     {function}\n"
