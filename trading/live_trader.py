@@ -1,41 +1,41 @@
 # live_trader.py
 # ============================================================
-# Crypto AI Bot Ã¢ÂÂ Live Trader v3.0
+# Crypto AI Bot  Live Trader v3.0
 # ============================================================
 # Voert echte BUY en SELL orders uit op Bitvavo.
 # Gebruikt Bitvavo API voor live orders, Binance voor data.
 #
-# V3.0 PATTERN Ã¢ÂÂ identiek aan alle andere bestanden:
-#   Ã¢ÂÂ safe_rollback() overal
-#   Ã¢ÂÂ db_connect() retries=3 + autocommit=False
-#   Ã¢ÂÂ conn=None voor try/finally + finally conn.close()
-#   Ã¢ÂÂ _bitvavo_request() geen retry op 4xx client errors
-#   Ã¢ÂÂ isinstance(s, dict) check voor JSON state files
-#   Ã¢ÂÂ WhatsApp rate limiting per fouttype
-#   Ã¢ÂÂ Model: claude-sonnet-4-6
-#   Ã¢ÂÂ log_naar_bot_state() schrijft naar bot_state tabel
+# V3.0 PATTERN  identiek aan alle andere bestanden:
+#    safe_rollback() overal
+#    db_connect() retries=3 + autocommit=False
+#    conn=None voor try/finally + finally conn.close()
+#    _bitvavo_request() geen retry op 4xx client errors
+#    isinstance(s, dict) check voor JSON state files
+#    WhatsApp rate limiting per fouttype
+#    Model: claude-sonnet-4-6
+#    log_naar_bot_state() schrijft naar bot_state tabel
 #
 # NIEUWE FEATURES V3.0:
-#   Ã¢ÂÂ shadow_buy() Ã¢ÂÂ shadow trade parallel aan elke live BUY
-#   Ã¢ÂÂ bereken_positiegrootte_kelly() Ã¢ÂÂ Half Kelly Criterion sizing
-#   Ã¢ÂÂ validate_atr_stop() Ã¢ÂÂ ATR-based stop validatie
-#   Ã¢ÂÂ log_naar_bot_state() Ã¢ÂÂ live_trader_busy/last_action/last_ts/error
-#   Ã¢ÂÂ get_account_snapshot() Ã¢ÂÂ volledige Bitvavo portfolio snapshot
-#   Ã¢ÂÂ check_min_order_size() Ã¢ÂÂ waarschuwt bij order onder Bitvavo minimum
-#   Ã¢ÂÂ get_coin_stats() Ã¢ÂÂ win rate / R / profit factor per coin
-#   Ã¢ÂÂ bereken_pnl_nauwkeurig() Ã¢ÂÂ PnL incl. fee_buy + fee_sell
-#   Ã¢ÂÂ log_trade_event() Ã¢ÂÂ elke actie naar coach_events voor ai_coach
-#   Ã¢ÂÂ load_shadow_state() / save_shadow_state() Ã¢ÂÂ shadow state helpers
+#    shadow_buy()  shadow trade parallel aan elke live BUY
+#    bereken_positiegrootte_kelly()  Half Kelly Criterion sizing
+#    validate_atr_stop()  ATR-based stop validatie
+#    log_naar_bot_state()  live_trader_busy/last_action/last_ts/error
+#    get_account_snapshot()  volledige Bitvavo portfolio snapshot
+#    check_min_order_size()  waarschuwt bij order onder Bitvavo minimum
+#    get_coin_stats()  win rate / R / profit factor per coin
+#    bereken_pnl_nauwkeurig()  PnL incl. fee_buy + fee_sell
+#    log_trade_event()  elke actie naar coach_events voor ai_coach
+#    load_shadow_state() / save_shadow_state()  shadow state helpers
 #
 # BUGS GEFIXED vs v2.0:
-#   Ã¢ÂÂ HMAC signing Ã¢ÂÂ digestmod=hashlib.sha256
-#   Ã¢ÂÂ get_tradable_markets() publiek
-#   Ã¢ÂÂ price=0 bug via fills fallback
-#   Ã¢ÂÂ sslmode="require" op DB connectie
-#   Ã¢ÂÂ Auto mode: live eerst, paper als fallback
-#   Ã¢ÂÂ Geen automatische pauze Ã¢ÂÂ bot gaat altijd door
-#   Ã¢ÂÂ buy_eur/sell: conn=None + finally conn.close()
-#   Ã¢ÂÂ _bitvavo_request: geen retry op alle 4xx (was alleen 401/403)
+#    HMAC signing  digestmod=hashlib.sha256
+#    get_tradable_markets() publiek
+#    price=0 bug via fills fallback
+#    sslmode="require" op DB connectie
+#    Auto mode: live eerst, paper als fallback
+#    Geen automatische pauze  bot gaat altijd door
+#    buy_eur/sell: conn=None + finally conn.close()
+#    _bitvavo_request: geen retry op alle 4xx (was alleen 401/403)
 # ============================================================
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ except ImportError:
 
 
 # ============================================================
-# ENV Ã¢ÂÂ identiek aan alle andere bestanden
+# ENV  identiek aan alle andere bestanden
 # ============================================================
 DATABASE_URL         = (os.getenv("DATABASE_URL")         or "").strip()
 ANTHROPIC_API_KEY    = (os.getenv("ANTHROPIC_API_KEY")    or "").strip()
@@ -80,7 +80,7 @@ BITVAVO_BASE = "https://api.bitvavo.com"
 BINANCE_BASE = "https://api.binance.com/api/v3"
 
 # ============================================================
-# FASE 1 LIMIETEN Ã¢ÂÂ identiek aan alle andere bestanden
+# FASE 1 LIMIETEN  identiek aan alle andere bestanden
 # ============================================================
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
@@ -94,7 +94,7 @@ CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   o
 TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START")            or "0")
 TRADING_HOURS_END            = int(os.getenv("TRADING_HOURS_END")              or "24")
 
-# Fee + slippage Ã¢ÂÂ identiek aan alle bestanden
+# Fee + slippage  identiek aan alle bestanden
 BITVAVO_FEE_PCT = float(os.getenv("BITVAVO_FEE_PCT") or "0.0025")
 SLIPPAGE_PCT    = float(os.getenv("SLIPPAGE_PCT")    or "0.001")
 TOTAL_COST_PCT  = BITVAVO_FEE_PCT + SLIPPAGE_PCT
@@ -104,7 +104,7 @@ COIN_COOLDOWN_HOURS   = float(os.getenv("COIN_COOLDOWN_HOURS")   or "24.0")
 BLACKLIST_MIN_TRADES  = int(os.getenv("BLACKLIST_MIN_TRADES")    or "20")
 BLACKLIST_MAX_WINRATE = float(os.getenv("BLACKLIST_MAX_WINRATE") or "0.30")
 
-# ATR parameters Ã¢ÂÂ identiek aan trade_monitor
+# ATR parameters  identiek aan trade_monitor
 ATR_MULTIPLIER        = float(os.getenv("ATR_MULTIPLIER")        or "1.6")
 ATR_PERIOD            = int(os.getenv("ATR_PERIOD")              or "14")
 
@@ -133,13 +133,13 @@ SNAPSHOT_PATH     = os.path.join(DATA_DIR, "account_snapshot.json")
 _MARKETS_CACHE: Dict[str, Any] = {"ts": 0.0, "markets": set()}
 _MARKETS_TTL = 30 * 60  # 30 minuten
 
-# WhatsApp rate limiting per fouttype Ã¢ÂÂ voorkomt spam bij herhaalde fouten
+# WhatsApp rate limiting per fouttype  voorkomt spam bij herhaalde fouten
 _WA_LAST_SENT: Dict[str, float] = {}
 _WA_COOLDOWN_SECS = 300  # 5 minuten per fouttype
 
 
 # ============================================================
-# BASIS HELPERS Ã¢ÂÂ identiek aan alle andere bestanden
+# BASIS HELPERS  identiek aan alle andere bestanden
 # ============================================================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -189,7 +189,7 @@ def _ensure_dir(path: str) -> None:
 
 def safe_rollback(conn) -> None:
     """
-    Rollback zonder exception Ã¢ÂÂ v3.0 pattern.
+    Rollback zonder exception  v3.0 pattern.
     Altijd aanroepen in except blokken met een open connectie.
     """
     try:
@@ -200,13 +200,13 @@ def safe_rollback(conn) -> None:
 
 
 # ============================================================
-# WHATSAPP Ã¢ÂÂ identieke implementatie + rate limiting v3.0
+# WHATSAPP  identieke implementatie + rate limiting v3.0
 # ============================================================
 def send_whatsapp(message: str) -> bool:
     """
     Stuurt WhatsApp bericht via Twilio.
     Identieke implementatie in alle bestanden.
-    Alleen voor kritieke meldingen Ã¢ÂÂ geen spam per trade.
+    Alleen voor kritieke meldingen  geen spam per trade.
     """
     if not all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
                 TWILIO_WHATSAPP_FROM, TWILIO_WHATSAPP_TO]):
@@ -225,16 +225,16 @@ def send_whatsapp(message: str) -> bool:
             timeout=15,
         )
         if resp.status_code in (200, 201):
-            log(f"Ã¢ÂÂ WhatsApp verzonden ({len(message)} tekens)")
+            log(f" WhatsApp verzonden ({len(message)} tekens)")
             return True
-        log(f"Ã¢ÂÂ WhatsApp {resp.status_code}: {resp.text[:200]}")
+        log(f" WhatsApp {resp.status_code}: {resp.text[:200]}")
         return False
     except Exception as e:
-        log(f"Ã¢ÂÂ WhatsApp exception: {type(e).__name__}: {e}")
+        log(f" WhatsApp exception: {type(e).__name__}: {e}")
         return False
 
 
-    WhatsApp met rate limiting per fouttype Ã¢ÂÂ v3.0 pattern.
+    WhatsApp met rate limiting per fouttype  v3.0 pattern.
     Voorkomt WhatsApp spam bij herhaalde fouten.
     key = fouttype identifier (bv. "buy_error", "sell_error").
     Max 1 bericht per 5 minuten per key.
@@ -243,17 +243,17 @@ def send_whatsapp(message: str) -> bool:
     last = _WA_LAST_SENT.get(key, 0.0)
     if now - last < _WA_COOLDOWN_SECS:
         remaining = int(_WA_COOLDOWN_SECS - (now - last))
-        log(f"Ã°ÂÂÂµ WhatsApp rate limited ({key}) Ã¢ÂÂ nog {remaining}s wachten")
+        log(f" WhatsApp rate limited ({key})  nog {remaining}s wachten")
         return False
     _WA_LAST_SENT[key] = now
     return send_whatsapp(message)
 
 
 # ============================================================
-# CLAUDE HEALTH MONITORING Ã¢ÂÂ model: claude-sonnet-4-6
+# CLAUDE HEALTH MONITORING  model: claude-sonnet-4-6
 # ============================================================
 def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
-    """Claude API aanroep Ã¢ÂÂ identiek aan alle bestanden."""
+    """Claude API aanroep  identiek aan alle bestanden."""
     if not ANTHROPIC_API_KEY:
         return ""
     try:
@@ -288,7 +288,7 @@ def report_error(
     """
     Rapporteert fout via Claude analyse + WhatsApp.
     Ernst niveaus: KRITIEK, HOOG, MEDIUM, LAAG.
-    Rate limited per fouttype Ã¢ÂÂ geen spam.
+    Rate limited per fouttype  geen spam.
     Identiek aan alle andere bestanden.
     """
     log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
@@ -316,21 +316,21 @@ Geef in 3 zinnen Nederlands:
     if not uitleg:
         uitleg = f"{type(error).__name__}: {str(error)[:100]}"
 
-    # Rate limited per severity+function combinatie Ã¢ÂÂ geen spam
+    # Rate limited per severity+function combinatie  geen spam
     wa_key = f"error_{severity}_{function.replace('.', '_')}"
-        f"Ã°ÂÂÂ¨ LIVE TRADER FOUT Ã¢ÂÂ {severity}\n"
-        f"{'Ã¢ÂÂ' * 30}\n\n"
-        f"Ã°ÂÂÂ Functie:     {function}\n"
-        f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-        f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-        f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-        f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-        f"Ã°ÂÂÂ WAT TE DOEN:\n"
+        f" LIVE TRADER FOUT  {severity}\n"
+        f"{'' * 30}\n\n"
+        f" Functie:     {function}\n"
+        f" Coin:        {symbol or ''}\n"
+        f" Open trades: {open_trades}\n"
+        f" Fout:       {type(error).__name__}\n\n"
+        f" Claude:\n{uitleg}\n\n"
+        f" WAT TE DOEN:\n"
         f"1. Check Render logs voor details\n"
         f"2. Stuur TRADES voor open posities\n"
         f"3. Check Bitvavo account direct\n"
         f"4. Stuur STOP als je wil pauzeren\n\n"
-        f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
+        f" BOT PROBEERT DOOR TE GAAN\n"
         f"Commands: STATUS | TRADES | STOP",
         key=wa_key,
     )
@@ -360,8 +360,8 @@ Analyseer deze gesloten trade in 2 korte zinnen Nederlands.
 
 Coin:      {symbol}
 Setup:     {setup_type} / Regime: {regime}
-Entry:     {entry:.6f} Ã¢ÂÂ Exit: {exit_price:.6f}
-PnL:       Ã¢ÂÂ¬{pnl_eur:.4f}
+Entry:     {entry:.6f}  Exit: {exit_price:.6f}
+PnL:       {pnl_eur:.4f}
 Duur:      {hold_min:.0f} min
 Score:     {score}
 Uitkomst:  {outcome}
@@ -380,11 +380,11 @@ Je bent een crypto trading bot configuratie checker.
 Controleer of de live_trader.py correct is geconfigureerd.
 
 CONFIGURATIE:
-- BITVAVO_API_KEY:    {'Ã¢ÂÂ aanwezig' if BITVAVO_API_KEY else 'Ã¢ÂÂ ONTBREEKT'}
-- BITVAVO_API_SECRET: {'Ã¢ÂÂ aanwezig' if BITVAVO_API_SECRET else 'Ã¢ÂÂ ONTBREEKT'}
-- DATABASE_URL:       {'Ã¢ÂÂ aanwezig' if DATABASE_URL else 'Ã¢ÂÂ ONTBREEKT'}
-- MAX_PER_TRADE_EUR:  Ã¢ÂÂ¬{MAX_PER_TRADE_EUR:.2f}
-- DAILY_STOP_LOSS:    Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}
+- BITVAVO_API_KEY:    {' aanwezig' if BITVAVO_API_KEY else ' ONTBREEKT'}
+- BITVAVO_API_SECRET: {' aanwezig' if BITVAVO_API_SECRET else ' ONTBREEKT'}
+- DATABASE_URL:       {' aanwezig' if DATABASE_URL else ' ONTBREEKT'}
+- MAX_PER_TRADE_EUR:  {MAX_PER_TRADE_EUR:.2f}
+- DAILY_STOP_LOSS:    {DAILY_STOP_LOSS_EUR:.2f}
 - TRADING_HOURS:      {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC
 - FEE_PCT:            {BITVAVO_FEE_PCT*100:.2f}%
 - SLIPPAGE_PCT:       {SLIPPAGE_PCT*100:.2f}%
@@ -392,7 +392,7 @@ CONFIGURATIE:
 
 Geef een korte check (2-3 zinnen):
 1. Is de configuratie compleet?
-2. Zijn er potentiÃÂ«le problemen?
+2. Zijn er potentile problemen?
 3. Aanbevelingen?
 """.strip()
 
@@ -400,11 +400,11 @@ Geef een korte check (2-3 zinnen):
 
 
 # ============================================================
-# DATABASE Ã¢ÂÂ v3.0: retries=3 + autocommit=False
+# DATABASE  v3.0: retries=3 + autocommit=False
 # ============================================================
 def db_connect(retries: int = 3):
     """
-    DB verbinding met sslmode=require Ã¢ÂÂ v3.0 pattern.
+    DB verbinding met sslmode=require  v3.0 pattern.
     retries=3: probeert 3x met exponential backoff.
     autocommit=False: expliciete commit vereist (veiliger).
     """
@@ -420,13 +420,13 @@ def db_connect(retries: int = 3):
             last_err = e
             if attempt < retries:
                 wait = 2 ** attempt
-                log(f"Ã¢ÂÂ Ã¯Â¸Â DB connect poging {attempt}/{retries} mislukt, wacht {wait}s: {e}")
+                log(f" DB connect poging {attempt}/{retries} mislukt, wacht {wait}s: {e}")
                 time.sleep(wait)
     raise RuntimeError(f"DB connect mislukt na {retries} pogingen: {last_err}")
 
 
 # ============================================================
-# BOT STATE Ã¢ÂÂ identiek aan alle bestanden
+# BOT STATE  identiek aan alle bestanden
 # ============================================================
 def get_bot_state(conn, key: str, default: str = "") -> str:
     try:
@@ -451,11 +451,11 @@ def set_bot_state(conn, key: str, value: str) -> None:
             """, (key, value))
         conn.commit()
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â set_bot_state fout: {e}")
+        log(f" set_bot_state fout: {e}")
 
 
 def _set_bot_state_multi(conn, kvs: Dict[str, str]) -> None:
-    """Meerdere bot state waarden in ÃÂ©ÃÂ©n transactie Ã¢ÂÂ efficiÃÂ«nter."""
+    """Meerdere bot state waarden in n transactie  efficinter."""
     try:
         with conn.cursor() as cur:
             for key, value in kvs.items():
@@ -467,7 +467,7 @@ def _set_bot_state_multi(conn, kvs: Dict[str, str]) -> None:
                 """, (key, value))
         conn.commit()
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â _set_bot_state_multi fout: {e}")
+        log(f" _set_bot_state_multi fout: {e}")
         safe_rollback(conn)
 
 
@@ -501,15 +501,15 @@ def log_naar_bot_state(
     error:   str             = "",
 ) -> None:
     """
-    Schrijft live trader status naar bot_state tabel Ã¢ÂÂ v3.0.
+    Schrijft live trader status naar bot_state tabel  v3.0.
     Wordt door app.py gelezen voor dashboard display.
 
     Keys die worden geschreven:
-      live_trader_last_action  Ã¢ÂÂ laatste actie (bv. "BUY ETHUSDT @ Ã¢ÂÂ¬2500")
-      live_trader_last_ts      Ã¢ÂÂ timestamp ISO (voor Render Services Monitor)
-      live_trader_busy         Ã¢ÂÂ "true" als trade bezig is
-      live_trader_last_pnl     Ã¢ÂÂ PnL van laatste gesloten trade
-      live_trader_error        Ã¢ÂÂ laatste foutmelding (leeg = OK)
+      live_trader_last_action   laatste actie (bv. "BUY ETHUSDT @ 2500")
+      live_trader_last_ts       timestamp ISO (voor Render Services Monitor)
+      live_trader_busy          "true" als trade bezig is
+      live_trader_last_pnl      PnL van laatste gesloten trade
+      live_trader_error         laatste foutmelding (leeg = OK)
     """
     conn = None
     try:
@@ -524,15 +524,15 @@ def log_naar_bot_state(
         kvs["live_trader_error"] = error[:500] if error else ""
         _set_bot_state_multi(conn, kvs)
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â log_naar_bot_state fout: {e}")
+        log(f" log_naar_bot_state fout: {e}")
     finally:
         if conn:
             conn.close()
 
 
 # ============================================================
-# LIMIETEN CHECK Ã¢ÂÂ identiek aan whatsapp_webhook.py
-# Bot stopt NOOIT automatisch Ã¢ÂÂ jij beslist via STOP
+# LIMIETEN CHECK  identiek aan whatsapp_webhook.py
+# Bot stopt NOOIT automatisch  jij beslist via STOP
 # ============================================================
 def get_real_trades_today(conn) -> int:
     """Telt echte trades vandaag."""
@@ -550,7 +550,7 @@ def get_real_trades_today(conn) -> int:
 
 
 def get_open_real_trades_count(conn) -> int:
-    """Telt open echte trades Ã¢ÂÂ state file eerst, dan DB als fallback."""
+    """Telt open echte trades  state file eerst, dan DB als fallback."""
     try:
         state = load_state()
         pos   = state.get("positions") or {}
@@ -599,7 +599,7 @@ def get_daily_pnl(conn, day: str) -> Tuple[int, int, float]:
 
 
 def get_consecutive_losses(conn) -> int:
-    """Opeenvolgende verliezen Ã¢ÂÂ identiek aan alle bestanden."""
+    """Opeenvolgende verliezen  identiek aan alle bestanden."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -624,11 +624,11 @@ def get_consecutive_losses(conn) -> int:
 def check_trading_limits(conn) -> Tuple[bool, str]:
     """
     Controleert alle trading limieten voor een BUY.
-    Bot stopt NOOIT automatisch Ã¢ÂÂ jij beslist via STOP.
+    Bot stopt NOOIT automatisch  jij beslist via STOP.
     Identiek aan whatsapp_webhook.py check_trading_limits.
     """
     if not is_bot_active(conn):
-        return False, "Bot GESTOPT Ã¢ÂÂ stuur START"
+        return False, "Bot GESTOPT  stuur START"
 
     if is_bot_paused(conn):
         reason = get_bot_state(conn, "bot_paused_reason", "")
@@ -640,12 +640,12 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
             f"({TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC)"
         )
 
-    # Daily stop loss: alleen informeren Ã¢ÂÂ bot gaat door
+    # Daily stop loss: alleen informeren  bot gaat door
     _, _, daily_pnl = get_daily_pnl(conn, utc_day_str())
     daily_stop = float(get_bot_state(conn, "daily_stop_loss_eur", str(DAILY_STOP_LOSS_EUR)) or DAILY_STOP_LOSS_EUR)
     if daily_pnl <= -daily_stop:
         log(
-            f"Ã¢ÂÂ¹Ã¯Â¸Â Dagbudget bereikt: Ã¢ÂÂ¬{daily_pnl:.2f} Ã¢ÂÂ "
+            f" Dagbudget bereikt: {daily_pnl:.2f}  "
             f"bot gaat door (jij beslist via STOP)"
         )
 
@@ -658,11 +658,11 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
     if open_count >= max_open:
         return False, f"Max open: {open_count}/{max_open}"
 
-    # Consecutive losses: alleen informeren Ã¢ÂÂ bot gaat door
+    # Consecutive losses: alleen informeren  bot gaat door
     consecutive = get_consecutive_losses(conn)
     if consecutive >= MAX_CONSECUTIVE_LOSSES:
         log(
-            f"Ã¢ÂÂ¹Ã¯Â¸Â {consecutive}x verlies op rij Ã¢ÂÂ "
+            f" {consecutive}x verlies op rij  "
             f"bot gaat door (jij beslist via STOP)"
         )
 
@@ -670,7 +670,7 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
 
 
 # ============================================================
-# BITVAVO UNIVERSE FILTER Ã¢ÂÂ publiek + gecached
+# BITVAVO UNIVERSE FILTER  publiek + gecached
 # ============================================================
 def get_tradable_markets() -> Set[str]:
     """
@@ -696,17 +696,17 @@ def get_tradable_markets() -> Set[str]:
 
         _MARKETS_CACHE["ts"]      = now
         _MARKETS_CACHE["markets"] = tradable
-        log(f"Ã¢ÂÂ Bitvavo markets gecached: {len(tradable)} tradable")
+        log(f" Bitvavo markets gecached: {len(tradable)} tradable")
         return tradable
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo markets fout: {e}")
+        log(f" Bitvavo markets fout: {e}")
         return _MARKETS_CACHE.get("markets") or set()
 
 
 def symbol_to_market(symbol_usdt: str) -> Optional[str]:
     """
-    ETHUSDT Ã¢ÂÂ ETH-EUR als tradable op Bitvavo.
+    ETHUSDT  ETH-EUR als tradable op Bitvavo.
     Geeft None als niet tradable.
     """
     s = safe_str(symbol_usdt).upper()
@@ -726,7 +726,7 @@ def is_coin_tradable(symbol_usdt: str) -> bool:
 
 
 # ============================================================
-# BITVAVO API Ã¢ÂÂ SIGNING + REQUEST
+# BITVAVO API  SIGNING + REQUEST
 # v3.0 fix: geen retry op ALLE 4xx (was alleen 401/403)
 # ============================================================
 def _bitvavo_headers(method: str, path: str, body: str = "") -> Dict[str, str]:
@@ -769,7 +769,7 @@ def _bitvavo_request(
 
     v3.0 fix: geen retry op ALLE 4xx client errors.
     Client errors zijn programmeerfouten, niet tijdelijk.
-    (Was alleen 401/403 Ã¢ÂÂ nu ook 400, 404, 422 etc.)
+    (Was alleen 401/403  nu ook 400, 404, 422 etc.)
 
     Geeft (success, response_data) terug.
     """
@@ -800,19 +800,19 @@ def _bitvavo_request(
             err_code = data.get("errorCode", resp.status_code)
             err_msg  = data.get("error", str(data))
             log(
-                f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo {method} {path} Ã¢ÂÂ {err_code}: {err_msg} "
+                f" Bitvavo {method} {path}  {err_code}: {err_msg} "
                 f"(poging {attempt}/{retries})"
             )
 
             # v3.0: geen retry op ALLE 4xx client errors
             if 400 <= resp.status_code < 500:
-                log(f"  Client error {resp.status_code} Ã¢ÂÂ geen retry")
+                log(f"  Client error {resp.status_code}  geen retry")
                 return False, f"Client error {resp.status_code}: {err_msg}"
 
         except requests.exceptions.Timeout:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo timeout poging {attempt}/{retries}")
+            log(f" Bitvavo timeout poging {attempt}/{retries}")
         except Exception as e:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo request fout poging {attempt}/{retries}: {e}")
+            log(f" Bitvavo request fout poging {attempt}/{retries}: {e}")
 
         if attempt < retries:
             wait = 2 ** attempt
@@ -836,7 +836,7 @@ def get_price_binance(symbol_usdt: str) -> Optional[float]:
         if resp.ok:
             return safe_float(resp.json().get("price"))
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Binance prijs fout ({symbol_usdt}): {e}")
+        log(f" Binance prijs fout ({symbol_usdt}): {e}")
     return None
 
 
@@ -851,7 +851,7 @@ def get_price_bitvavo(market: str) -> Optional[float]:
         if resp.ok:
             return safe_float(resp.json().get("price"))
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Bitvavo prijs fout ({market}): {e}")
+        log(f" Bitvavo prijs fout ({market}): {e}")
     return None
 
 
@@ -881,8 +881,8 @@ def get_eur_balance() -> float:
 
 
 # ============================================================
-# LIVE STATE Ã¢ÂÂ file helpers
-# v3.0: isinstance(s, dict) check Ã¢ÂÂ corrupt JSON auto-reset
+# LIVE STATE  file helpers
+# v3.0: isinstance(s, dict) check  corrupt JSON auto-reset
 # ============================================================
 def load_state() -> Dict[str, Any]:
     """
@@ -895,12 +895,12 @@ def load_state() -> Dict[str, Any]:
     try:
         with open(LIVE_STATE_PATH, "r", encoding="utf-8") as f:
             s = json.load(f)
-        # v3.0: isinstance check Ã¢ÂÂ was ontbreekt in v2.0
+        # v3.0: isinstance check  was ontbreekt in v2.0
         if not isinstance(s, dict):
-            log(f"Ã¢ÂÂ Ã¯Â¸Â live_state.json corrupt (type={type(s).__name__}) Ã¢ÂÂ reset")
+            log(f" live_state.json corrupt (type={type(s).__name__})  reset")
             s = {}
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â live_state.json laad fout: {e} Ã¢ÂÂ reset")
+        log(f" live_state.json laad fout: {e}  reset")
         s = {}
     s.setdefault("positions", {})
     s.setdefault("open_trades", [])
@@ -917,7 +917,7 @@ def save_state(state: Dict[str, Any]) -> None:
 
 
 # ============================================================
-# SHADOW STATE Ã¢ÂÂ v3.0 nieuw
+# SHADOW STATE  v3.0 nieuw
 # Shadow trades lopen parallel aan live trades voor ai_coach vergelijking.
 # ============================================================
 def load_shadow_state() -> Dict[str, Any]:
@@ -929,10 +929,10 @@ def load_shadow_state() -> Dict[str, Any]:
         with open(SHADOW_STATE_PATH, "r", encoding="utf-8") as f:
             s = json.load(f)
         if not isinstance(s, dict):
-            log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_trades.json corrupt Ã¢ÂÂ reset")
+            log(f" shadow_trades.json corrupt  reset")
             s = {}
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_trades.json laad fout: {e} Ã¢ÂÂ reset")
+        log(f" shadow_trades.json laad fout: {e}  reset")
         s = {}
     s.setdefault("positions", {})
     s.setdefault("closed", [])
@@ -956,7 +956,7 @@ def shadow_buy(
     meta:       Optional[Dict] = None,
 ) -> None:
     """
-    Logt een shadow trade parallel aan elke live BUY Ã¢ÂÂ v3.0 nieuw.
+    Logt een shadow trade parallel aan elke live BUY  v3.0 nieuw.
 
     Doel: ai_coach vergelijkt shadow vs live resultaten om
     edge decay te detecteren (als shadow veel beter is dan live,
@@ -985,9 +985,9 @@ def shadow_buy(
             "partial_sold_40": False,
         }
         save_shadow_state(state)
-        log(f"Ã°ÂÂÂ¤ Shadow BUY gelogd: {symbol} @ {entry:.6f}")
+        log(f" Shadow BUY gelogd: {symbol} @ {entry:.6f}")
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_buy fout ({symbol}): {e}")
+        log(f" shadow_buy fout ({symbol}): {e}")
 
 
 def shadow_sell(
@@ -996,7 +996,7 @@ def shadow_sell(
     fraction:   float = 1.0,
 ) -> None:
     """
-    Sluit een shadow trade Ã¢ÂÂ aangeroepen vanuit sell().
+    Sluit een shadow trade  aangeroepen vanuit sell().
     Archiveert resultaat voor ai_coach edge decay analyse.
     """
     try:
@@ -1034,13 +1034,13 @@ def shadow_sell(
             state["positions"][symbol]["amount_eur"] *= (1 - fraction)
 
         save_shadow_state(state)
-        log(f"Ã°ÂÂÂ¤ Shadow SELL: {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f}")
+        log(f" Shadow SELL: {symbol} {outcome} {pnl_eur:.4f}")
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_sell fout ({symbol}): {e}")
+        log(f" shadow_sell fout ({symbol}): {e}")
 
 
 # ============================================================
-# ACCOUNT SNAPSHOT Ã¢ÂÂ v3.0 nieuw
+# ACCOUNT SNAPSHOT  v3.0 nieuw
 # ============================================================
 def get_account_snapshot() -> Dict[str, Any]:
     """
@@ -1050,7 +1050,7 @@ def get_account_snapshot() -> Dict[str, Any]:
     """
     ok, data = _bitvavo_request("GET", "/balance")
     if not ok:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Account snapshot mislukt: {data}")
+        log(f" Account snapshot mislukt: {data}")
         return {}
 
     snapshot: Dict[str, Any] = {
@@ -1078,16 +1078,16 @@ def get_account_snapshot() -> Dict[str, Any]:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(snapshot, f, indent=2)
         os.replace(tmp, SNAPSHOT_PATH)
-        log(f"Ã¢ÂÂ Account snapshot: {len(snapshot['balances'])} coins, "
+        log(f" Account snapshot: {len(snapshot['balances'])} coins, "
             f"EUR={snapshot['eur_available']:.2f}")
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Snapshot opslaan fout: {e}")
+        log(f" Snapshot opslaan fout: {e}")
 
     return snapshot
 
 
 # ============================================================
-# COIN STATS Ã¢ÂÂ v3.0 nieuw
+# COIN STATS  v3.0 nieuw
 # ============================================================
 def get_coin_stats(conn, symbol: str) -> Dict[str, Any]:
     """
@@ -1141,7 +1141,7 @@ def get_coin_stats(conn, symbol: str) -> Dict[str, Any]:
                     "total_pnl":     round(total_pnl, 4),
                 }
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â get_coin_stats fout ({symbol}): {e}")
+        log(f" get_coin_stats fout ({symbol}): {e}")
 
     return {
         "n": 0, "wins": 0, "win_rate": 0.5,
@@ -1152,7 +1152,7 @@ def get_coin_stats(conn, symbol: str) -> Dict[str, Any]:
 
 
 # ============================================================
-# KELLY CRITERION Ã¢ÂÂ v3.0 nieuw
+# KELLY CRITERION  v3.0 nieuw
 # ============================================================
 def bereken_positiegrootte_kelly(
     conn,
@@ -1160,7 +1160,7 @@ def bereken_positiegrootte_kelly(
     base_eur: float = MAX_PER_TRADE_EUR,
 ) -> float:
     """
-    Berekent optimale positiegrootte via Half Kelly Criterion Ã¢ÂÂ v3.0 nieuw.
+    Berekent optimale positiegrootte via Half Kelly Criterion  v3.0 nieuw.
 
     Kelly formule: f* = (b*p - q) / b
       b = gem. win / gem. loss (reward/risk ratio)
@@ -1171,7 +1171,7 @@ def bereken_positiegrootte_kelly(
 
     Constraints:
       - Minimaal 10 trades aan data nodig
-      - Resultaat: min Ã¢ÂÂ¬0.50, max Ã¢ÂÂ¬5.00
+      - Resultaat: min 0.50, max 5.00
       - Multiplier: clamped op [0.10, 2.00] van base_eur
 
     Als onvoldoende data: geeft base_eur terug (conservatief).
@@ -1181,7 +1181,7 @@ def bereken_positiegrootte_kelly(
         n     = stats.get("n", 0)
 
         if n < 10:
-            log(f"Kelly {symbol}: onvoldoende data (n={n} < 10) Ã¢ÂÂ Ã¢ÂÂ¬{base_eur:.2f}")
+            log(f"Kelly {symbol}: onvoldoende data (n={n} < 10)  {base_eur:.2f}")
             return base_eur
 
         win_rate   = stats.get("win_rate", 0.5)
@@ -1205,17 +1205,17 @@ def bereken_positiegrootte_kelly(
         log(
             f"Kelly {symbol}: n={n} wr={win_rate:.0%} "
             f"b={b:.2f} f*={kelly:.2f} half={half_kelly:.2f} "
-            f"Ã¢ÂÂ Ã¢ÂÂ¬{result:.2f}"
+            f" {result:.2f}"
         )
         return result
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Kelly fout ({symbol}): {e}")
+        log(f" Kelly fout ({symbol}): {e}")
         return base_eur
 
 
 # ============================================================
-# ATR STOP VALIDATIE Ã¢ÂÂ v3.0 nieuw
+# ATR STOP VALIDATIE  v3.0 nieuw
 # ============================================================
 def validate_atr_stop(
     symbol: str,
@@ -1224,7 +1224,7 @@ def validate_atr_stop(
     atr:    Optional[float] = None,
 ) -> float:
     """
-    Valideert en corrigeert ATR-based stop loss Ã¢ÂÂ v3.0 nieuw.
+    Valideert en corrigeert ATR-based stop loss  v3.0 nieuw.
 
     Regels:
     - Stop mag NOOIT boven entry liggen
@@ -1239,7 +1239,7 @@ def validate_atr_stop(
     # Stop boven of gelijk aan entry = altijd fout
     if stop >= entry:
         corrected = entry * 0.98
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Stop boven entry voor {symbol}: {stop:.6f} Ã¢ÂÂ {corrected:.6f}")
+        log(f" Stop boven entry voor {symbol}: {stop:.6f}  {corrected:.6f}")
         return corrected
 
     if atr and atr > 0:
@@ -1247,11 +1247,11 @@ def validate_atr_stop(
         max_stop = entry - (0.5 * atr)              # min afstand (0.5x ATR)
 
         if stop > max_stop:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Stop te krap voor {symbol}: {stop:.6f} Ã¢ÂÂ {max_stop:.6f} (0.5x ATR)")
+            log(f" Stop te krap voor {symbol}: {stop:.6f}  {max_stop:.6f} (0.5x ATR)")
             return max_stop
 
         if stop < min_stop:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Stop te wijd voor {symbol}: {stop:.6f} Ã¢ÂÂ {min_stop:.6f} ({ATR_MULTIPLIER}x ATR)")
+            log(f" Stop te wijd voor {symbol}: {stop:.6f}  {min_stop:.6f} ({ATR_MULTIPLIER}x ATR)")
             return min_stop
 
         return stop  # stop is OK
@@ -1259,30 +1259,30 @@ def validate_atr_stop(
     # Geen ATR: minimaal 2% onder entry
     min_stop_pct = entry * 0.98
     if stop > min_stop_pct:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â Stop te krap (geen ATR) voor {symbol}: {stop:.6f} Ã¢ÂÂ {min_stop_pct:.6f}")
+        log(f" Stop te krap (geen ATR) voor {symbol}: {stop:.6f}  {min_stop_pct:.6f}")
         return min_stop_pct
 
     return stop
 
 
 # ============================================================
-# MIN ORDER SIZE CHECK Ã¢ÂÂ v3.0 nieuw
+# MIN ORDER SIZE CHECK  v3.0 nieuw
 # ============================================================
 def check_min_order_size(amount_eur: float) -> Tuple[bool, str]:
     """
-    Controleert of order boven Bitvavo minimum zit Ã¢ÂÂ v3.0 nieuw.
+    Controleert of order boven Bitvavo minimum zit  v3.0 nieuw.
 
-    Bitvavo minimum is Ã¢ÂÂ¬5.00. Fase 1 limit is Ã¢ÂÂ¬0.50.
-    Dit is een WAARSCHUWING, geen blokkade Ã¢ÂÂ
+    Bitvavo minimum is 5.00. Fase 1 limit is 0.50.
+    Dit is een WAARSCHUWING, geen blokkade 
     Bitvavo kan kleine orders accepteren of afwijzen afhankelijk van market.
 
     Als order wordt afgewezen krijg je een client error 400 terug
-    van _bitvavo_request() Ã¢ÂÂ die wordt correct afgehandeld.
+    van _bitvavo_request()  die wordt correct afgehandeld.
     """
     if amount_eur < BITVAVO_MIN_ORDER_EUR:
         msg = (
-            f"Ã¢ÂÂ Ã¯Â¸Â Order Ã¢ÂÂ¬{amount_eur:.2f} < Bitvavo minimum "
-            f"Ã¢ÂÂ¬{BITVAVO_MIN_ORDER_EUR:.2f} Ã¢ÂÂ kan worden afgewezen"
+            f" Order {amount_eur:.2f} < Bitvavo minimum "
+            f"{BITVAVO_MIN_ORDER_EUR:.2f}  kan worden afgewezen"
         )
         log(msg)
         return False, msg
@@ -1290,7 +1290,7 @@ def check_min_order_size(amount_eur: float) -> Tuple[bool, str]:
 
 
 # ============================================================
-# PNL BEREKENING Ã¢ÂÂ v3.0 nieuw
+# PNL BEREKENING  v3.0 nieuw
 # ============================================================
 def bereken_pnl_nauwkeurig(
     entry:      float,
@@ -1300,9 +1300,9 @@ def bereken_pnl_nauwkeurig(
     fraction:   float = 1.0,
 ) -> Dict[str, float]:
     """
-    Berekent PnL nauwkeurig inclusief alle kosten Ã¢ÂÂ v3.0 nieuw.
+    Berekent PnL nauwkeurig inclusief alle kosten  v3.0 nieuw.
 
-    v2.0 had alleen fee_buy meegeteld Ã¢ÂÂ fee_sell ontbrak.
+    v2.0 had alleen fee_buy meegeteld  fee_sell ontbrak.
     v3.0 telt beide mee voor nauwkeurig netto PnL.
 
     Kosten:
@@ -1336,7 +1336,7 @@ def bereken_pnl_nauwkeurig(
 
 
 # ============================================================
-# DB LOGGING Ã¢ÂÂ experience_trades + coach_events
+# DB LOGGING  experience_trades + coach_events
 # ============================================================
 def log_trade_event(
     conn,
@@ -1345,7 +1345,7 @@ def log_trade_event(
     details:    Dict,
 ) -> None:
     """
-    Logt een trade event naar coach_events voor ai_coach Ã¢ÂÂ v3.0 nieuw.
+    Logt een trade event naar coach_events voor ai_coach  v3.0 nieuw.
 
     event_type: "BUY", "SELL", "PARTIAL_SELL", "STOP_HIT",
                 "TARGET_HIT", "SHADOW_BUY", "ERROR"
@@ -1363,8 +1363,8 @@ def log_trade_event(
             """, (symbol, event_type, json.dumps(details)))
         conn.commit()
     except Exception as e:
-        # coach_events tabel bestaat mogelijk nog niet Ã¢ÂÂ geen crash
-        log(f"Ã¢ÂÂ Ã¯Â¸Â log_trade_event fout ({symbol}/{event_type}): {e}")
+        # coach_events tabel bestaat mogelijk nog niet  geen crash
+        log(f" log_trade_event fout ({symbol}/{event_type}): {e}")
         safe_rollback(conn)
 
 
@@ -1422,7 +1422,7 @@ def log_trade_open_to_db(
                 market,
             ))
         conn.commit()
-        log(f"Ã¢ÂÂ DB gelogd (OPEN): {symbol} entry={entry:.6f}")
+        log(f" DB gelogd (OPEN): {symbol} entry={entry:.6f}")
 
         # Coach event voor ai_coach
         log_trade_event(conn, symbol, "BUY", {
@@ -1437,7 +1437,7 @@ def log_trade_open_to_db(
         })
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â log_trade_open_to_db fout ({symbol}): {e}")
+        log(f" log_trade_open_to_db fout ({symbol}): {e}")
         safe_rollback(conn)
 
 
@@ -1479,7 +1479,7 @@ def log_trade_close_to_db(
                 """, (trade_key, symbol, outcome, pnl_eur))
 
         conn.commit()
-        log(f"Ã¢ÂÂ DB gelogd ({outcome}): {symbol} pnl=Ã¢ÂÂ¬{pnl_eur:.4f}")
+        log(f" DB gelogd ({outcome}): {symbol} pnl={pnl_eur:.4f}")
 
         # Coach event voor ai_coach
         log_trade_event(conn, symbol, "SELL", {
@@ -1491,12 +1491,12 @@ def log_trade_close_to_db(
         })
 
     except Exception as e:
-        log(f"Ã¢ÂÂ Ã¯Â¸Â log_trade_close_to_db fout ({symbol}): {e}")
+        log(f" log_trade_close_to_db fout ({symbol}): {e}")
         safe_rollback(conn)
 
 
 # ============================================================
-# COIN FILTERS Ã¢ÂÂ identiek aan multi_coin_score en trade_monitor
+# COIN FILTERS  identiek aan multi_coin_score en trade_monitor
 # ============================================================
 def is_coin_on_cooldown(conn, symbol: str) -> bool:
     """24u cooldown na verlies op die coin."""
@@ -1548,7 +1548,7 @@ def is_coin_blacklisted(conn, symbol: str) -> bool:
 
 
 # ============================================================
-# BUY ORDER Ã¢ÂÂ Bitvavo market BUY helpers
+# BUY ORDER  Bitvavo market BUY helpers
 # ============================================================
 def place_market_buy_eur(
     market:     str,
@@ -1566,20 +1566,20 @@ def place_market_buy_eur(
         "operatorId":  BITVAVO_OPERATOR_ID,
     }
 
-    log(f"Ã°ÂÂÂ¤ Bitvavo BUY: {market} Ã¢ÂÂ¬{amount_eur:.2f}")
+    log(f" Bitvavo BUY: {market} {amount_eur:.2f}")
 
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
         data = sdk.placeOrder(market, "buy", "market", {"amountQuote": f"{amount_eur:.2f}", "operatorId": BITVAVO_OPERATOR_ID})
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
-        log(f"Ã¢ÂÂ BUY exception ({market}): {e}")
+        log(f" BUY exception ({market}): {e}")
         return False, {"error": str(e)}
     if not ok:
-        log(f"Ã¢ÂÂ BUY mislukt ({market}): {data}")
+        log(f" BUY mislukt ({market}): {data}")
         return False, {"error": str(data)}
     if isinstance(data, dict) and "error" in data:
-        log(f"Ã¢ÂÂ BUY error ({market}): {data}")
+        log(f" BUY error ({market}): {data}")
         return False, data
 
     # Prijs en qty bepalen uit fills (meest nauwkeurig)
@@ -1605,7 +1605,7 @@ def place_market_buy_eur(
     data["_parsed_price"] = price
     data["_parsed_qty"]   = qty
 
-    log(f"Ã¢ÂÂ BUY uitgevoerd: {market} qty={qty:.6f} @ Ã¢ÂÂ¬{price:.6f}")
+    log(f" BUY uitgevoerd: {market} qty={qty:.6f} @ {price:.6f}")
     return True, data
 
 
@@ -1616,7 +1616,7 @@ def place_market_sell(
 ) -> Tuple[bool, Dict]:
     """
     Plaatst een market SELL order op Bitvavo.
-    fraction=1.0 Ã¢ÂÂ alles, fraction=0.40 Ã¢ÂÂ 40%
+    fraction=1.0  alles, fraction=0.40  40%
     """
     sell_qty = round(qty * fraction, 8)
 
@@ -1631,7 +1631,7 @@ def place_market_sell(
         "operatorId": BITVAVO_OPERATOR_ID,
     }
 
-    log(f"Ã°ÂÂÂ¤ Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
+    log(f" Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
 
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
@@ -1642,10 +1642,10 @@ def place_market_sell(
             return {"ok": False, "ghost": True, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
-        log(f"Ã¢ÂÂ SELL exception ({market}): {e}")
+        log(f" SELL exception ({market}): {e}")
         return False, {"error": str(e)}
     if not ok:
-        log(f"Ã¢ÂÂ SELL mislukt ({market}): {data}")
+        log(f" SELL mislukt ({market}): {data}")
         return False, {"error": str(data)}
 
     # Prijs bepalen uit fills
@@ -1671,12 +1671,12 @@ def place_market_sell(
     data["_parsed_sold_qty"] = sold_qty
     data["_parsed_fraction"] = fraction
 
-    log(f"Ã¢ÂÂ SELL uitgevoerd: {market} qty={sold_qty:.6f} @ Ã¢ÂÂ¬{price:.6f}")
+    log(f" SELL uitgevoerd: {market} qty={sold_qty:.6f} @ {price:.6f}")
     return True, data
 
 
 # ============================================================
-# HOOFD BUY FUNCTIE Ã¢ÂÂ v3.0
+# HOOFD BUY FUNCTIE  v3.0
 # conn=None + finally + shadow_buy + Kelly + ATR stop validatie
 # ============================================================
 def buy_eur(
@@ -1685,10 +1685,10 @@ def buy_eur(
     meta:       Optional[Dict] = None,
 ) -> Tuple[bool, str]:
     """
-    Voert een live BUY uit op Bitvavo Ã¢ÂÂ v3.0.
+    Voert een live BUY uit op Bitvavo  v3.0.
 
     Stappen:
-    1.  Market ophalen (USDTÃ¢ÂÂEUR)
+    1.  Market ophalen (USDTEUR)
     2.  Min order size check (waarschuwing)
     3.  DB limieten controleren
     4.  Coin filters (cooldown, blacklist)
@@ -1749,20 +1749,20 @@ def buy_eur(
         # 4. Coin filters
         if is_coin_blacklisted(conn, symbol):
             msg = f"{symbol} op blacklist (win rate te laag)"
-            log(f"Ã¢ÂÂ« {msg}")
+            log(f" {msg}")
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
         if is_coin_on_cooldown(conn, symbol):
             msg = f"{symbol} in cooldown (24u na verlies)"
-            log(f"Ã¢ÂÂ³ {msg}")
+            log(f" {msg}")
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
         # 5. EUR balance check
         eur_balance = get_eur_balance()
         if eur_balance < amount_eur:
-            msg = f"Onvoldoende EUR: Ã¢ÂÂ¬{eur_balance:.2f} < Ã¢ÂÂ¬{amount_eur:.2f}"
+            msg = f"Onvoldoende EUR: {eur_balance:.2f} < {amount_eur:.2f}"
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
@@ -1811,7 +1811,7 @@ def buy_eur(
         fee_eur = round(amount_eur * BITVAVO_FEE_PCT, 6)
 
         if entry <= 0 or qty <= 0:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â Prijs/qty ongeldig na BUY Ã¢ÂÂ fallback ticker")
+            log(f" Prijs/qty ongeldig na BUY  fallback ticker")
             entry = get_price_bitvavo(market) or get_price_binance(symbol) or 0.0
             qty   = amount_eur / entry if entry > 0 else 0.0
 
@@ -1869,12 +1869,12 @@ def buy_eur(
 
         # 11. bot_state updaten voor dashboard
         log_naar_bot_state(
-            f"BUY {symbol} @ Ã¢ÂÂ¬{entry:.6f}",
+            f"BUY {symbol} @ {entry:.6f}",
             busy=False,
         )
 
-        log(f"Ã¢ÂÂ Live BUY: {symbol} @ Ã¢ÂÂ¬{entry:.6f} qty={qty:.6f} stop={stop:.6f}")
-        return True, f"BUY {symbol} @ Ã¢ÂÂ¬{entry:.6f}"
+        log(f" Live BUY: {symbol} @ {entry:.6f} qty={qty:.6f} stop={stop:.6f}")
+        return True, f"BUY {symbol} @ {entry:.6f}"
 
     except Exception as e:
         safe_rollback(conn)
@@ -1891,7 +1891,7 @@ def buy_eur(
 
 
 # ============================================================
-# HOOFD SELL FUNCTIE Ã¢ÂÂ v3.0
+# HOOFD SELL FUNCTIE  v3.0
 # conn=None + finally + shadow_sell + bereken_pnl_nauwkeurig
 # ============================================================
 def sell(
@@ -1900,15 +1900,15 @@ def sell(
     meta:     Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
-    Voert een live SELL uit op Bitvavo Ã¢ÂÂ v3.0.
+    Voert een live SELL uit op Bitvavo  v3.0.
 
-    fraction=1.0  Ã¢ÂÂ verkoop alles (stop loss, structuur break, max hold)
-    fraction=0.40 Ã¢ÂÂ partial sell (40% na eerste keer >1R)
+    fraction=1.0   verkoop alles (stop loss, structuur break, max hold)
+    fraction=0.40  partial sell (40% na eerste keer >1R)
 
     Wordt aangeroepen door trade_monitor.py via _execute_sell().
 
     v3.0 verbeteringen:
-    - bereken_pnl_nauwkeurig() Ã¢ÂÂ fee_sell was ontbreekt in v2.0
+    - bereken_pnl_nauwkeurig()  fee_sell was ontbreekt in v2.0
     - shadow_sell() parallel
     - conn=None + finally conn.close()
     - log_naar_bot_state() voor dashboard
@@ -1986,7 +1986,7 @@ def sell(
                 if t.get("symbol") != symbol
             ]
         else:
-            # Partial sell Ã¢ÂÂ update resterende positie
+            # Partial sell  update resterende positie
             remaining_qty = qty - sold_qty
             remaining_eur = amount_eur * (1 - fraction)
             remaining_fee = safe_float(pos.get("fee_eur")) * (1 - fraction)
@@ -2001,7 +2001,7 @@ def sell(
         # Shadow sell parallel (geen blokkade bij fout)
         shadow_sell(symbol, exit_price, fraction)
 
-        # Claude trade analyse Ã¢ÂÂ alleen bij WIN of forse verlies
+        # Claude trade analyse  alleen bij WIN of forse verlies
         claude_txt = ""
         hold_min   = 0.0
         try:
@@ -2035,19 +2035,19 @@ def sell(
             conn.close()
             conn = None
         except Exception as e:
-            log(f"Ã¢ÂÂ Ã¯Â¸Â DB log fout bij SELL ({symbol}): {e}")
+            log(f" DB log fout bij SELL ({symbol}): {e}")
 
         # bot_state updaten voor dashboard
         log_naar_bot_state(
-            f"SELL {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f}",
+            f"SELL {symbol} {outcome} {pnl_eur:.4f}",
             busy=False,
             pnl_eur=pnl_eur,
         )
 
-        icon = "Ã¢ÂÂ" if outcome == "WIN" else "Ã¢ÂÂ"
+        icon = "" if outcome == "WIN" else ""
         log(
             f"{icon} SELL {symbol}: {outcome} "
-            f"Ã¢ÂÂ¬{pnl_eur:.4f} | "
+            f"{pnl_eur:.4f} | "
             f"exit={exit_price:.6f} | "
             f"{exit_reden} | "
             f"fractie={fraction*100:.0f}%"
@@ -2079,19 +2079,19 @@ def sell(
 
 
 # ============================================================
-# MAIN Ã¢ÂÂ configuratie check + Bitvavo test
+# MAIN  configuratie check + Bitvavo test
 # ============================================================
 if __name__ == "__main__":
     log("=" * 60)
-    log("Live Trader v3.0 Ã¢ÂÂ configuratie check")
+    log("Live Trader v3.0  configuratie check")
     log("=" * 60)
-    log(f"Database:        {'Ã¢ÂÂ' if DATABASE_URL       else 'Ã¢ÂÂ ONTBREEKT'}")
-    log(f"Bitvavo Key:     {'Ã¢ÂÂ' if BITVAVO_API_KEY    else 'Ã¢ÂÂ ONTBREEKT'}")
-    log(f"Bitvavo Secret:  {'Ã¢ÂÂ' if BITVAVO_API_SECRET else 'Ã¢ÂÂ ONTBREEKT'}")
-    log(f"Twilio:          {'Ã¢ÂÂ' if TWILIO_ACCOUNT_SID else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
-    log(f"Claude API:      {'Ã¢ÂÂ' if ANTHROPIC_API_KEY  else 'Ã¢ÂÂ Ã¯Â¸Â niet ingesteld'}")
-    log(f"Max trade:       Ã¢ÂÂ¬{MAX_PER_TRADE_EUR:.2f}")
-    log(f"Daily stop:      Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}")
+    log(f"Database:        {'' if DATABASE_URL       else ' ONTBREEKT'}")
+    log(f"Bitvavo Key:     {'' if BITVAVO_API_KEY    else ' ONTBREEKT'}")
+    log(f"Bitvavo Secret:  {'' if BITVAVO_API_SECRET else ' ONTBREEKT'}")
+    log(f"Twilio:          {'' if TWILIO_ACCOUNT_SID else ' niet ingesteld'}")
+    log(f"Claude API:      {'' if ANTHROPIC_API_KEY  else ' niet ingesteld'}")
+    log(f"Max trade:       {MAX_PER_TRADE_EUR:.2f}")
+    log(f"Daily stop:      {DAILY_STOP_LOSS_EUR:.2f}")
     log(f"Max trades/dag:  {MAX_REAL_TRADES_PER_DAY}")
     log(f"Max open:        {MAX_OPEN_REAL_TRADES}")
     log(f"Trading hours:   {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
@@ -2104,7 +2104,7 @@ if __name__ == "__main__":
     if BITVAVO_API_KEY and BITVAVO_API_SECRET:
         log("Test Bitvavo balance...")
         eur = get_eur_balance()
-        log(f"EUR balance: Ã¢ÂÂ¬{eur:.2f}")
+        log(f"EUR balance: {eur:.2f}")
 
         log("Test account snapshot...")
         snap = get_account_snapshot()
@@ -2129,17 +2129,17 @@ if __name__ == "__main__":
         if health:
             log(f"Claude: {health}")
 
-    log("Ã¢ÂÂ Live Trader v3.0 configuratie check klaar")
+    log(" Live Trader v3.0 configuratie check klaar")
 
 
 def main_loop():
-    """Hoofd trading loop Ã¢ÂÂ draait continu."""
-    log("Ã°ÂÂÂ Live Trader main loop gestart")
+    """Hoofd trading loop  draait continu."""
+    log(" Live Trader main loop gestart")
     conn = None
     try:
         conn = db_connect()
     except Exception as e:
-        log(f"Ã¢ÂÂ DB verbinding mislukt: {e}")
+        log(f" DB verbinding mislukt: {e}")
         return
 
     while True:
@@ -2160,7 +2160,7 @@ def main_loop():
 
             for row in rows:
                 pid, symbol, market, score, entry, stop, target, kelly, live_ok = row
-                log(f"Ã°ÂÂÂ Pending: {symbol} score={score}")
+                log(f" Pending: {symbol} score={score}")
                 ok, result = buy_eur(
                     symbol=symbol,
                     amount_eur=min(kelly or MAX_PER_TRADE_EUR, MAX_PER_TRADE_EUR),
@@ -2179,9 +2179,9 @@ def main_loop():
                                    {"score": score, "stop": stop, "target": target, "prebuy_id": pid, "source_trigger": "EXECUTED"})
                     except Exception as _se:
                         log(f"Shadow fout: {_se}")
-                    log(f"Ã¢ÂÂ BUY uitgevoerd: {symbol}")
+                    log(f" BUY uitgevoerd: {symbol}")
                 else:
-                    log(f"Ã¢ÂÂ BUY mislukt: {symbol}: {result}")
+                    log(f" BUY mislukt: {symbol}: {result}")
                     with conn.cursor() as cur:
                         cur.execute(
                             "UPDATE pending_approvals SET status='FAILED' WHERE id=%s",
@@ -2205,7 +2205,7 @@ def main_loop():
                     log("DB reconnect OK")
                 except Exception as _re:
                     log("DB reconnect mislukt: " + str(_re))
-            log(f"Ã¢ÂÂ Loop fout: {e}")
+            log(f" Loop fout: {e}")
             try:
                 conn.rollback()
             except Exception:
