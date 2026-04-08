@@ -1663,7 +1663,7 @@ def place_market_sell(
         _err_code = data.get("errorCode", 0) if isinstance(data, dict) else 0
         if _err_code in (212, 216):
             log("Ghost close error " + str(_err_code) + " (" + market + "): sell gefaald")
-            return {"ok": False, "ghost": True, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
+            return False, {"ghost": True, "ok": False, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
         log(f"Ã¢ÂÂ SELL exception ({market}): {e}")
