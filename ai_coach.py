@@ -23,6 +23,20 @@ import anthropic
 import psycopg2
 from db import db_connect
 
+def _schrijf_heartbeat(status='OK', details=''):
+    try:
+        import psycopg2, os as _os2
+        _db2 = psycopg2.connect(_os2.environ['DATABASE_URL'])
+        _c2  = _db2.cursor()
+        _c2.execute("UPDATE bot_health SET status=%s, laatste_run=NOW(), details=%s WHERE service=%s",
+            (status, str(details)[:200], 'ai_coach'))
+        if _c2.rowcount == 0:
+            _c2.execute("INSERT INTO bot_health (service,status,laatste_run,details) VALUES (%s,%s,NOW(),%s)",
+                ('ai_coach', status, str(details)[:200]))
+        _db2.commit(); _db2.close()
+    except Exception as _e2: print(f'[HEALTH] ai_coach: {_e2}')
+
+
 CLAUDE_MODEL   = "claude-sonnet-4-6"
 MAX_TOKENS     = 1200
 WHATSAPP_URL   = os.getenv("WEBHOOK_BASE_URL", "")
@@ -426,6 +440,8 @@ def main():
     finally:
         conn.close()
     log("AI Coach klaar.")
+
+_schrijf_heartbeat('OK', 'ai_coach klaar')
 
 if __name__ == "__main__":
     main()
