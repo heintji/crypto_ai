@@ -139,7 +139,7 @@ FORCE_TEST_EXIT = os.getenv("FORCE_TEST_EXIT", "").strip().upper()
 # WhatsApp rate limiting Ã¢ÂÂ max 1x per uur per fouttype
 # FIX: voorkomt 429 Twilio spam bij herhaalde crashes
 _WHATSAPP_SENT: Dict[str, float] = {}
-_WHATSAPP_COOLDOWN_SEC = 14400  # 4 uur — minder spam bij fouten
+_WHATSAPP_COOLDOWN_SEC = 3600   # 1 uur
 
 # Run statistieken (in-memory, reset per run)
 _RUN_STATS: Dict[str, Any] = {
@@ -1347,12 +1347,12 @@ def _finalize_trade(
     except Exception:
         pass
 
-    # Edge decay check elke 20 trades (geen WhatsApp — alleen log)
+    # Edge decay check elke 20 trades
     try:
         if trade_count_30d > 0 and trade_count_30d % 20 == 0:
             decay_msg = check_edge_decay(conn)
             if decay_msg:
-                log(f"[EDGE_DECAY] {decay_msg[:200]}")
+                send_whatsapp(rate_key="edge_decay", message=decay_msg)
     except Exception:
         pass
 
@@ -1512,6 +1512,71 @@ def _log_shadow_outcome(
 # ============================================================
 # HOOFD MONITOR RUN
 # ============================================================
+
+def stuur_dagrapport(conn) -> None:
+    """Stuurt 1x per dag om 20:00 UTC een WhatsApp dagrapport."""
+    try:
+        now = now_utc()
+        if not (now.hour == 20 and now.minute < 5):
+            return
+        from datetime import date as _date
+        dag_key = f"dagrapport_{_date.today()}"
+        if _WHATSAPP_SENT.get(dag_key, 0) > 0:
+            return
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    COUNT(*) as totaal,
+                    COUNT(*) FILTER (WHERE status='OPEN') as open_n,
+                    COUNT(*) FILTER (WHERE status='CLOSED' AND UPPER(outcome)='WIN') as wins,
+                    COUNT(*) FILTER (WHERE status='CLOSED' AND UPPER(outcome)='LOSS') as losses,
+                    COUNT(*) FILTER (WHERE status='CLOSED' AND UPPER(outcome)='GHOST') as ghosts,
+                    COALESCE(SUM(CASE WHEN UPPER(outcome)='WIN' THEN ABS(pnl_eur)
+                                     WHEN UPPER(outcome)='LOSS' THEN -ABS(pnl_eur)
+                                     ELSE 0 END), 0) as pnl_gesloten
+                FROM public.experience_trades
+                WHERE trade_key LIKE 'LIVE|%%'
+                  AND entry_time >= CURRENT_DATE
+            """)
+            r = cur.fetchone()
+            totaal, open_n, wins, losses, ghosts, pnl = r
+            cur.execute("""
+                SELECT symbol, entry FROM public.experience_trades
+                WHERE trade_key LIKE 'LIVE|%%' AND status='OPEN'
+                ORDER BY entry_time
+            """)
+            open_rows = cur.fetchall()
+        health = voer_health_check_uit(conn)
+        score = health.get("score", 100)
+        datum = now.strftime("%d %b %Y")
+        pnl_str = f"+EUR{pnl:.2f}" if pnl >= 0 else f"EUR{pnl:.2f}"
+        wr = round(wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+        bericht  = f"\U0001f4ca DAGRAPPORT {datum}\n"
+        bericht += f"{'='*30}\n"
+        bericht += f"Trades vandaag: {totaal}\n"
+        bericht += f"  Wins:   {wins}\n"
+        bericht += f"  Losses: {losses}\n"
+        bericht += f"  Ghost:  {ghosts}\n"
+        bericht += f"  Open:   {open_n}\n"
+        bericht += f"  PnL:    {pnl_str}\n"
+        bericht += f"  WR:     {wr}%\n"
+        if open_rows:
+            bericht += "\nOpen posities:\n"
+            for sym, entry in open_rows:
+                bericht += f"  {sym} @ EUR{float(entry):.6f}\n"
+        if ghosts > 0:
+            bericht += f"\nFouten: {ghosts} ghost trade(s)\n"
+        if score < 80:
+            bericht += f"\nHealth: {score}/100 - check logs!\n"
+        else:
+            bericht += f"\nHealth: {score}/100\n"
+        bericht += "Bot loopt door. Slaap lekker!"
+        send_whatsapp(bericht, rate_key=dag_key)
+        log(f"[DAGRAPPORT] Verstuurd: {wins}W {losses}L {open_n} open")
+    except Exception as e:
+        log(f"[DAGRAPPORT] Fout: {e}")
+
+
 def run_monitor_once(target_symbol: Optional[str] = None) -> None:
     """
     ÃÂÃÂ©n run van de monitor.
@@ -1682,7 +1747,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         if _RUN_STATS.get("runs", 0) % 20 == 1:
             health = voer_health_check_uit(conn)
             log_health_check(health)
-            if health["score"] < 50:
+            if health["score"] < 50 and False:  # alleen in dagrapport
                 send_whatsapp(
                     rate_key="health_laag",
                     message=(
@@ -2345,6 +2410,10 @@ def run_monitor_loop() -> None:
     while True:
         try:
             run_monitor_once()
+        try:
+            stuur_dagrapport(conn)
+        except Exception:
+            pass
         except Exception as e:
             log(f"Ã¢ÂÂ Monitor loop fout: {type(e).__name__}: {e}")
         # HEARTBEAT naar bot_state na elke monitor run
