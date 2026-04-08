@@ -38,6 +38,25 @@ import psycopg2
 import psycopg2.extras
 import requests
 
+# ── Bot health heartbeat ──────────────────────────────
+def _schrijf_heartbeat(status='OK', details=''):
+    try:
+        import psycopg2, os as _os
+        _db = psycopg2.connect(_os.environ['DATABASE_URL'])
+        _c  = _db.cursor()
+        _c.execute("""
+            UPDATE bot_health SET status=%s, laatste_run=NOW(), details=%s
+            WHERE service=%s
+        """, (status, details[:200] if details else '', 'history_fetcher'))
+        if _c.rowcount == 0:
+            _c.execute("INSERT INTO bot_health (service, status, laatste_run, details) VALUES (%s,%s,NOW(),%s)",
+                ('history_fetcher', status, details[:200] if details else ''))
+        _db.commit()
+        _db.close()
+    except Exception as _hbe:
+        print(f'[HEALTH] heartbeat fout: {_hbe}')
+
+
 
 # ============================================================
 # ENV
@@ -1193,6 +1212,8 @@ def main() -> None:
             except Exception:
                 pass
 
+
+_schrijf_heartbeat('OK', 'history_fetcher klaar')
 
 if __name__ == "__main__":
     main()
