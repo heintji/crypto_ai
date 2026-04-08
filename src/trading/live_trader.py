@@ -1798,8 +1798,6 @@ def buy_eur(
                 busy=False,
                 error=err_msg,
             )
-            send_whatsapp_rate_limited(f"Ã¢ÂÂ BUY FOUT: {symbol}\nReden: {err_msg[:100]}\nSaldo: Ã¢ÂÂ¬{eur_balance:.2f}", key=f"buy_fout_{symbol}")
-            return False, f"BUY mislukt: {err_msg}"
 
         # 7. Prijs en qty bepalen
         entry   = safe_float(order_data.get("_parsed_price"))
@@ -1870,15 +1868,6 @@ def buy_eur(
         )
 
         log(f"Ã¢ÂÂ Live BUY: {symbol} @ Ã¢ÂÂ¬{entry:.6f} qty={qty:.6f} stop={stop:.6f}")
-        send_whatsapp_rate_limited(
-            f"Ã°ÂÂÂ¢ TRADE GEOPEND: {symbol}\n"
-            f"Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ\n\n"
-            f"Ã°ÂÂÂ° Bedrag:  Ã¢ÂÂ¬{amount_eur:.2f}\n"
-            f"Ã°ÂÂÂ Entry:   Ã¢ÂÂ¬{entry:.6f}\n"
-            f"Ã°ÂÂÂ Stop:    Ã¢ÂÂ¬{stop:.6f}\n"
-            f"Ã°ÂÂÂ¯ Target:  Ã¢ÂÂ¬{target:.6f}\n",
-            key=f"buy_{symbol}"
-        )
         return True, f"BUY {symbol} @ Ã¢ÂÂ¬{entry:.6f}"
 
     except Exception as e:
@@ -1929,8 +1918,6 @@ def sell(
             coin = symbol.replace("USDT","").replace("EUR","")
             bal = get_eur_balance(coin) if coin != "EUR" else get_eur_balance()
             if bal <= 0:
-                send_whatsapp_rate_limited(f"Ã¢ÂÂ Ã¯Â¸Â SELL GEBLOKKEERD: {symbol}\nGeen {coin} op Bitvavo", key=f"sell_check_{symbol}")
-                return {"ok": False, "reason": f"Geen {coin} op Bitvavo"}
         except Exception:
             pass
 
