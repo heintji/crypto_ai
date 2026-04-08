@@ -360,9 +360,9 @@ Analyseer deze gesloten trade in 2 korte zinnen Nederlands.
 
 Coin:      {symbol}
 Setup:     {setup_type} / Regime: {regime}
-Entry:     {entry:.6f}  Exit: {exit_price:.6f}
-PnL:       {pnl_eur:.4f}
-Duur:      {hold_min:.0f} min
+Entry:     {round(entry, 6)}  Exit: {round(exit_price, 6)}
+PnL:       {round(pnl_eur, 4)}
+Duur:      {int(hold_min)} min
 Score:     {score}
 Uitkomst:  {outcome}
 Exitreden: {exit_reden}
@@ -383,11 +383,11 @@ CONFIGURATIE:
 - BITVAVO_API_KEY:    {' aanwezig' if BITVAVO_API_KEY else ' ONTBREEKT'}
 - BITVAVO_API_SECRET: {' aanwezig' if BITVAVO_API_SECRET else ' ONTBREEKT'}
 - DATABASE_URL:       {' aanwezig' if DATABASE_URL else ' ONTBREEKT'}
-- MAX_PER_TRADE_EUR:  {MAX_PER_TRADE_EUR:.2f}
-- DAILY_STOP_LOSS:    {DAILY_STOP_LOSS_EUR:.2f}
+- MAX_PER_TRADE_EUR:  {round(MAX_PER_TRADE_EUR, 2)}
+- DAILY_STOP_LOSS:    {round(DAILY_STOP_LOSS_EUR, 2)}
 - TRADING_HOURS:      {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC
-- FEE_PCT:            {BITVAVO_FEE_PCT*100:.2f}%
-- SLIPPAGE_PCT:       {SLIPPAGE_PCT*100:.2f}%
+- FEE_PCT:            {round(BITVAVO_FEE_PCT*100, 2)}%
+- SLIPPAGE_PCT:       {round(SLIPPAGE_PCT*100, 2)}%
 - ATR_MULTIPLIER:     {ATR_MULTIPLIER}
 
 Geef een korte check (2-3 zinnen):
@@ -645,7 +645,7 @@ def check_trading_limits(conn) -> Tuple[bool, str]:
     daily_stop = float(get_bot_state(conn, "daily_stop_loss_eur", str(DAILY_STOP_LOSS_EUR)) or DAILY_STOP_LOSS_EUR)
     if daily_pnl <= -daily_stop:
         log(
-            f" Dagbudget bereikt: {daily_pnl:.2f}  "
+            f" Dagbudget bereikt: {round(daily_pnl, 2)}  "
             f"bot gaat door (jij beslist via STOP)"
         )
 
@@ -985,7 +985,7 @@ def shadow_buy(
             "partial_sold_40": False,
         }
         save_shadow_state(state)
-        log(f" Shadow BUY gelogd: {symbol} @ {entry:.6f}")
+        log(f" Shadow BUY gelogd: {symbol} @ {round(entry, 6)}")
     except Exception as e:
         log(f" shadow_buy fout ({symbol}): {e}")
 
@@ -1034,7 +1034,7 @@ def shadow_sell(
             state["positions"][symbol]["amount_eur"] *= (1 - fraction)
 
         save_shadow_state(state)
-        log(f" Shadow SELL: {symbol} {outcome} {pnl_eur:.4f}")
+        log(f" Shadow SELL: {symbol} {outcome} {round(pnl_eur, 4)}")
     except Exception as e:
         log(f" shadow_sell fout ({symbol}): {e}")
 
@@ -1079,7 +1079,7 @@ def get_account_snapshot() -> Dict[str, Any]:
             json.dump(snapshot, f, indent=2)
         os.replace(tmp, SNAPSHOT_PATH)
         log(f" Account snapshot: {len(snapshot['balances'])} coins, "
-            f"EUR={snapshot['eur_available']:.2f}")
+            f"EUR={round(snapshot['eur_available'], 2)}")
     except Exception as e:
         log(f" Snapshot opslaan fout: {e}")
 
@@ -1181,7 +1181,7 @@ def bereken_positiegrootte_kelly(
         n     = stats.get("n", 0)
 
         if n < 10:
-            log(f"Kelly {symbol}: onvoldoende data (n={n} < 10)  {base_eur:.2f}")
+            log(f"Kelly {symbol}: onvoldoende data (n={n} < 10)  {round(base_eur, 2)}")
             return base_eur
 
         win_rate   = stats.get("win_rate", 0.5)
@@ -1204,8 +1204,8 @@ def bereken_positiegrootte_kelly(
 
         log(
             f"Kelly {symbol}: n={n} wr={win_rate:.0%} "
-            f"b={b:.2f} f*={kelly:.2f} half={half_kelly:.2f} "
-            f" {result:.2f}"
+            f"b={round(b, 2)} f*={round(kelly, 2)} half={round(half_kelly, 2)} "
+            f" {round(result, 2)}"
         )
         return result
 
@@ -1239,7 +1239,7 @@ def validate_atr_stop(
     # Stop boven of gelijk aan entry = altijd fout
     if stop >= entry:
         corrected = entry * 0.98
-        log(f" Stop boven entry voor {symbol}: {stop:.6f}  {corrected:.6f}")
+        log(f" Stop boven entry voor {symbol}: {round(stop, 6)}  {round(corrected, 6)}")
         return corrected
 
     if atr and atr > 0:
@@ -1247,11 +1247,11 @@ def validate_atr_stop(
         max_stop = entry - (0.5 * atr)              # min afstand (0.5x ATR)
 
         if stop > max_stop:
-            log(f" Stop te krap voor {symbol}: {stop:.6f}  {max_stop:.6f} (0.5x ATR)")
+            log(f" Stop te krap voor {symbol}: {round(stop, 6)}  {round(max_stop, 6)} (0.5x ATR)")
             return max_stop
 
         if stop < min_stop:
-            log(f" Stop te wijd voor {symbol}: {stop:.6f}  {min_stop:.6f} ({ATR_MULTIPLIER}x ATR)")
+            log(f" Stop te wijd voor {symbol}: {round(stop, 6)}  {round(min_stop, 6)} ({ATR_MULTIPLIER}x ATR)")
             return min_stop
 
         return stop  # stop is OK
@@ -1259,7 +1259,7 @@ def validate_atr_stop(
     # Geen ATR: minimaal 2% onder entry
     min_stop_pct = entry * 0.98
     if stop > min_stop_pct:
-        log(f" Stop te krap (geen ATR) voor {symbol}: {stop:.6f}  {min_stop_pct:.6f}")
+        log(f" Stop te krap (geen ATR) voor {symbol}: {round(stop, 6)}  {round(min_stop_pct, 6)}")
         return min_stop_pct
 
     return stop
@@ -1281,8 +1281,8 @@ def check_min_order_size(amount_eur: float) -> Tuple[bool, str]:
     """
     if amount_eur < BITVAVO_MIN_ORDER_EUR:
         msg = (
-            f" Order {amount_eur:.2f} < Bitvavo minimum "
-            f"{BITVAVO_MIN_ORDER_EUR:.2f}  kan worden afgewezen"
+            f" Order {round(amount_eur, 2)} < Bitvavo minimum "
+            f"{round(BITVAVO_MIN_ORDER_EUR, 2)}  kan worden afgewezen"
         )
         log(msg)
         return False, msg
@@ -1422,7 +1422,7 @@ def log_trade_open_to_db(
                 market,
             ))
         conn.commit()
-        log(f" DB gelogd (OPEN): {symbol} entry={entry:.6f}")
+        log(f" DB gelogd (OPEN): {symbol} entry={round(entry, 6)}")
 
         # Coach event voor ai_coach
         log_trade_event(conn, symbol, "BUY", {
@@ -1479,7 +1479,7 @@ def log_trade_close_to_db(
                 """, (trade_key, symbol, outcome, pnl_eur))
 
         conn.commit()
-        log(f" DB gelogd ({outcome}): {symbol} pnl={pnl_eur:.4f}")
+        log(f" DB gelogd ({outcome}): {symbol} pnl={round(pnl_eur, 4)}")
 
         # Coach event voor ai_coach
         log_trade_event(conn, symbol, "SELL", {
@@ -1558,19 +1558,18 @@ def place_market_buy_eur(
     Plaatst een market BUY order op Bitvavo voor een EUR bedrag.
     Geeft (success, order_data) terug.
     """
-    payload = {
-        "market":      market,
+    payload = {round("market":      market,
         "side":        "buy",
         "orderType":   "market",
-        "amountQuote": f"{amount_eur:.2f}",
+        "amountQuote": f"{amount_eur, 2)}",
         "operatorId":  BITVAVO_OPERATOR_ID,
     }
 
-    log(f" Bitvavo BUY: {market} {amount_eur:.2f}")
+    log(f" Bitvavo BUY: {market} {round(amount_eur, 2)}")
 
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
-        data = sdk.placeOrder(market, "buy", "market", {"amountQuote": f"{amount_eur:.2f}", "operatorId": BITVAVO_OPERATOR_ID})
+        data = sdk.placeOrder(market, "buy", "market", {round("amountQuote": f"{amount_eur, 2)}", "operatorId": BITVAVO_OPERATOR_ID})
         ok = "errorCode" not in data and "error" not in data
     except Exception as e:
         log(f" BUY exception ({market}): {e}")
@@ -1605,7 +1604,7 @@ def place_market_buy_eur(
     data["_parsed_price"] = price
     data["_parsed_qty"]   = qty
 
-    log(f" BUY uitgevoerd: {market} qty={qty:.6f} @ {price:.6f}")
+    log(f" BUY uitgevoerd: {market} qty={round(qty, 6)} @ {round(price, 6)}")
     return True, data
 
 
@@ -1631,7 +1630,7 @@ def place_market_sell(
         "operatorId": BITVAVO_OPERATOR_ID,
     }
 
-    log(f" Bitvavo SELL: {market} qty={sell_qty:.6f} ({fraction*100:.0f}%)")
+    log(f" Bitvavo SELL: {market} qty={round(sell_qty, 6)} ({int(fraction*100)}%)")
 
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
@@ -1671,7 +1670,7 @@ def place_market_sell(
     data["_parsed_sold_qty"] = sold_qty
     data["_parsed_fraction"] = fraction
 
-    log(f" SELL uitgevoerd: {market} qty={sold_qty:.6f} @ {price:.6f}")
+    log(f" SELL uitgevoerd: {market} qty={round(sold_qty, 6)} @ {round(price, 6)}")
     return True, data
 
 
@@ -1718,10 +1717,10 @@ def buy_eur(
         score_raw  = int(meta.get("score", 0))
         if regime_raw == "BULL" and score_raw >= 85:
             amount_eur = min(amount_eur * 1.5, MAX_PER_TRADE_EUR * 1.5)
-            log(f" BULL+score85: positie verhoogd naar {amount_eur:.2f}")
+            log(f" BULL+score85: positie verhoogd naar {round(amount_eur, 2)}")
         elif regime_raw in ("BEAR", "CRASH"):
             amount_eur = amount_eur * 0.5
-            log(f" {regime_raw}: positie verlaagd naar {amount_eur:.2f}")
+            log(f" {regime_raw}: positie verlaagd naar {round(amount_eur, 2)}")
         amount_eur = max(amount_eur, BITVAVO_MIN_ORDER_EUR)
     except Exception:
         pass
@@ -1762,7 +1761,7 @@ def buy_eur(
         # 5. EUR balance check
         eur_balance = get_eur_balance()
         if eur_balance < amount_eur:
-            msg = f"Onvoldoende EUR: {eur_balance:.2f} < {amount_eur:.2f}"
+            msg = f"Onvoldoende EUR: {round(eur_balance, 2)} < {round(amount_eur, 2)}"
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
@@ -1869,12 +1868,12 @@ def buy_eur(
 
         # 11. bot_state updaten voor dashboard
         log_naar_bot_state(
-            f"BUY {symbol} @ {entry:.6f}",
+            f"BUY {symbol} @ {round(entry, 6)}",
             busy=False,
         )
 
-        log(f" Live BUY: {symbol} @ {entry:.6f} qty={qty:.6f} stop={stop:.6f}")
-        return True, f"BUY {symbol} @ {entry:.6f}"
+        log(f" Live BUY: {symbol} @ {round(entry, 6)} qty={round(qty, 6)} stop={round(stop, 6)}")
+        return True, f"BUY {symbol} @ {round(entry, 6)}"
 
     except Exception as e:
         safe_rollback(conn)
@@ -1927,7 +1926,7 @@ def sell(
         except Exception:
             pass
 
-    log_naar_bot_state(f"SELL start: {symbol} ({fraction*100:.0f}%)", busy=True)
+    log_naar_bot_state(f"SELL start: {symbol} ({int(fraction*100)}%)", busy=True)
 
     conn = None
     try:
@@ -2039,7 +2038,7 @@ def sell(
 
         # bot_state updaten voor dashboard
         log_naar_bot_state(
-            f"SELL {symbol} {outcome} {pnl_eur:.4f}",
+            f"SELL {symbol} {outcome} {round(pnl_eur, 4)}",
             busy=False,
             pnl_eur=pnl_eur,
         )
@@ -2047,10 +2046,10 @@ def sell(
         icon = "" if outcome == "WIN" else ""
         log(
             f"{icon} SELL {symbol}: {outcome} "
-            f"{pnl_eur:.4f} | "
-            f"exit={exit_price:.6f} | "
+            f"{round(pnl_eur, 4)} | "
+            f"exit={round(exit_price, 6)} | "
             f"{exit_reden} | "
-            f"fractie={fraction*100:.0f}%"
+            f"fractie={int(fraction*100)}%"
         )
 
         return {
@@ -2090,12 +2089,12 @@ if __name__ == "__main__":
     log(f"Bitvavo Secret:  {'' if BITVAVO_API_SECRET else ' ONTBREEKT'}")
     log(f"Twilio:          {'' if TWILIO_ACCOUNT_SID else ' niet ingesteld'}")
     log(f"Claude API:      {'' if ANTHROPIC_API_KEY  else ' niet ingesteld'}")
-    log(f"Max trade:       {MAX_PER_TRADE_EUR:.2f}")
-    log(f"Daily stop:      {DAILY_STOP_LOSS_EUR:.2f}")
+    log(f"Max trade:       {round(MAX_PER_TRADE_EUR, 2)}")
+    log(f"Daily stop:      {round(DAILY_STOP_LOSS_EUR, 2)}")
     log(f"Max trades/dag:  {MAX_REAL_TRADES_PER_DAY}")
     log(f"Max open:        {MAX_OPEN_REAL_TRADES}")
     log(f"Trading hours:   {TRADING_HOURS_START}:00-{TRADING_HOURS_END}:00 UTC")
-    log(f"Fee+slippage:    {TOTAL_COST_PCT*100:.2f}%")
+    log(f"Fee+slippage:    {round(TOTAL_COST_PCT*100, 2)}%")
     log(f"ATR multiplier:  {ATR_MULTIPLIER}")
     log(f"Data dir:        {DATA_DIR}")
     log("=" * 60)
@@ -2104,7 +2103,7 @@ if __name__ == "__main__":
     if BITVAVO_API_KEY and BITVAVO_API_SECRET:
         log("Test Bitvavo balance...")
         eur = get_eur_balance()
-        log(f"EUR balance: {eur:.2f}")
+        log(f"EUR balance: {round(eur, 2)}")
 
         log("Test account snapshot...")
         snap = get_account_snapshot()
