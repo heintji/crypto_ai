@@ -1243,19 +1243,24 @@ def _finalize_trade(
     )
 
     # WhatsApp notificatie bij 100% sell
+    res_emoji = "✅" if outcome == "WIN" else "❌"
+    r1_txt = "✅ 1R bereikt" if mfe_r >= 1.0 else "❌ 1R NIET bereikt"
+    r2_txt = "✅ 2R bereikt" if mfe_r >= 2.0 else "❌ 2R niet bereikt"
+    tgt_txt = "✅ Target bereikt" if exit_reden in ("TARGET", "TARGET_REACHED") else "❌ Target niet bereikt"
     emoji = "Ã¢ÂÂ" if outcome == "WIN" else "Ã¢ÂÂ"
     send_whatsapp(
         rate_key=f"trade_closed_{symbol}",
         message=(
                         f"{emoji} TRADE GESLOTEN: {symbol}\n"
-            f"{'=' * 32}\n"
+            f"{'='*32}\n"
             f"\n"
-            f"{'✅' if outcome == 'WIN' else '❌'} Resultaat:   {outcome}\n"
+            f"{res_emoji} Resultaat:   {outcome}\n"
             f"\U0001f4b6 PnL:         EUR{pnl_eur:+.3f}\n"
             f"\U0001f4c8 R bij exit:  {exit_r:.2f}R\n"
             f"\U0001f3c6 Max R bereikt: {mfe_r:.2f}R\n"
-            f"{'\U00002705 1R bereikt' if mfe_r >= 1.0 else '\U0000274c 1R NIET bereikt'}\n"
-            f"{'\U00002705 2R bereikt' if mfe_r >= 2.0 else '\U0000274c 2R niet bereikt'}\n"
+            f"{r1_txt}\n"
+            f"{r2_txt}\n"
+            f"{tgt_txt}\n"
             f"\U0001f3af Reden:       {exit_reden}\n"
             f"\u23f1\ufe0f Houdtijd:    {hold_min:.0f} min\n"
         )
