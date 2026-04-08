@@ -2237,8 +2237,10 @@ def main_loop():
                 pass
 
         # Heartbeat  dashboard kan zien dat de bot leeft
-        try: health_update("live_trader", "OK", "bot draait")
-        except Exception: pass
+        try:
+            health_update("live_trader", "OK", "bot draait")
+        except Exception:
+            pass
         try:
             set_bot_state(conn, "live_trader_last_ts", now_utc().isoformat())
             set_bot_state(conn, "live_trader_busy", "false")
