@@ -336,26 +336,26 @@ def report_error(
     uitleg = _claude_analyse(prompt, max_tokens=200) or \
              f"{type(error).__name__}: {str(error)[:100]}"
 
-    send_whatsapp(
-        rate_key=rate_key,
-        message=(
-            f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
-            f"{'Ã¢ÂÂ' * 30}\n\n"
-            f"Ã°ÂÂÂ Functie:     {function}\n"
-            f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-            f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-            f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-            f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-            f"Ã°ÂÂÂ WAT TE DOEN:\n"
-            f"1. Check Render logs voor details\n"
-            f"2. Stuur TRADES voor open posities\n"
-            f"3. Check Bitvavo account direct\n"
-            f"4. Stuur STOP als je wil pauzeren\n\n"
-            f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
-            f"Open trades worden bewaakt.\n\n"
-            f"Commands: STATUS | TRADES | STOP"
-        ),
-    )
+    pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+    # rate_key=rate_key,
+    # message=(
+    # f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
+    # f"{'Ã¢ÂÂ' * 30}\n\n"
+    # f"Ã°ÂÂÂ Functie:     {function}\n"
+    # f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
+    # f"Ã°ÂÂÂ Open trades: {open_trades}\n"
+    # f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
+    # f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
+    # f"Ã°ÂÂÂ WAT TE DOEN:\n"
+    # f"1. Check Render logs voor details\n"
+    # f"2. Stuur TRADES voor open posities\n"
+    # f"3. Check Bitvavo account direct\n"
+    # f"4. Stuur STOP als je wil pauzeren\n\n"
+    # f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
+    # f"Open trades worden bewaakt.\n\n"
+    # f"Commands: STATUS | TRADES | STOP"
+    # ),
+    # )
 
 
 def log_coach_event(conn, categorie: str, event_type: str,
@@ -940,7 +940,7 @@ def _execute_sell(
             return {"ok": False, "reason": f"Import fout: {e}"}
     except Exception as e:
         log(f"Ã¢ÂÂ Sell call fout ({symbol}): {type(e).__name__}: {e}")
-        send_whatsapp(f"Ã¢ÂÂ SELL FOUT: {symbol}\nReden: {str(e)[:100]}", rate_key=f"sell_fout_{symbol}")
+        pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
         return {"ok": False, "reason": str(e)}
 
 
@@ -1127,21 +1127,21 @@ def process_live_trade(
             # 60% positie blijft open met stop op break-even.
             entry_p  = safe_float(trade.get("entry"))
             pct_move = (current - entry_p) / entry_p * 100 if entry_p > 0 else 0.0
-            send_whatsapp(
-                rate_key=f"partial_{symbol}",
-                message=(
-                    f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
-                    f"{'Ã¢ÂÂ' * 28}\n\n"
-                    f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
-                    f"Entry:   {entry_p:.6f}\n"
-                    f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
-                    f"R:       {r:.2f}\n\n"
-                    f"60% positie nog open.\n"
-                    f"Stop staat op break-even.\n"
-                    f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
-                    f"Commands: TRADES | STATUS"
-                ),
-            )
+            pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+            # rate_key=f"partial_{symbol}",
+            # message=(
+            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
+            # f"{'Ã¢ÂÂ' * 28}\n\n"
+            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
+            # f"Entry:   {entry_p:.6f}\n"
+            # f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
+            # f"R:       {r:.2f}\n\n"
+            # f"60% positie nog open.\n"
+            # f"Stop staat op break-even.\n"
+            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
+            # f"Commands: TRADES | STATUS"
+            # ),
+            # )
 
     # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("partial_sold_40") and r < 1.0:
@@ -1285,24 +1285,24 @@ def _finalize_trade(
         wr30 = (wins_30 / t30 * 100) if t30 > 0 else 0.0
         pf30 = get_profit_factor(conn, 30)
 
-        send_whatsapp(
-            rate_key=f"consec_losses_{consecutive}",
-            message=(
-                f"Ã¢ÂÂ Ã¯Â¸Â SIGNAAL Ã¢ÂÂ {consecutive} VERLIEZEN OP RIJ\n"
-                f"{'Ã¢ÂÂ' * 30}\n\n"
-                f"Ã°ÂÂªÂ Laatste verlies: {symbol}\n"
-                f"Ã°ÂÂÂ Verlies op rij:  {consecutive}/{MAX_CONSECUTIVE_LOSSES}\n\n"
-                f"Ã°ÂÂÂ STATISTIEKEN:\n"
-                f"Ã¢ÂÂ¢ Win rate 7d:  {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-                f"Ã¢ÂÂ¢ Win rate 30d: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
-                f"Ã¢ÂÂ¢ PnL 7d: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
-                f"Ã¢ÂÂ¢ Profit Factor 30d: {pf30:.2f}"
-                f" {'Ã¢ÂÂ' if pf30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
-                f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
-                f"Stuur STOP als je wil pauzeren.\n\n"
-                f"Commands: STOP | STATUS | TRADES"
-            ),
-        )
+        pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+        # rate_key=f"consec_losses_{consecutive}",
+        # message=(
+        # f"Ã¢ÂÂ Ã¯Â¸Â SIGNAAL Ã¢ÂÂ {consecutive} VERLIEZEN OP RIJ\n"
+        # f"{'Ã¢ÂÂ' * 30}\n\n"
+        # f"Ã°ÂÂªÂ Laatste verlies: {symbol}\n"
+        # f"Ã°ÂÂÂ Verlies op rij:  {consecutive}/{MAX_CONSECUTIVE_LOSSES}\n\n"
+        # f"Ã°ÂÂÂ STATISTIEKEN:\n"
+        # f"Ã¢ÂÂ¢ Win rate 7d:  {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+        # f"Ã¢ÂÂ¢ Win rate 30d: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
+        # f"Ã¢ÂÂ¢ PnL 7d: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+        # f"Ã¢ÂÂ¢ Profit Factor 30d: {pf30:.2f}"
+        # f" {'Ã¢ÂÂ' if pf30>=1.5 else 'Ã¢ÂÂ Ã¯Â¸Â'}\n\n"
+        # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
+        # f"Stuur STOP als je wil pauzeren.\n\n"
+        # f"Commands: STOP | STATUS | TRADES"
+        # ),
+        # )
 
     # Profit factor check elke 10 trades
     try:
@@ -1326,24 +1326,24 @@ def _finalize_trade(
                 wr30 = (wins_30 / t30 * 100) if t30 > 0 else 0.0
                 wr7  = (wins_7  / t7  * 100) if t7  > 0 else 0.0
 
-                send_whatsapp(
-                    rate_key="pf_laag",
-                    message=(
-                        f"Ã°ÂÂÂ PROFIT FACTOR LAAG\n"
-                        f"{'Ã¢ÂÂ' * 30}\n\n"
-                        f"Ã°ÂÂÂ Profit Factor 30d: {pf:.2f}\n"
-                        f"Ã°ÂÂÂ¯ Doel:              >1.5\n\n"
-                        f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
-                        f"Ã¢ÂÂ¢ Trades: {trade_count_30d}\n"
-                        f"Ã¢ÂÂ¢ WR: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
-                        f"Ã¢ÂÂ¢ PnL: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
-                        f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
-                        f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-                        f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n\n"
-                        f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n\n"
-                        f"Commands: STOP | STATUS | RAPPORT"
-                    ),
-                )
+                pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+                # rate_key="pf_laag",
+                # message=(
+                # f"Ã°ÂÂÂ PROFIT FACTOR LAAG\n"
+                # f"{'Ã¢ÂÂ' * 30}\n\n"
+                # f"Ã°ÂÂÂ Profit Factor 30d: {pf:.2f}\n"
+                # f"Ã°ÂÂÂ¯ Doel:              >1.5\n\n"
+                # f"Ã°ÂÂÂ LAATSTE 30 DAGEN:\n"
+                # f"Ã¢ÂÂ¢ Trades: {trade_count_30d}\n"
+                # f"Ã¢ÂÂ¢ WR: {wr30:.1f}% ({wins_30}W/{losses_30}L)\n"
+                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_30>=0 else ''}Ã¢ÂÂ¬{pnl_30:.2f}\n\n"
+                # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
+                # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+                # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n\n"
+                # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n\n"
+                # f"Commands: STOP | STATUS | RAPPORT"
+                # ),
+                # )
     except Exception:
         pass
 
@@ -1352,7 +1352,7 @@ def _finalize_trade(
         if trade_count_30d > 0 and trade_count_30d % 20 == 0:
             decay_msg = check_edge_decay(conn)
             if decay_msg:
-                send_whatsapp(rate_key="edge_decay", message=decay_msg)
+                pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
     except Exception:
         pass
 
@@ -1641,25 +1641,25 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             pf30 = get_profit_factor(conn, 30)
             open_n = len(load_state().get("positions", {}))
 
-            send_whatsapp(
-                rate_key="dagbudget",
-                message=(
-                    f"Ã°ÂÂÂ DAGBUDGET BEREIKT\n"
-                    f"{'Ã¢ÂÂ' * 30}\n\n"
-                    f"Ã°ÂÂÂ¶ Verlies vandaag:  Ã¢ÂÂ¬{abs(daily_pnl):.2f}\n"
-                    f"Ã°ÂÂÂ Dagbudget:        Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}\n\n"
-                    f"Ã°ÂÂÂ VANDAAG:\n"
-                    f"Ã¢ÂÂ¢ Wins: {wins_v} | Losses: {losses_v}\n\n"
-                    f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
-                    f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
-                    f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
-                    f"Ã¢ÂÂ¢ PF 30d: {pf30:.2f}\n\n"
-                    f"Ã°ÂÂÂ Open trades: {open_n} (worden bewaakt)\n\n"
-                    f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
-                    f"Stuur STOP als je wil pauzeren.\n\n"
-                    f"Commands: STOP | STATUS | TRADES"
-                ),
-            )
+            pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+            # rate_key="dagbudget",
+            # message=(
+            # f"Ã°ÂÂÂ DAGBUDGET BEREIKT\n"
+            # f"{'Ã¢ÂÂ' * 30}\n\n"
+            # f"Ã°ÂÂÂ¶ Verlies vandaag:  Ã¢ÂÂ¬{abs(daily_pnl):.2f}\n"
+            # f"Ã°ÂÂÂ Dagbudget:        Ã¢ÂÂ¬{DAILY_STOP_LOSS_EUR:.2f}\n\n"
+            # f"Ã°ÂÂÂ VANDAAG:\n"
+            # f"Ã¢ÂÂ¢ Wins: {wins_v} | Losses: {losses_v}\n\n"
+            # f"Ã°ÂÂÂ LAATSTE 7 DAGEN:\n"
+            # f"Ã¢ÂÂ¢ WR: {wr7:.1f}% ({wins_7}W/{losses_7}L)\n"
+            # f"Ã¢ÂÂ¢ PnL: {'+'if pnl_7>=0 else ''}Ã¢ÂÂ¬{pnl_7:.2f}\n"
+            # f"Ã¢ÂÂ¢ PF 30d: {pf30:.2f}\n\n"
+            # f"Ã°ÂÂÂ Open trades: {open_n} (worden bewaakt)\n\n"
+            # f"Ã°ÂÂ¤Â BOT LOOPT GEWOON DOOR\n"
+            # f"Stuur STOP als je wil pauzeren.\n\n"
+            # f"Commands: STOP | STATUS | TRADES"
+            # ),
+            # )
 
         # Ã¢ÂÂÃ¢ÂÂ LIVE TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         state   = load_state()
@@ -1748,16 +1748,16 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             health = voer_health_check_uit(conn)
             log_health_check(health)
             if health["score"] < 50 and False:  # alleen in dagrapport
-                send_whatsapp(
-                    rate_key="health_laag",
-                    message=(
-                        f"MONITOR HEALTH LAAG\n"
-                        f"Score: {health['score']}/100\n\n"
-                        f"Problemen:\n"
-                        + "\n".join(f"- {p}" for p in health["problemen"][:5])
-                        + "\n\nCommands: STATUS | STOP"
-                    ),
-                )
+                pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+                # rate_key="health_laag",
+                # message=(
+                # f"MONITOR HEALTH LAAG\n"
+                # f"Score: {health['score']}/100\n\n"
+                # f"Problemen:\n"
+                # + "\n".join(f"- {p}" for p in health["problemen"][:5])
+                # + "\n\nCommands: STATUS | STOP"
+                # ),
+                # )
 
         # Ã¢ÂÂÃ¢ÂÂ Weekrapport check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         if is_weekrapport_tijd():
@@ -2140,7 +2140,7 @@ def verstuur_weekrapport(conn) -> None:
 
         rapport += "Commands: STATUS | TRADES | STOP"
 
-        send_whatsapp(rate_key="weekrapport", message=rapport)
+        pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
         set_bot_state(conn, "weekrapport_datum",
                       now_utc().strftime("%Y-%m-%d"))
         log("Weekrapport verstuurd")
@@ -2355,21 +2355,21 @@ def detecteer_stale_trades(conn) -> None:
                 if uren_open > max_ooit:
                     log(f"Ã°ÂÂÂ¨ {symbol}: extreem lang open ({uren_open:.0f}u) Ã¢ÂÂ "
                         f"check Bitvavo manueel!")
-                    send_whatsapp(
-                        rate_key=f"stale_{symbol}",
-                        message=(
-                            f"Ã¢ÂÂ Ã¯Â¸Â STALE TRADE DETECTIE\n"
-                            f"{'Ã¢ÂÂ' * 28}\n\n"
-                            f"Ã°ÂÂªÂ Coin: {symbol}\n"
-                            f"Ã¢ÂÂ° Open: {uren_open:.0f} uur\n"
-                            f"Ã°ÂÂÂ¯ Max verwacht: {max_ooit:.0f}u\n\n"
-                            f"Entry: {entry:.6f}\n"
-                            f"Stop:  {stop:.6f}\n\n"
-                            f"Ã°ÂÂÂ¡ Check Bitvavo handmatig\n"
-                            f"en sluit indien nodig.\n\n"
-                            f"Commands: TRADES | STATUS"
-                        ),
-                    )
+                    pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+                    # rate_key=f"stale_{symbol}",
+                    # message=(
+                    # f"Ã¢ÂÂ Ã¯Â¸Â STALE TRADE DETECTIE\n"
+                    # f"{'Ã¢ÂÂ' * 28}\n\n"
+                    # f"Ã°ÂÂªÂ Coin: {symbol}\n"
+                    # f"Ã¢ÂÂ° Open: {uren_open:.0f} uur\n"
+                    # f"Ã°ÂÂÂ¯ Max verwacht: {max_ooit:.0f}u\n\n"
+                    # f"Entry: {entry:.6f}\n"
+                    # f"Stop:  {stop:.6f}\n\n"
+                    # f"Ã°ÂÂÂ¡ Check Bitvavo handmatig\n"
+                    # f"en sluit indien nodig.\n\n"
+                    # f"Commands: TRADES | STATUS"
+                    # ),
+                    # )
 
             # Check: ontbrekende kritieke data
             if entry <= 0 or stop <= 0:
