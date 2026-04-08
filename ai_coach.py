@@ -372,6 +372,31 @@ Antwoord ALLEEN als JSON array met de symbols van de gekozen 5, bijv:
         log(f" Top-5 fout (fallback top-5): {e}")
         return sorted(kandidaten, key=lambda x: x.get("score",0), reverse=True)[:5]
 
+
+
+def _stuur_wa(bericht: str) -> None:
+    """Stuur WhatsApp rapport via Twilio."""
+    import os
+    try:
+        import requests as _req
+        sid  = os.getenv('TWILIO_ACCOUNT_SID', '')
+        auth = os.getenv('TWILIO_AUTH_TOKEN', '')
+        van  = os.getenv('TWILIO_WHATSAPP_FROM', '')
+        naar = os.getenv('TWILIO_WHATSAPP_TO', '')
+        if not all([sid, auth, van, naar]):
+            print('[COACH] Twilio niet geconfigureerd')
+            _stuur_wa(rapport)
+            return
+        _req.post(
+            f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
+            auth=(sid, auth),
+            data={'From': van, 'To': naar, 'Body': bericht},
+            timeout=15
+        )
+        print('[COACH] WhatsApp rapport verstuurd')
+    except Exception as e:
+        print(f'[COACH] WA fout: {e}')
+
 def main():
     mode = REPORT_MODE.lower()
     log(f"AI Coach gestart  mode: {mode}")
