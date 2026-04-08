@@ -2419,7 +2419,6 @@ def run_monitor_loop() -> None:
     while True:
         try:
             run_monitor_once()
-        try:
             stuur_dagrapport(conn)
         except Exception:
             pass
