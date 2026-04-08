@@ -53,6 +53,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import psycopg2
 import psycopg2.extras
 import requests
+try:
+    from bot_health_helper import health_update, health_fout
+except ImportError:
+    def health_update(*a, **k): pass
+    def health_fout(*a, **k): pass
+
 
 
 # ============================================================
@@ -2206,6 +2212,8 @@ def main_loop():
                 pass
 
         # Heartbeat  dashboard kan zien dat de bot leeft
+        try: health_update("live_trader", "OK", "bot draait", live=len([p for p in open_positions if True]))
+        except Exception: pass
         try:
             set_bot_state(conn, "live_trader_last_ts", now_utc().isoformat())
             set_bot_state(conn, "live_trader_busy", "false")
