@@ -2172,70 +2172,30 @@ def main_loop():
                 """)
                 rows = cur.fetchall()
 
-
-            # ── Shadow-only trades: score 80-89 (geen live, wel shadow) ──
-            # shadow_only_query
-            cur.execute("""
-                SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
-                FROM pending_approvals
-                WHERE status = 'PENDING'
-                AND score >= 80 AND score < 90
-                AND expires_at > NOW()
-                ORDER BY score DESC
-                LIMIT 10
-            """)
-            shadow_rows = cur.fetchall()
-
-            for srow in shadow_rows:
-                try:
-                    sid, ssymbol, smarket, sscore, sentry, sstop, starget, skelly = srow
-                    # Alleen shadow — geen echte koop
-                    smeta = {"score": sscore, "setup_type": "TREND_PULLBACK", "regime": "SHADOW_ONLY",
-                             "shadow_only": True}
-                    sqty = round(float(skelly or 7) / float(sentry or 1), 6) if sentry else 0
-                    shadow_buy(ssymbol, float(sentry or 0), sqty,
-                               float(skelly or 7), smeta)
-                    cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
-                    conn.commit()
-                    log(f"Shadow-only: {ssymbol} score={sscore}")
-                except Exception as _se:
-                    log(f"Shadow-only fout ({ssymbol}): {_se}")
-            for row in rows:
-                pid, symbol, market, score, entry, stop, target, kelly, live_ok = row
-                log(f"Ã°ÂÂÂ Pending: {symbol} score={score}")
-                ok, result = buy_eur(
-                    symbol=symbol,
-                    amount_eur=min(kelly or MAX_PER_TRADE_EUR, MAX_PER_TRADE_EUR),
-                    meta={"score": score, "stop": stop, "target": target, "prebuy_id": pid},
-                )
-                if ok:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE pending_approvals SET status='EXECUTED' WHERE id=%s",
-                            (pid,)
-                        )
-                    conn.commit()
-                    # Shadow buy ook bij SKIPPED/FAILED signals (ontkoppeld van live)
+                # ── Shadow-only: score 80-89, geen live geld ──
+                cur.execute("""
+                    SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
+                    FROM pending_approvals
+                    WHERE status = 'PENDING'
+                    AND score >= 80 AND score < 90
+                    AND expires_at > NOW()
+                    ORDER BY score DESC
+                    LIMIT 10
+                """)
+                shadow_only_query = True  # marker
+                shadow_rows = cur.fetchall()
+                for srow in shadow_rows:
                     try:
-                        shadow_buy(symbol, entry, 0.0, min(kelly or MAX_PER_TRADE_EUR, MAX_PER_TRADE_EUR),
-                                   {"score": score, "stop": stop, "target": target, "prebuy_id": pid, "source_trigger": "EXECUTED"})
+                        sid, ssymbol, smarket, sscore, sentry, sstop, starget, skelly = srow
+                        smeta = {"score": sscore, "setup_type": "TREND_PULLBACK",
+                                 "regime": "SHADOW_ONLY", "shadow_only": True}
+                        sqty  = round(float(skelly or 7) / max(float(sentry or 1), 0.0001), 6)
+                        shadow_buy(ssymbol, float(sentry or 0), sqty, float(skelly or 7), smeta)
+                        cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
+                        log(f"Shadow-only: {ssymbol} score={sscore}")
                     except Exception as _se:
-                        log(f"Shadow fout: {_se}")
-                    log(f"Ã¢ÂÂ BUY uitgevoerd: {symbol}")
-                else:
-                    log(f"Ã¢ÂÂ BUY mislukt: {symbol}: {result}")
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "UPDATE pending_approvals SET status='FAILED' WHERE id=%s",
-                            (pid,)
-                        )
-                    conn.commit()
-                    # Shadow ook bij FAILED (volg wat er had kunnen gebeuren)
-                    try:
-                        shadow_buy(symbol, entry, 0.0, min(kelly or MAX_PER_TRADE_EUR, MAX_PER_TRADE_EUR),
-                                   {"score": score, "stop": stop, "target": target, "prebuy_id": pid, "source_trigger": "SKIPPED"})
-                    except Exception as _se:
-                        log(f"Shadow fout: {_se}")
+                        log(f"Shadow-only fout: {_se}")
+
 
         except Exception as e:
             # DB reconnect bij SSL/connection fout
