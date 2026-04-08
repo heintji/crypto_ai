@@ -85,6 +85,12 @@ from typing import Any, Dict, List, Optional, Tuple
 import psycopg2
 import psycopg2.extras
 import requests
+try:
+    from bot_health_helper import health_update, health_fout
+except ImportError:
+    def health_update(*a, **k): pass
+    def health_fout(*a, **k): pass
+
 
 
 # ============================================================
@@ -1783,6 +1789,8 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         log(
             f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
+            try: health_update("trade_monitor", "OK", f"{open_count} live posities bewaakt", live=open_count)
+            except Exception: pass
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
 
