@@ -2399,7 +2399,17 @@ def main_loop():
             try:
                 conn.rollback()
             except Exception:
-                pass
+                log("[DB] Connectie kapot — herverbinden...")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    conn = db_connect()
+                    log("[DB] Herverbonden")
+                except Exception as _re:
+                    log(f"[DB] Herverbind mislukt: {_re}")
+                    time.sleep(10)
 
         # Heartbeat  dashboard kan zien dat de bot leeft
         try:
