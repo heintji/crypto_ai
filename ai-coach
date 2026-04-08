@@ -1,18 +1,18 @@
 # ai_coach.py
 # ============================================================
-# Crypto AI Bot — AI Coach v2.0
+# Crypto AI Bot â AI Coach v2.0
 # ============================================================
 # NIEUWE FEATURES v2.0:
-# ✅ Automatische parameter aanpassing in DB
-# ✅ Patroon herkenning (dag/uur patronen)
-# ✅ Drawdown bescherming (auto positiegrootte)
-# ✅ Coin rotatie (auto whitelist/blacklist)
-# ✅ Regime voorspelling (BTC patroon)
-# ✅ Setup weging (betere setups meer gewicht)
-# ✅ Coach geheugen in PostgreSQL
-# ✅ Nieuwe trade kansen detecteren
-# ✅ Kort WhatsApp + volledig rapport in dashboard
-# ✅ Proactief alarm bij problemen
+# â Automatische parameter aanpassing in DB
+# â Patroon herkenning (dag/uur patronen)
+# â Drawdown bescherming (auto positiegrootte)
+# â Coin rotatie (auto whitelist/blacklist)
+# â Regime voorspelling (BTC patroon)
+# â Setup weging (betere setups meer gewicht)
+# â Coach geheugen in PostgreSQL
+# â Nieuwe trade kansen detecteren
+# â Kort WhatsApp + volledig rapport in dashboard
+# â Proactief alarm bij problemen
 # ============================================================
 
 from __future__ import annotations
@@ -130,7 +130,7 @@ def send_whatsapp(message: str) -> bool:
             if resp.status_code not in (200, 201):
                 success = False
         except Exception as e:
-            log(f"❌ WhatsApp: {e}")
+            log(f"â WhatsApp: {e}")
             success = False
     return success
 
@@ -138,11 +138,11 @@ def send_whatsapp(message: str) -> bool:
 def stuur_alert(titel: str, probleem: str, actie: str) -> None:
     """Kort WhatsApp alert bij problemen."""
     send_whatsapp(
-        f"⚠️ AI COACH ALERT\n{'─'*28}\n\n"
-        f"🔴 {titel}\n\n"
-        f"📋 {probleem}\n"
-        f"💡 {actie}\n\n"
-        f"📊 Volledig rapport: dashboard\n"
+        f"â ï¸ AI COACH ALERT\n{'â'*28}\n\n"
+        f"ð´ {titel}\n\n"
+        f"ð {probleem}\n"
+        f"ð¡ {actie}\n\n"
+        f"ð Volledig rapport: dashboard\n"
         f"Commands: STATUS | ANALYSE | STOP"
     )
 
@@ -169,7 +169,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 500) -> str:
                 return content[0]["text"].strip()
         return ""
     except Exception as e:
-        log(f"⚠️ Claude: {e}")
+        log(f"â ï¸ Claude: {e}")
         return ""
 
 
@@ -188,7 +188,7 @@ def run_query(conn, sql: str, params: tuple = ()) -> List[Dict]:
             cur.execute(sql, params)
             return [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        log(f"⚠️ Query: {e}")
+        log(f"â ï¸ Query: {e}")
         try:
             conn.rollback()  # Reset transactie zodat volgende queries niet crashen
         except Exception:
@@ -223,7 +223,7 @@ def set_bot_state(conn, key: str, value: str) -> None:
             """, (key, value))
         conn.commit()
     except Exception as e:
-        log(f"⚠️ set_bot_state: {e}")
+        log(f"â ï¸ set_bot_state: {e}")
 
 
 # ============================================================
@@ -232,7 +232,7 @@ def set_bot_state(conn, key: str, value: str) -> None:
 def zorg_voor_coach_tabellen(conn) -> None:
     """Maakt ALLE coach tabellen aan als ze niet bestaan."""
     tabellen = [
-        # Coach geheugen — onthoudt alle analyses en beslissingen
+        # Coach geheugen â onthoudt alle analyses en beslissingen
         """CREATE TABLE IF NOT EXISTS public.coach_memory (
             id         SERIAL PRIMARY KEY,
             type       TEXT NOT NULL,
@@ -266,8 +266,8 @@ def zorg_voor_coach_tabellen(conn) -> None:
             geldig_tot   TIMESTAMPTZ,
             gebruikt     BOOLEAN DEFAULT FALSE
         )""",
-        # ── NIEUW ─────────────────────────────────────────────
-        # Config wijzigingen logboek — elke parameterwijziging
+        # ââ NIEUW âââââââââââââââââââââââââââââââââââââââââââââ
+        # Config wijzigingen logboek â elke parameterwijziging
         """CREATE TABLE IF NOT EXISTS public.coach_config_log (
             id          SERIAL PRIMARY KEY,
             tijdstip    TIMESTAMPTZ DEFAULT NOW(),
@@ -277,7 +277,7 @@ def zorg_voor_coach_tabellen(conn) -> None:
             bron        TEXT DEFAULT 'coach',
             reden       TEXT
         )""",
-        # Systeem events logboek — alles wat er met de bot gebeurt
+        # Systeem events logboek â alles wat er met de bot gebeurt
         """CREATE TABLE IF NOT EXISTS public.coach_events (
             id          SERIAL PRIMARY KEY,
             tijdstip    TIMESTAMPTZ DEFAULT NOW(),
@@ -287,7 +287,7 @@ def zorg_voor_coach_tabellen(conn) -> None:
             data        JSONB,
             ernst       TEXT DEFAULT 'INFO'
         )""",
-        # Dagboek — elke run schrijft een volledige journaalregel
+        # Dagboek â elke run schrijft een volledige journaalregel
         """CREATE TABLE IF NOT EXISTS public.coach_dagboek (
             id          SERIAL PRIMARY KEY,
             datum       DATE DEFAULT CURRENT_DATE,
@@ -318,7 +318,7 @@ def zorg_voor_coach_tabellen(conn) -> None:
             resultaat   TEXT,
             bot_status_na TEXT
         )""",
-        # Bestand checksums — detecteert code wijzigingen
+        # Bestand checksums â detecteert code wijzigingen
         """CREATE TABLE IF NOT EXISTS public.coach_bestand_checksums (
             id          SERIAL PRIMARY KEY,
             bestandsnaam TEXT NOT NULL UNIQUE,
@@ -359,9 +359,9 @@ def zorg_voor_coach_tabellen(conn) -> None:
             for sql in tabellen:
                 cur.execute(sql + ";")
         conn.commit()
-        log(f"✅ Coach tabellen OK ({len(tabellen)} tabellen)")
+        log(f"â Coach tabellen OK ({len(tabellen)} tabellen)")
     except Exception as e:
-        log(f"⚠️ Coach tabellen: {e}")
+        log(f"â ï¸ Coach tabellen: {e}")
 
 
 def sla_geheugen_op(conn, type_: str, sleutel: str, waarde: Any, score: float = 0) -> None:
@@ -377,7 +377,7 @@ def sla_geheugen_op(conn, type_: str, sleutel: str, waarde: Any, score: float = 
             """, (type_, sleutel, w, score))
         conn.commit()
     except Exception as e:
-        log(f"⚠️ Geheugen opslaan: {e}")
+        log(f"â ï¸ Geheugen opslaan: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -618,19 +618,19 @@ def pas_parameters_aan(conn, aanpassingen: List[Dict]) -> List[str]:
 
         # Veiligheidscontroles
         if key == "min_score_to_trade" and not (80 <= safe_int(value) <= 99):
-            log(f"⚠️ {key}={value} buiten veilig bereik — skip")
+            log(f"â ï¸ {key}={value} buiten veilig bereik â skip")
             continue
         if key == "atr_multiplier" and not (1.0 <= safe_float(value) <= 4.0):
-            log(f"⚠️ {key}={value} buiten veilig bereik — skip")
+            log(f"â ï¸ {key}={value} buiten veilig bereik â skip")
             continue
         if key == "max_per_trade_eur" and not (0.10 <= safe_float(value) <= 5.0):
-            log(f"⚠️ {key}={value} buiten veilig bereik — skip")
+            log(f"â ï¸ {key}={value} buiten veilig bereik â skip")
             continue
 
         oude = get_bot_state(conn, key, "?")
         set_bot_state(conn, key, value)
-        log(f"🔧 {key}: {oude} → {value} ({reden})")
-        toegepast.append(f"{key}: {oude} → {value}")
+        log(f"ð§ {key}: {oude} â {value} ({reden})")
+        toegepast.append(f"{key}: {oude} â {value}")
 
     return toegepast
 
@@ -648,21 +648,21 @@ def check_drawdown_bescherming(conn) -> Optional[str]:
         nieuwe = round(origineel * 0.5, 2)
         set_bot_state(conn, "max_per_trade_eur", str(nieuwe))
         set_bot_state(conn, "drawdown_modus", "true")
-        bericht = f"drawdown {dd['huidige_dd']:.1f}R — positie verlaagd: €{huidige:.2f} → €{nieuwe:.2f}"
-        log(f"🔴 {bericht}")
+        bericht = f"drawdown {dd['huidige_dd']:.1f}R â positie verlaagd: â¬{huidige:.2f} â â¬{nieuwe:.2f}"
+        log(f"ð´ {bericht}")
         stuur_alert("DRAWDOWN BESCHERMING",
                     f"Drawdown: {dd['huidige_dd']:.1f}R (grens: {DRAWDOWN_REDUCE_THRESHOLD}R)",
-                    f"Positie verlaagd naar €{nieuwe:.2f}")
+                    f"Positie verlaagd naar â¬{nieuwe:.2f}")
         return bericht
 
     elif not dd["is_drawdown"] and get_bot_state(conn, "drawdown_modus", "false") == "true":
         set_bot_state(conn, "max_per_trade_eur", str(origineel))
         set_bot_state(conn, "drawdown_modus", "false")
-        bericht = f"drawdown hersteld — positie terug naar €{origineel:.2f}"
-        log(f"✅ {bericht}")
+        bericht = f"drawdown hersteld â positie terug naar â¬{origineel:.2f}"
+        log(f"â {bericht}")
         stuur_alert("DRAWDOWN HERSTELD",
                     f"Systeem normaal (dd: {dd['huidige_dd']:.1f}R)",
-                    f"Positie terug naar €{origineel:.2f}")
+                    f"Positie terug naar â¬{origineel:.2f}")
         return bericht
 
     return None
@@ -706,9 +706,9 @@ def update_coin_rotatie(conn, coin_data: List[Dict]) -> Dict:
     set_bot_state(conn, "coach_whitelist", json.dumps(huidige_wl[:50]))
 
     if bl_nieuw:
-        log(f"⚫ Blacklist +{len(bl_nieuw)}: {bl_nieuw[:3]}")
+        log(f"â« Blacklist +{len(bl_nieuw)}: {bl_nieuw[:3]}")
     if wl_nieuw:
-        log(f"⭐ Whitelist +{len(wl_nieuw)}: {wl_nieuw[:3]}")
+        log(f"â­ Whitelist +{len(wl_nieuw)}: {wl_nieuw[:3]}")
 
     return {"bl_nieuw": bl_nieuw, "wl_nieuw": wl_nieuw, "bl_weg": bl_weg,
             "bl_totaal": len(huidige_bl), "wl_totaal": len(huidige_wl)}
@@ -809,7 +809,7 @@ def voorspel_regime(conn) -> Dict:
         return resultaat
 
     except Exception as e:
-        log(f"⚠️ Regime voorspelling: {e}")
+        log(f"â ï¸ Regime voorspelling: {e}")
         return {"voorspelling": "ONBEKEND", "betrouwbaarheid": 0, "huidig": "?"}
 
 
@@ -837,7 +837,7 @@ def update_setup_gewichten(conn, setup_data: List[Dict]) -> Dict[str, float]:
         else:
             gewicht = 0.8
         gewichten[setup] = gewicht
-        log(f"⚖️ {setup}: gewicht={gewicht} (WR={wr:.1f}%)")
+        log(f"âï¸ {setup}: gewicht={gewicht} (WR={wr:.1f}%)")
 
     set_bot_state(conn, "coach_setup_gewichten", json.dumps(gewichten))
     sla_geheugen_op(conn, "setup", "gewichten", gewichten)
@@ -900,9 +900,9 @@ def detecteer_kansen(conn) -> List[Dict]:
             except Exception:
                 conn.rollback()
 
-        log(f"🎯 {len(kansen)} kansen gedetecteerd")
+        log(f"ð¯ {len(kansen)} kansen gedetecteerd")
     except Exception as e:
-        log(f"⚠️ Kansen detectie: {e}")
+        log(f"â ï¸ Kansen detectie: {e}")
     return kansen
 
 
@@ -925,7 +925,7 @@ def analyseer_score_drempel(score_data: List[Dict]) -> Dict:
     nieuwe = drempel_map.get(beste_range, MIN_SCORE_TO_TRADE)
     return {"huidig": MIN_SCORE_TO_TRADE, "aanbeveling": nieuwe,
             "verschil": nieuwe - MIN_SCORE_TO_TRADE,
-            "beste_wr": beste_wr, "reden": f"Score {beste_range} → {beste_wr:.1f}% WR"}
+            "beste_wr": beste_wr, "reden": f"Score {beste_range} â {beste_wr:.1f}% WR"}
 
 
 def analyseer_stop_loss(mae_data: Dict) -> Dict:
@@ -992,7 +992,7 @@ def claude_finale(totalen, setup_data, score_advies, stop_advies,
 Je bent een senior crypto trading bot coach met volledig geheugen van eerdere analyses.
 Analyseer alle data en geef concreet actiegericht advies in het Nederlands.
 
-HUIDIGE PERIODE: {dagen} dagen | TRADES: {n} | WR: {wr:.1f}% | PnL: €{pnl:.4f} | PF: {pf:.2f}
+HUIDIGE PERIODE: {dagen} dagen | TRADES: {n} | WR: {wr:.1f}% | PnL: â¬{pnl:.4f} | PF: {pf:.2f}
 
 SETUP PERFORMANCE:
 {setup_txt}
@@ -1003,16 +1003,16 @@ AUTO AANPASSINGEN GEDAAN:
 EDGE DECAY: Sim {swr:.1f}% vs Live {lwr:.1f}% (diff: {swr-lwr:.1f}%)
 
 REGIME: {regime_vsp.get('huidig','?')} ({regime_vsp.get('strength',0):.0f}%)
-Verwacht: {regime_vsp.get('voorspelling','?')} — {regime_vsp.get('reden','')}
+Verwacht: {regime_vsp.get('voorspelling','?')} â {regime_vsp.get('reden','')}
 
 BESTE KANSEN:
 {kansen_txt}
 
-PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} → {pf_trend.get('tweede_helft',0):.2f})
+PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} â {pf_trend.get('tweede_helft',0):.2f})
 
 SYSTEEM AUDIT SCORE: {audit_score}/100
 
-ANOMALIEËN:
+ANOMALIEÃN:
 {anom_txt}
 
 COACH GEHEUGEN (eerdere analyses en beslissingen):
@@ -1020,9 +1020,9 @@ COACH GEHEUGEN (eerdere analyses en beslissingen):
 
 Geef finale beoordeling (6-8 zinnen) met historische context:
 1. Systeem gezond vergeleken met eerdere periodes?
-2. Meest urgente aanpassing gezien de anomalieën?
+2. Meest urgente aanpassing gezien de anomalieÃ«n?
 3. Beste trade kans komende periode gezien het regime?
-4. Edge decay risico — verbetering of verslechtering tov vorige analyse?
+4. Edge decay risico â verbetering of verslechtering tov vorige analyse?
 5. Welke eerdere beslissing heeft geholpen of juist niet?
 6. Concreet: wat moet de score drempel worden?
 """.strip()
@@ -1069,72 +1069,72 @@ def bouw_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]]:
     s = "+" if pnl >= 0 else ""
 
     r = (
-        f"🧠 AI COACH v2.0 — {datum}\n{'─'*34}\n"
+        f"ð§  AI COACH v2.0 â {datum}\n{'â'*34}\n"
         f"{n} trades | {dagen} dagen\n\n"
-        f"📊 OVERZICHT:\n"
-        f"• Win rate:      {wr:.1f}% ({safe_int(totalen.get('wins'))}W/{safe_int(totalen.get('losses'))}L)\n"
-        f"• PnL:           {s}€{pnl:.4f}\n"
-        f"• Profit Factor: {pf:.2f} {'✅' if pf>=1.5 else '⚠️'}\n"
-        f"• Drawdown nu:   {dd['huidige_dd']:.2f}R {'🔴' if dd['is_drawdown'] else '✅'}\n\n"
+        f"ð OVERZICHT:\n"
+        f"â¢ Win rate:      {wr:.1f}% ({safe_int(totalen.get('wins'))}W/{safe_int(totalen.get('losses'))}L)\n"
+        f"â¢ PnL:           {s}â¬{pnl:.4f}\n"
+        f"â¢ Profit Factor: {pf:.2f} {'â' if pf>=1.5 else 'â ï¸'}\n"
+        f"â¢ Drawdown nu:   {dd['huidige_dd']:.2f}R {'ð´' if dd['is_drawdown'] else 'â'}\n\n"
     )
 
     if dd_actie:
-        r += f"🔴 DRAWDOWN ACTIE: {dd_actie}\n\n"
+        r += f"ð´ DRAWDOWN ACTIE: {dd_actie}\n\n"
 
     if setup_data:
-        r += "⚡ SETUP PERFORMANCE:\n"
+        r += "â¡ SETUP PERFORMANCE:\n"
         for row in setup_data:
             setup = safe_str(row.get("setup"),"-")
             s_wr  = safe_float(row.get("win_rate"))
             s_pf  = safe_float(row.get("profit_factor"))
             s_n   = safe_int(row.get("n"))
             gew   = setup_gew.get(setup, 1.0)
-            st    = "✅" if s_wr>=60 else "⚠️" if s_wr>=45 else "❌"
-            r += f"• {setup}: {s_wr:.1f}% WR | PF:{s_pf:.2f} | {s_n}x | gew:{gew:.1f} {st}\n"
+            st    = "â" if s_wr>=60 else "â ï¸" if s_wr>=45 else "â"
+            r += f"â¢ {setup}: {s_wr:.1f}% WR | PF:{s_pf:.2f} | {s_n}x | gew:{gew:.1f} {st}\n"
         r += "\n"
 
     r += (
-        f"🔮 REGIME VOORSPELLING:\n"
-        f"• Huidig: {regime_vsp.get('huidig','?')} ({regime_vsp.get('strength',0):.0f}%)\n"
-        f"• Verwacht: {regime_vsp.get('voorspelling','?')} ({regime_vsp.get('betrouwbaarheid',0):.0f}%)\n"
-        f"• {regime_vsp.get('reden','')}\n\n"
+        f"ð® REGIME VOORSPELLING:\n"
+        f"â¢ Huidig: {regime_vsp.get('huidig','?')} ({regime_vsp.get('strength',0):.0f}%)\n"
+        f"â¢ Verwacht: {regime_vsp.get('voorspelling','?')} ({regime_vsp.get('betrouwbaarheid',0):.0f}%)\n"
+        f"â¢ {regime_vsp.get('reden','')}\n\n"
     )
 
     if kansen:
-        r += "🎯 BESTE TRADE KANSEN:\n"
+        r += "ð¯ BESTE TRADE KANSEN:\n"
         for k in kansen[:5]:
-            match = "✅" if k["regime_match"] else "➡️"
-            r += f"• {k['setup']}/{k['regime']}: {k['verwachte_wr']:.1f}% WR | R:{k['verwachte_r']:.2f} | {k['prioriteit']} {match}\n"
+            match = "â" if k["regime_match"] else "â¡ï¸"
+            r += f"â¢ {k['setup']}/{k['regime']}: {k['verwachte_wr']:.1f}% WR | R:{k['verwachte_r']:.2f} | {k['prioriteit']} {match}\n"
         r += "\n"
 
     if patroon["beste_uren"]:
-        r += "⏰ BESTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["beste_uren"][:4]) + "\n"
+        r += "â° BESTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["beste_uren"][:4]) + "\n"
     if patroon["slechte_uren"]:
-        r += "⛔ SLECHTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["slechte_uren"][:3]) + "\n"
+        r += "â SLECHTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["slechte_uren"][:3]) + "\n"
     if patroon["beste_dagen"]:
-        r += "📅 BESTE DAGEN: " + ", ".join(f"{d['dag']} ({d['wr']:.0f}%)" for d in patroon["beste_dagen"]) + "\n"
+        r += "ð BESTE DAGEN: " + ", ".join(f"{d['dag']} ({d['wr']:.0f}%)" for d in patroon["beste_dagen"]) + "\n"
     r += "\n"
 
     r += (
-        f"🪙 COIN ROTATIE:\n"
-        f"• Blacklist: {coin_rot['bl_totaal']} | Whitelist: {coin_rot['wl_totaal']}\n"
+        f"ðª COIN ROTATIE:\n"
+        f"â¢ Blacklist: {coin_rot['bl_totaal']} | Whitelist: {coin_rot['wl_totaal']}\n"
     )
     if coin_rot["bl_nieuw"]:
-        r += f"• Nieuw geblokkeerd: {', '.join(coin_rot['bl_nieuw'][:3])}\n"
+        r += f"â¢ Nieuw geblokkeerd: {', '.join(coin_rot['bl_nieuw'][:3])}\n"
     if coin_rot["wl_nieuw"]:
-        r += f"• Nieuwe topper: {', '.join(coin_rot['wl_nieuw'][:3])}\n"
+        r += f"â¢ Nieuwe topper: {', '.join(coin_rot['wl_nieuw'][:3])}\n"
     r += "\n"
 
     if stop_advies["actie"] != "OK":
         r += (
-            f"🛑 STOP LOSS: {stop_advies['actie']}\n"
-            f"• ATR: {stop_advies['huidig']:.1f} → {stop_advies['aanbeveling']:.1f}\n"
-            f"• {stop_advies['reden']}\n\n"
+            f"ð STOP LOSS: {stop_advies['actie']}\n"
+            f"â¢ ATR: {stop_advies['huidig']:.1f} â {stop_advies['aanbeveling']:.1f}\n"
+            f"â¢ {stop_advies['reden']}\n\n"
         )
 
-    ed_st = "⚠️" if (swr - lwr) > EDGE_DECAY_DREMPEL else "✅"
-    r += f"⚡ EDGE DECAY: Sim {swr:.1f}% vs Live {lwr:.1f}% {ed_st}\n\n"
-    r += f"📈 PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} → {pf_trend.get('tweede_helft',0):.2f})\n\n"
+    ed_st = "â ï¸" if (swr - lwr) > EDGE_DECAY_DREMPEL else "â"
+    r += f"â¡ EDGE DECAY: Sim {swr:.1f}% vs Live {lwr:.1f}% {ed_st}\n\n"
+    r += f"ð PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} â {pf_trend.get('tweede_helft',0):.2f})\n\n"
 
     # Automatische aanpassingen bepalen
     auto_aanp = []
@@ -1158,9 +1158,9 @@ def bouw_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]]:
     toegepast = pas_parameters_aan(conn, auto_aanp)
 
     if toegepast:
-        r += f"{'─'*34}\n🔧 AUTO AANPASSINGEN ({len(toegepast)}):\n"
+        r += f"{'â'*34}\nð§ AUTO AANPASSINGEN ({len(toegepast)}):\n"
         for a in toegepast:
-            r += f"✅ {a}\n"
+            r += f"â {a}\n"
         r += "\n"
 
     log("Claude finale beoordeling...")
@@ -1168,9 +1168,9 @@ def bouw_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]]:
                                patroon, kansen, edge_decay, pf_trend,
                                toegepast, regime_vsp, dagen)
     if claude_txt:
-        r += f"{'─'*34}\n🧠 CLAUDE:\n{claude_txt}\n\n"
+        r += f"{'â'*34}\nð§  CLAUDE:\n{claude_txt}\n\n"
 
-    r += f"{'─'*34}\n🤖 BOT LOOPT DOOR\nCommands: STATUS | STOP | HEALTH"
+    r += f"{'â'*34}\nð¤ BOT LOOPT DOOR\nCommands: STATUS | STOP | HEALTH"
 
     kansen_lijst = [f"{k['setup']}/{k['regime']} ({k['verwachte_wr']:.1f}% WR)" for k in kansen[:5]]
     return r, toegepast, kansen_lijst
@@ -1189,16 +1189,16 @@ def sla_analyse_op(conn, rapport: str, aanpassingen: List[str], totalen: Dict, d
                   safe_float(totalen.get("profit_factor")),
                   json.dumps(aanpassingen), rapport[:5000]))
         conn.commit()
-        log("✅ Analyse opgeslagen in DB")
+        log("â Analyse opgeslagen in DB")
     except Exception as e:
-        log(f"⚠️ Opslaan: {e}")
+        log(f"â ï¸ Opslaan: {e}")
 
 
 # ============================================================
-# LICHTE HEALTH CHECK — elk uur
+# LICHTE HEALTH CHECK â elk uur
 # ============================================================
 def run_health_check(conn) -> None:
-    """Licht health check — stuurt alleen WhatsApp bij problemen."""
+    """Licht health check â stuurt alleen WhatsApp bij problemen."""
     log("Health check...")
 
     # Drawdown
@@ -1244,23 +1244,23 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
               alleen_health: bool = False) -> str:
     start_tijd = now_utc()
     log("=" * 60)
-    log(f"AI Coach v2.0 — {'Health check' if alleen_health else f'Analyse {dagen} dagen'}")
+    log(f"AI Coach v2.0 â {'Health check' if alleen_health else f'Analyse {dagen} dagen'}")
     log("=" * 60)
-    log(f"Database:   {'✅' if DATABASE_URL else '❌'}")
-    log(f"Claude API: {'✅' if ANTHROPIC_API_KEY else '⚠️'}")
-    log(f"Twilio:     {'✅' if TWILIO_ACCOUNT_SID else '⚠️'}")
+    log(f"Database:   {'â' if DATABASE_URL else 'â'}")
+    log(f"Claude API: {'â' if ANTHROPIC_API_KEY else 'â ï¸'}")
+    log(f"Twilio:     {'â' if TWILIO_ACCOUNT_SID else 'â ï¸'}")
 
     if not DATABASE_URL:
-        return "❌ DATABASE_URL ontbreekt"
+        return "â DATABASE_URL ontbreekt"
 
     try:
         conn = db_connect()
-        log("✅ Database verbonden")
+        log("â Database verbonden")
 
         zorg_voor_coach_tabellen(conn)
 
-        # ── ALTIJD UITVOEREN (ook bij health check) ──────────
-        log("🔍 Systeem monitoring...")
+        # ââ ALTIJD UITVOEREN (ook bij health check) ââââââââââ
+        log("ð Systeem monitoring...")
         state_diff       = maak_state_snapshot(conn)      # detecteer alle config wijzigingen
         bestand_changes  = monitor_bestand_wijzigingen(conn)  # code wijzigingen
         env_data         = monitor_env_variabelen(conn)   # ENV vs state conflicten
@@ -1277,7 +1277,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
             audit_txt = format_systeem_audit(systeem_audit)
             env_txt   = format_env_rapport(env_data)
             conn.close()
-            return f"✅ Health check klaar\n\n{audit_txt}{env_txt}"
+            return f"â Health check klaar\n\n{audit_txt}{env_txt}"
 
         # Hoeveel trades beschikbaar?
         n_trades = run_scalar(conn, """
@@ -1287,10 +1287,10 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
           AND COALESCE(exit_time,updated_at) >= NOW() - INTERVAL '1 day' * %s
         """, (dagen,), 0)
 
-        log(f"📊 {n_trades} trades gevonden")
+        log(f"ð {n_trades} trades gevonden")
 
         if safe_int(n_trades) < MIN_TRADES_FOR_ANALYSE:
-            # Te weinig data — toch volledige monitoring uitvoeren
+            # Te weinig data â toch volledige monitoring uitvoeren
             coin_data = get_coin_performance(conn, dagen)
             if coin_data:
                 update_coin_rotatie(conn, coin_data)
@@ -1301,15 +1301,15 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
             open_pos = check_open_posities_realtime(conn)
 
             bericht = (
-                f"🧠 AI COACH v2.0\n{'─'*28}\n\n"
+                f"ð§  AI COACH v2.0\n{'â'*28}\n\n"
                 f"Te weinig trades: {n_trades} (min: {MIN_TRADES_FOR_ANALYSE})\n\n"
                 f"Wel uitgevoerd:\n"
-                f"• Coin rotatie bijgewerkt\n"
-                f"• Kansen gedetecteerd\n"
-                f"• Drawdown check\n"
-                f"• Systeem audit: {systeem_audit.get('score',0)}/100\n"
-                f"• Open posities: {open_pos.get('n_open',0)}\n"
-                f"• Alarmen: {len(alarmen)}\n\n"
+                f"â¢ Coin rotatie bijgewerkt\n"
+                f"â¢ Kansen gedetecteerd\n"
+                f"â¢ Drawdown check\n"
+                f"â¢ Systeem audit: {systeem_audit.get('score',0)}/100\n"
+                f"â¢ Open posities: {open_pos.get('n_open',0)}\n"
+                f"â¢ Alarmen: {len(alarmen)}\n\n"
                 f"Commands: STATUS | HEALTH"
             )
             schrijf_dagboek(conn, bericht, [], alarmen,
@@ -1320,7 +1320,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
             conn.close()
             return bericht
 
-        # Volledige analyse — uitgebreid voor ≥30 dagen (maandelijkse run)
+        # Volledige analyse â uitgebreid voor â¥30 dagen (maandelijkse run)
         totalen = get_totale_statistieken(conn, dagen)
         if dagen >= 30:
             rapport, aanpassingen, kansen_lijst = bouw_uitgebreid_rapport(conn, dagen)
@@ -1337,9 +1337,9 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
 
         # Voeg monitoring info toe aan rapport
         monitoring_blok = (
-            f"\n{'─'*34}\n"
-            f"🔍 SYSTEEM MONITORING\n"
-            f"{'─'*34}\n"
+            f"\n{'â'*34}\n"
+            f"ð SYSTEEM MONITORING\n"
+            f"{'â'*34}\n"
             + format_systeem_audit(systeem_audit)
             + format_data_versheid(data_versheid)
             + format_trade_flow(trade_flow)
@@ -1350,21 +1350,21 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
         )
 
         if bestand_changes.get("n", 0) > 0:
-            monitoring_blok += f"📝 CODE WIJZIGINGEN: {bestand_changes['n']} bestanden gewijzigd\n"
+            monitoring_blok += f"ð CODE WIJZIGINGEN: {bestand_changes['n']} bestanden gewijzigd\n"
             for w in bestand_changes.get("gewijzigd", []):
-                monitoring_blok += f"  • {w['bestand']}: {w['delta_regels']:+d} regels\n"
+                monitoring_blok += f"  â¢ {w['bestand']}: {w['delta_regels']:+d} regels\n"
             monitoring_blok += "\n"
 
         if state_diff:
-            monitoring_blok += f"⚙️ STATE DIFF: {len(state_diff)} wijzigingen\n"
+            monitoring_blok += f"âï¸ STATE DIFF: {len(state_diff)} wijzigingen\n"
             for k, v in list(state_diff.items())[:5]:
-                monitoring_blok += f"  • {k}: {str(v.get('oud',''))[:15]} → {str(v.get('nieuw',''))[:15]}\n"
+                monitoring_blok += f"  â¢ {k}: {str(v.get('oud',''))[:15]} â {str(v.get('nieuw',''))[:15]}\n"
             monitoring_blok += "\n"
 
         if len(regime_hist) > 0:
-            monitoring_blok += f"🔀 REGIME HISTORY (30d): {len(regime_hist)} overgangen\n"
+            monitoring_blok += f"ð REGIME HISTORY (30d): {len(regime_hist)} overgangen\n"
             for rh in regime_hist[:3]:
-                monitoring_blok += f"  • {safe_str(rh.get('tijdstip',''))[:10]}: {rh.get('oud_regime')} → {rh.get('nieuw_regime')}\n"
+                monitoring_blok += f"  â¢ {safe_str(rh.get('tijdstip',''))[:10]}: {rh.get('oud_regime')} â {rh.get('nieuw_regime')}\n"
             monitoring_blok += "\n"
 
         if commando_hist:
@@ -1374,7 +1374,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
 
         # Dagboek schrijven
         schrijf_dagboek(conn, rapport, aanpassingen,
-                        [],  # anomalieën al in uitgebreid rapport
+                        [],  # anomalieÃ«n al in uitgebreid rapport
                         totalen, start_tijd)
 
         sla_analyse_op(conn, rapport, aanpassingen, totalen, dagen)
@@ -1383,7 +1383,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
         try:
             update_experience_scoreboard(conn)
         except Exception as e:
-            log(f"⚠️ Scoreboard update: {e}")
+            log(f"â ï¸ Scoreboard update: {e}")
 
         try:
             setup_patronen = analyseer_setup_leerpatronen(conn, dagen)
@@ -1391,7 +1391,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
                 set_bot_state(conn, "coach_setup_aanbevelingen",
                               json.dumps(setup_patronen["aanbevelingen"][:3], ensure_ascii=False))
         except Exception as e:
-            log(f"⚠️ Setup patronen: {e}")
+            log(f"â ï¸ Setup patronen: {e}")
 
         try:
             regime_effect = detecteer_regime_effect(conn, dagen)
@@ -1399,7 +1399,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
                           json.dumps({k: v.get("gem_wr",0) for k,v in regime_effect.items()},
                                      ensure_ascii=False))
         except Exception as e:
-            log(f"⚠️ Regime effect: {e}")
+            log(f"â ï¸ Regime effect: {e}")
 
         try:
             verwachting = bereken_verwachte_maandwinst(conn)
@@ -1407,9 +1407,9 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
                 set_bot_state(conn, "coach_verwachte_maandwinst",
                               json.dumps(verwachting, ensure_ascii=False))
         except Exception as e:
-            log(f"⚠️ Maandverwachting: {e}")
+            log(f"â ï¸ Maandverwachting: {e}")
 
-        log(f"✅ Klaar | {len(aanpassingen)} aanpassingen | {len(kansen_lijst)} kansen")
+        log(f"â Klaar | {len(aanpassingen)} aanpassingen | {len(kansen_lijst)} kansen")
         log_event(conn, "COACH", "KLAAR",
                   f"Coach klaar in {(now_utc()-start_tijd).total_seconds():.0f}s",
                   {"aanpassingen": len(aanpassingen), "kansen": len(kansen_lijst)})
@@ -1422,20 +1422,20 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
             audit_score = systeem_audit.get("score", 100)
 
             kort = (
-                f"🧠 AI COACH — {now_utc().strftime('%d %B')}\n"
-                f"{'─'*28}\n\n"
-                f"📊 {safe_int(totalen.get('n'))} trades | WR:{wr:.1f}% | PF:{pf:.2f}\n"
-                f"💶 PnL: {'+'if pnl>=0 else ''}€{pnl:.4f}\n"
-                f"🔍 Systeem: {audit_score}/100\n\n"
+                f"ð§  AI COACH â {now_utc().strftime('%d %B')}\n"
+                f"{'â'*28}\n\n"
+                f"ð {safe_int(totalen.get('n'))} trades | WR:{wr:.1f}% | PF:{pf:.2f}\n"
+                f"ð¶ PnL: {'+'if pnl>=0 else ''}â¬{pnl:.4f}\n"
+                f"ð Systeem: {audit_score}/100\n\n"
             )
             if aanpassingen:
-                kort += f"🔧 {len(aanpassingen)} aanpassingen gedaan:\n"
+                kort += f"ð§ {len(aanpassingen)} aanpassingen gedaan:\n"
                 for a in aanpassingen[:3]:
-                    kort += f"• {a}\n"
+                    kort += f"â¢ {a}\n"
                 kort += "\n"
             if kansen_lijst:
-                kort += f"🎯 Beste kans: {kansen_lijst[0]}\n\n"
-            kort += "📊 Volledig rapport: zie dashboard\nCommands: ANALYSE | STATUS | STOP"
+                kort += f"ð¯ Beste kans: {kansen_lijst[0]}\n\n"
+            kort += "ð Volledig rapport: zie dashboard\nCommands: ANALYSE | STATUS | STOP"
 
             send_whatsapp(kort)
 
@@ -1443,7 +1443,7 @@ def run_coach(dagen: int = 60, stuur_whatsapp: bool = True,
         return rapport
 
     except Exception as e:
-        fout = f"❌ AI Coach fout: {type(e).__name__}: {e}"
+        fout = f"â AI Coach fout: {type(e).__name__}: {e}"
         log(fout)
         if stuur_whatsapp and TWILIO_ACCOUNT_SID:
             stuur_alert("AI COACH FOUT",
@@ -1513,16 +1513,16 @@ def format_r_verdeling_rapport(data: Dict) -> str:
         return "Geen R-verdeling data\n"
     n = safe_float(data.get("n"))
     return (
-        f"📐 R-MULTIPLE VERDELING:\n"
-        f"• Gem. win R:    {data.get('gem_win_r',0):.2f}R\n"
-        f"• Gem. loss R:   {data.get('gem_loss_r',0):.2f}R\n"
-        f"• Max win R:     {data.get('max_win_r',0):.2f}R\n"
-        f"• Spreiding:     {data.get('stddev_r',0):.2f}R (lager=consistenter)\n"
-        f"• ≥2R trades:    {int(data.get('trades_2r_plus',0))} ({int(data.get('trades_2r_plus',0))/n*100 if n>0 else 0:.0f}%)\n"
-        f"• 1-2R trades:   {int(data.get('trades_1_2r',0))}\n"
-        f"• 0-1R wins:     {int(data.get('trades_0_1r',0))}\n"
-        f"• Full loss:     {int(data.get('trades_full_loss',0))}\n"
-        f"• Expectancy:    {data.get('expectancy',0):.3f}R {'✅' if data.get('expectancy',0)>0 else '❌'}\n\n"
+        f"ð R-MULTIPLE VERDELING:\n"
+        f"â¢ Gem. win R:    {data.get('gem_win_r',0):.2f}R\n"
+        f"â¢ Gem. loss R:   {data.get('gem_loss_r',0):.2f}R\n"
+        f"â¢ Max win R:     {data.get('max_win_r',0):.2f}R\n"
+        f"â¢ Spreiding:     {data.get('stddev_r',0):.2f}R (lager=consistenter)\n"
+        f"â¢ â¥2R trades:    {int(data.get('trades_2r_plus',0))} ({int(data.get('trades_2r_plus',0))/n*100 if n>0 else 0:.0f}%)\n"
+        f"â¢ 1-2R trades:   {int(data.get('trades_1_2r',0))}\n"
+        f"â¢ 0-1R wins:     {int(data.get('trades_0_1r',0))}\n"
+        f"â¢ Full loss:     {int(data.get('trades_full_loss',0))}\n"
+        f"â¢ Expectancy:    {data.get('expectancy',0):.3f}R {'â' if data.get('expectancy',0)>0 else 'â'}\n\n"
     )
 
 
@@ -1532,7 +1532,7 @@ def format_r_verdeling_rapport(data: Dict) -> str:
 def analyseer_score_correlatie(conn, days: int) -> Dict:
     """
     Analyseert de correlatie tussen score en uitkomst.
-    Hoge score moet leiden tot meer wins — anders klopt het scoremodel niet.
+    Hoge score moet leiden tot meer wins â anders klopt het scoremodel niet.
     Detecteert ook of bepaalde score ranges overperformen.
     """
     rows = run_query(conn, """
@@ -1581,15 +1581,15 @@ def format_score_correlatie_rapport(data: Dict) -> str:
     if not data or not data.get("buckets"):
         return ""
     gezond = data.get("correlatie_gezond", True)
-    r = "📊 SCORE → UITKOMST CORRELATIE:\n"
+    r = "ð SCORE â UITKOMST CORRELATIE:\n"
     for row in data["buckets"]:
         bucket = safe_str(row.get("score_bucket"))
         wr     = safe_float(row.get("win_rate"))
         n      = safe_int(row.get("n"))
         avg_r  = safe_float(row.get("avg_r"))
-        r += f"• Score {bucket}: {wr:.1f}% WR | {n} trades | {avg_r:+.2f}R\n"
-    status = "✅ Score correleert correct met win rate" if gezond else "⚠️ Score correleert NIET met win rate — scoremodel herbekijken"
-    r += f"→ {status}\n\n"
+        r += f"â¢ Score {bucket}: {wr:.1f}% WR | {n} trades | {avg_r:+.2f}R\n"
+    status = "â Score correleert correct met win rate" if gezond else "â ï¸ Score correleert NIET met win rate â scoremodel herbekijken"
+    r += f"â {status}\n\n"
     return r
 
 
@@ -1662,13 +1662,13 @@ def analyseer_houdtijd(conn, days: int) -> Dict:
             "n": safe_int(r.get("n")),
         }
 
-    # Detecteer anomalieën: als verliezende trades langer open staan dan winners
+    # Detecteer anomalieÃ«n: als verliezende trades langer open staan dan winners
     anomalieen = []
     for setup, data in per_setup.items():
         win_uur  = data.get("WIN",  {}).get("gem_uren", 0)
         loss_uur = data.get("LOSS", {}).get("gem_uren", 0)
         if loss_uur > win_uur * 1.5 and win_uur > 0:
-            anomalieen.append(f"{setup}: verliezen staan {loss_uur:.1f}u open vs {win_uur:.1f}u bij wins — overweeg kortere max houdtijd")
+            anomalieen.append(f"{setup}: verliezen staan {loss_uur:.1f}u open vs {win_uur:.1f}u bij wins â overweeg kortere max houdtijd")
 
     sla_geheugen_op(conn, "houdtijd", f"analyse_{days}d", {"per_setup": per_setup, "anomalieen": anomalieen})
     return {"per_setup": per_setup, "anomalieen": anomalieen}
@@ -1677,16 +1677,16 @@ def analyseer_houdtijd(conn, days: int) -> Dict:
 def format_houdtijd_rapport(data: Dict) -> str:
     if not data:
         return ""
-    r = "⏱️ HOUDTIJD ANALYSE:\n"
+    r = "â±ï¸ HOUDTIJD ANALYSE:\n"
     for setup, info in list(data.get("per_setup", {}).items())[:5]:
         win_u  = info.get("WIN",  {}).get("gem_uren", 0)
         loss_u = info.get("LOSS", {}).get("gem_uren", 0)
         if win_u > 0 or loss_u > 0:
-            r += f"• {setup}: WIN {win_u:.1f}u | LOSS {loss_u:.1f}u\n"
+            r += f"â¢ {setup}: WIN {win_u:.1f}u | LOSS {loss_u:.1f}u\n"
     if data.get("anomalieen"):
-        r += "⚠️ Anomalieën:\n"
+        r += "â ï¸ AnomalieÃ«n:\n"
         for a in data["anomalieen"][:2]:
-            r += f"  → {a}\n"
+            r += f"  â {a}\n"
     r += "\n"
     return r
 
@@ -1748,12 +1748,12 @@ def format_week_vergelijking(data: Dict) -> str:
     h = data["huidig"]
     v = data["vorig"]
     d = data.get("wr_diff", 0)
-    trend_emoji = "📈" if data.get("trend") == "verbeterend" else "📉" if data.get("trend") == "verslechterend" else "➡️"
+    trend_emoji = "ð" if data.get("trend") == "verbeterend" else "ð" if data.get("trend") == "verslechterend" else "â¡ï¸"
     return (
-        f"📅 WEEK VERGELIJKING:\n"
-        f"• Deze week:   {h.get('win_rate',0):.1f}% WR | {h.get('n',0)} trades | PnL: €{h.get('pnl',0):.4f}\n"
-        f"• Vorige week: {v.get('win_rate',0):.1f}% WR | {v.get('n',0)} trades | PnL: €{v.get('pnl',0):.4f}\n"
-        f"• Verschil: {d:+.1f}% WR {trend_emoji} {data.get('trend','')}\n\n"
+        f"ð WEEK VERGELIJKING:\n"
+        f"â¢ Deze week:   {h.get('win_rate',0):.1f}% WR | {h.get('n',0)} trades | PnL: â¬{h.get('pnl',0):.4f}\n"
+        f"â¢ Vorige week: {v.get('win_rate',0):.1f}% WR | {v.get('n',0)} trades | PnL: â¬{v.get('pnl',0):.4f}\n"
+        f"â¢ Verschil: {d:+.1f}% WR {trend_emoji} {data.get('trend','')}\n\n"
     )
 
 
@@ -1763,7 +1763,7 @@ def format_week_vergelijking(data: Dict) -> str:
 def analyseer_fee_impact(conn, days: int) -> Dict:
     """
     Berekent exacte fee impact op de winst.
-    Als fees te hoog zijn relatief aan de winst → score drempel verhogen.
+    Als fees te hoog zijn relatief aan de winst â score drempel verhogen.
     """
     rows = run_query(conn, """
     SELECT
@@ -1812,13 +1812,13 @@ def analyseer_fee_impact(conn, days: int) -> Dict:
 def format_fee_rapport(data: Dict) -> str:
     if not data:
         return ""
-    waarschuwing = " ⚠️ HOOG" if data.get("fee_pct_winst", 0) > 25 else " ✅"
+    waarschuwing = " â ï¸ HOOG" if data.get("fee_pct_winst", 0) > 25 else " â"
     return (
-        f"💰 FEE IMPACT:\n"
-        f"• Bruto winst:  €{data.get('bruto_winst',0):.4f}\n"
-        f"• Totale fees:  €{data.get('totale_fees',0):.4f} ({data.get('fee_pct_winst',0):.1f}% van winst){waarschuwing}\n"
-        f"• Gem. fee/trade: €{data.get('gem_fee_per_trade',0):.4f}\n"
-        f"• Netto resultaat: €{data.get('netto_winst',0):.4f}\n\n"
+        f"ð° FEE IMPACT:\n"
+        f"â¢ Bruto winst:  â¬{data.get('bruto_winst',0):.4f}\n"
+        f"â¢ Totale fees:  â¬{data.get('totale_fees',0):.4f} ({data.get('fee_pct_winst',0):.1f}% van winst){waarschuwing}\n"
+        f"â¢ Gem. fee/trade: â¬{data.get('gem_fee_per_trade',0):.4f}\n"
+        f"â¢ Netto resultaat: â¬{data.get('netto_winst',0):.4f}\n\n"
     )
 
 
@@ -1910,19 +1910,19 @@ def backtest_score_drempel(conn, nieuwe_drempel: int, days: int = 90) -> Dict:
 
 def format_backtest_rapport(conn, days: int) -> str:
     """Test score drempel +3 en -3 en geeft advies."""
-    r = "🧪 BACKTEST SCORE DREMPEL:\n"
+    r = "ð§ª BACKTEST SCORE DREMPEL:\n"
     for test_drempel in [MIN_SCORE_TO_TRADE - 3, MIN_SCORE_TO_TRADE + 3]:
         if test_drempel < 75 or test_drempel > 99:
             continue
         bt = backtest_score_drempel(conn, test_drempel, days)
-        pijl = "↑" if bt.get("wr_verschil", 0) > 0 else "↓"
+        pijl = "â" if bt.get("wr_verschil", 0) > 0 else "â"
         r += (
-            f"• Drempel {test_drempel}: "
+            f"â¢ Drempel {test_drempel}: "
             f"WR {bt.get('nieuw_wr',0):.1f}% ({bt.get('wr_verschil',0):+.1f}%) {pijl} | "
             f"{bt.get('nieuw_n',0)} trades ({bt.get('trade_verschil',0):+d}) | "
-            f"PnL {bt.get('pnl_verschil',0):+.4f}€\n"
+            f"PnL {bt.get('pnl_verschil',0):+.4f}â¬\n"
         )
-    r += f"→ Huidig optimaal: score ≥ {MIN_SCORE_TO_TRADE}\n\n"
+    r += f"â Huidig optimaal: score â¥ {MIN_SCORE_TO_TRADE}\n\n"
     return r
 
 
@@ -1957,7 +1957,7 @@ def genereer_scanner_suggesties(conn, kansen: List[Dict], setup_gew: Dict,
     # Regime overgang verwacht
     if huidig_regime != verwacht_regime:
         suggesties.append(
-            f"OPGELET: regime overgang verwacht {huidig_regime} → {verwacht_regime}. "
+            f"OPGELET: regime overgang verwacht {huidig_regime} â {verwacht_regime}. "
             f"Wees voorzichtiger met nieuwe trades."
         )
 
@@ -1969,7 +1969,7 @@ def genereer_scanner_suggesties(conn, kansen: List[Dict], setup_gew: Dict,
 
 
 # ============================================================
-# FEATURE 17: PROACTIEVE MONITORING — ALARM SYSTEEM
+# FEATURE 17: PROACTIEVE MONITORING â ALARM SYSTEEM
 # ============================================================
 def check_alle_alarmen(conn) -> List[Dict]:
     """
@@ -1996,14 +1996,14 @@ def check_alle_alarmen(conn) -> List[Dict]:
                 alarmen.append({
                     "niveau": "KRITIEK",
                     "titel": "WIN RATE KRITIEK LAAG",
-                    "bericht": f"Win rate 7d: {wr:.1f}% ({n} trades) — onder 35%",
+                    "bericht": f"Win rate 7d: {wr:.1f}% ({n} trades) â onder 35%",
                     "actie": "Bot tijdelijk pauzeren overwegen"
                 })
             elif n >= 5 and wr < 45:
                 alarmen.append({
                     "niveau": "HOOG",
                     "titel": "WIN RATE ONDER DOEL",
-                    "bericht": f"Win rate 7d: {wr:.1f}% ({n} trades) — onder 45%",
+                    "bericht": f"Win rate 7d: {wr:.1f}% ({n} trades) â onder 45%",
                     "actie": "Score drempel verhogen naar 94+"
                 })
 
@@ -2022,14 +2022,14 @@ def check_alle_alarmen(conn) -> List[Dict]:
                 alarmen.append({
                     "niveau": "KRITIEK",
                     "titel": "PROFIT FACTOR ONDER 1.0",
-                    "bericht": f"PF 30d: {pf:.2f} — systeem verliest geld",
+                    "bericht": f"PF 30d: {pf:.2f} â systeem verliest geld",
                     "actie": "STOP bot en analyseer alle parameters"
                 })
             elif 0 < pf < 1.3:
                 alarmen.append({
                     "niveau": "HOOG",
                     "titel": "PROFIT FACTOR LAAG",
-                    "bericht": f"PF 30d: {pf:.2f} — onder doel 1.5",
+                    "bericht": f"PF 30d: {pf:.2f} â onder doel 1.5",
                     "actie": "Score drempel verhogen, slechte setups stoppen"
                 })
 
@@ -2048,7 +2048,7 @@ def check_alle_alarmen(conn) -> List[Dict]:
                 alarmen.append({
                     "niveau": "HOOG",
                     "titel": "GROOT DAGVERLIES",
-                    "bericht": f"PnL vandaag: €{pnl_dag:.4f} — bijna dagbudget",
+                    "bericht": f"PnL vandaag: â¬{pnl_dag:.4f} â bijna dagbudget",
                     "actie": "Stuur STOP als dagbudget bereikt"
                 })
 
@@ -2085,7 +2085,7 @@ def check_alle_alarmen(conn) -> List[Dict]:
             })
 
     except Exception as e:
-        log(f"⚠️ Alarm check fout: {e}")
+        log(f"â ï¸ Alarm check fout: {e}")
 
     # Sla alarmen op in bot_state voor dashboard
     if alarmen:
@@ -2096,17 +2096,17 @@ def check_alle_alarmen(conn) -> List[Dict]:
             for alarm in kritiek + hoog:
                 stuur_alert(alarm["titel"], alarm["bericht"], alarm["actie"])
 
-    log(f"🚨 {len(alarmen)} alarmen gevonden ({sum(1 for a in alarmen if a['niveau']=='KRITIEK')} kritiek)")
+    log(f"ð¨ {len(alarmen)} alarmen gevonden ({sum(1 for a in alarmen if a['niveau']=='KRITIEK')} kritiek)")
     return alarmen
 
 
 def format_alarm_rapport(alarmen: List[Dict]) -> str:
     if not alarmen:
-        return "🟢 GEEN ALARMEN — alles in orde\n\n"
-    r = f"🚨 ALARMEN ({len(alarmen)}):\n"
+        return "ð¢ GEEN ALARMEN â alles in orde\n\n"
+    r = f"ð¨ ALARMEN ({len(alarmen)}):\n"
     for a in alarmen:
-        emoji = "🔴" if a["niveau"] == "KRITIEK" else "🟡" if a["niveau"] == "HOOG" else "⚪"
-        r += f"{emoji} {a['titel']}: {a['bericht']}\n   → {a['actie']}\n"
+        emoji = "ð´" if a["niveau"] == "KRITIEK" else "ð¡" if a["niveau"] == "HOOG" else "âª"
+        r += f"{emoji} {a['titel']}: {a['bericht']}\n   â {a['actie']}\n"
     r += "\n"
     return r
 
@@ -2172,23 +2172,23 @@ def bereken_coin_ranking(conn, days: int) -> Dict:
 def format_coin_ranking(data: Dict) -> str:
     if not data:
         return ""
-    r = "🏆 COIN RANKING (composite score):\n"
+    r = "ð COIN RANKING (composite score):\n"
     r += "  TOP:\n"
     for c in data.get("top5", [])[:3]:
         r += (
-            f"  • {safe_str(c.get('coin'))}: "
+            f"  â¢ {safe_str(c.get('coin'))}: "
             f"score={c.get('composite_score',0):.0f} | "
             f"WR={safe_float(c.get('win_rate')):.1f}% | "
             f"PF={safe_float(c.get('profit_factor')):.2f} | "
-            f"PnL=€{safe_float(c.get('total_pnl')):.4f}\n"
+            f"PnL=â¬{safe_float(c.get('total_pnl')):.4f}\n"
         )
     r += "  ZWAK:\n"
     for c in data.get("bottom5", [])[:3]:
         r += (
-            f"  • {safe_str(c.get('coin'))}: "
+            f"  â¢ {safe_str(c.get('coin'))}: "
             f"score={c.get('composite_score',0):.0f} | "
             f"WR={safe_float(c.get('win_rate')):.1f}% | "
-            f"PnL=€{safe_float(c.get('total_pnl')):.4f}\n"
+            f"PnL=â¬{safe_float(c.get('total_pnl')):.4f}\n"
         )
     r += "\n"
     return r
@@ -2225,9 +2225,9 @@ def update_dashboard_data(conn, totalen: Dict, kansen: List[Dict],
         }
         set_bot_state(conn, "coach_dashboard_data",
                       json.dumps(dashboard, ensure_ascii=False, default=str))
-        log("✅ Dashboard data bijgewerkt")
+        log("â Dashboard data bijgewerkt")
     except Exception as e:
-        log(f"⚠️ Dashboard data fout: {e}")
+        log(f"â ï¸ Dashboard data fout: {e}")
 
 
 # ============================================================
@@ -2260,23 +2260,23 @@ def get_maandelijkse_performance(conn) -> List[Dict]:
 def format_maand_performance(rows: List[Dict]) -> str:
     if not rows:
         return ""
-    r = "📆 MAANDELIJKSE PERFORMANCE:\n"
+    r = "ð MAANDELIJKSE PERFORMANCE:\n"
     for row in rows:
         maand = safe_str(row.get("maand"))
         wr    = safe_float(row.get("win_rate"))
         n     = safe_int(row.get("n"))
         pnl   = safe_float(row.get("pnl"))
         pf    = safe_float(row.get("profit_factor"))
-        emoji = "✅" if wr >= 55 and pf >= 1.3 else "⚠️" if wr >= 45 else "❌"
+        emoji = "â" if wr >= 55 and pf >= 1.3 else "â ï¸" if wr >= 45 else "â"
         s = "+" if pnl >= 0 else ""
-        r += f"• {maand}: {wr:.1f}% WR | {n} trades | {s}€{pnl:.4f} | PF:{pf:.2f} {emoji}\n"
+        r += f"â¢ {maand}: {wr:.1f}% WR | {n} trades | {s}â¬{pnl:.4f} | PF:{pf:.2f} {emoji}\n"
     r += "\n"
     return r
 
 
 # ============================================================
 # ============================================================
-# VOLLEDIGE TOEGANG — BITVAVO API
+# VOLLEDIGE TOEGANG â BITVAVO API
 # De coach kan de live Bitvavo account bekijken:
 # balances, open orders, recente trades, marktprijzen
 # ============================================================
@@ -2318,10 +2318,10 @@ def _bitvavo_get(path: str) -> Optional[Any]:
         resp = requests.get(f"{BITVAVO_BASE}/v2{path}", headers=headers, timeout=10)
         if resp.ok:
             return resp.json()
-        log(f"⚠️ Bitvavo {path}: {resp.status_code}")
+        log(f"â ï¸ Bitvavo {path}: {resp.status_code}")
         return None
     except Exception as e:
-        log(f"⚠️ Bitvavo fout: {e}")
+        log(f"â ï¸ Bitvavo fout: {e}")
         return None
 
 
@@ -2405,7 +2405,7 @@ def analyseer_bitvavo_account(conn) -> Dict:
     if not BITVAVO_API_KEY:
         return {"beschikbaar": False, "reden": "BITVAVO_API_KEY niet ingesteld"}
 
-    log("📊 Bitvavo account ophalen...")
+    log("ð Bitvavo account ophalen...")
     balances    = get_bitvavo_balances()
     open_orders = get_bitvavo_open_orders()
     prijzen     = get_bitvavo_ticker_prices()
@@ -2463,39 +2463,39 @@ def analyseer_bitvavo_account(conn) -> Dict:
             "Check open posities via TRADES command"
         )
 
-    log(f"✅ Bitvavo: €{portfolio['totaal_eur']:.2f} portfolio | {len(open_orders)} open orders")
+    log(f"â Bitvavo: â¬{portfolio['totaal_eur']:.2f} portfolio | {len(open_orders)} open orders")
     return resultaat
 
 
 def format_bitvavo_rapport(data: Dict) -> str:
     if not data.get("beschikbaar"):
-        return f"⚠️ Bitvavo API: {data.get('reden','niet beschikbaar')}\n\n"
+        return f"â ï¸ Bitvavo API: {data.get('reden','niet beschikbaar')}\n\n"
 
     p = data.get("portfolio", {})
     r = (
-        f"💱 BITVAVO ACCOUNT:\n"
-        f"• Totaal portfolio: €{p.get('totaal_eur',0):.4f}\n"
-        f"• Cash EUR:         €{p.get('eur_cash',0):.4f}\n"
-        f"• Crypto assets:    {p.get('n_assets',0)} coins\n"
-        f"• Open orders:      {data.get('open_orders',0)}\n"
-        f"• Bot posities:     {data.get('bot_posities',0)}\n"
+        f"ð± BITVAVO ACCOUNT:\n"
+        f"â¢ Totaal portfolio: â¬{p.get('totaal_eur',0):.4f}\n"
+        f"â¢ Cash EUR:         â¬{p.get('eur_cash',0):.4f}\n"
+        f"â¢ Crypto assets:    {p.get('n_assets',0)} coins\n"
+        f"â¢ Open orders:      {data.get('open_orders',0)}\n"
+        f"â¢ Bot posities:     {data.get('bot_posities',0)}\n"
     )
     assets = p.get("assets", [])
     if assets:
         r += "  Top holdings:\n"
         for a in assets[:4]:
             if a["symbol"] != "EUR":
-                r += f"  • {a['symbol']}: {a['hoeveelheid']:.6f} = €{a['eur_waarde']:.4f}\n"
+                r += f"  â¢ {a['symbol']}: {a['hoeveelheid']:.6f} = â¬{a['eur_waarde']:.4f}\n"
     if data.get("discrepanties"):
-        r += "⚠️ DISCREPANTIES:\n"
+        r += "â ï¸ DISCREPANTIES:\n"
         for d in data["discrepanties"]:
-            r += f"  → {d}\n"
+            r += f"  â {d}\n"
     r += "\n"
     return r
 
 
 # ============================================================
-# VOLLEDIGE TOEGANG — ALLE DATABASE TABELLEN
+# VOLLEDIGE TOEGANG â ALLE DATABASE TABELLEN
 # De coach leest en analyseert alle tabellen:
 # candles, market_regime, pending_approvals, bot_state,
 # btc_regime_4h, experience_scoreboard, fetcher_state
@@ -2581,7 +2581,7 @@ def analyseer_candle_database(conn) -> Dict:
             "schema_cols":       sorted(beschikbare_cols),
         }
     except Exception as e:
-        log(f"⚠️ Candle analyse: {e}")
+        log(f"â ï¸ Candle analyse: {e}")
         return {}
 
 
@@ -2631,7 +2631,7 @@ def analyseer_pending_approvals(conn) -> Dict:
             "executie_ratio_7d": round(executie_ratio, 1),
         }
     except Exception as e:
-        log(f"⚠️ Pending approvals analyse: {e}")
+        log(f"â ï¸ Pending approvals analyse: {e}")
         return {}
 
 
@@ -2665,7 +2665,7 @@ def analyseer_scoreboard_kwaliteit(conn) -> Dict:
             "te_weinig_data": safe_int(weinig_data),
         }
     except Exception as e:
-        log(f"⚠️ Scoreboard kwaliteit: {e}")
+        log(f"â ï¸ Scoreboard kwaliteit: {e}")
         return {}
 
 
@@ -2685,7 +2685,7 @@ def lees_alle_bot_state(conn) -> Dict:
             state[key] = val
         return state
     except Exception as e:
-        log(f"⚠️ Bot state lezen: {e}")
+        log(f"â ï¸ Bot state lezen: {e}")
         return {}
 
 
@@ -2721,9 +2721,9 @@ def analyseer_bot_configuratie(conn) -> Dict:
     if huidig["trading_start"] >= huidig["trading_end"]:
         conflicten.append(f"Trading hours conflict: start {huidig['trading_start']} >= end {huidig['trading_end']}")
     if huidig["min_score"] < 80:
-        conflicten.append(f"MIN_SCORE te laag: {huidig['min_score']} — kwaliteit te laag")
+        conflicten.append(f"MIN_SCORE te laag: {huidig['min_score']} â kwaliteit te laag")
     if huidig["max_per_trade"] > 2.0:
-        conflicten.append(f"MAX_PER_TRADE hoog: €{huidig['max_per_trade']:.2f} — verhoog risico")
+        conflicten.append(f"MAX_PER_TRADE hoog: â¬{huidig['max_per_trade']:.2f} â verhoog risico")
 
     return {
         "huidig": huidig,
@@ -2734,7 +2734,7 @@ def analyseer_bot_configuratie(conn) -> Dict:
 
 
 # ============================================================
-# VOLLEDIGE TOEGANG — STATE BESTANDEN
+# VOLLEDIGE TOEGANG â STATE BESTANDEN
 # Leest live_state.json, shadow_trades.json, account_snapshot.json
 # ============================================================
 
@@ -2746,7 +2746,7 @@ def _get_data_dir() -> str:
 
 
 def lees_live_state() -> Dict:
-    """Leest live_state.json — alle open live trades."""
+    """Leest live_state.json â alle open live trades."""
     path = os.path.join(_get_data_dir(), "live_state.json")
     try:
         if os.path.exists(path):
@@ -2760,12 +2760,12 @@ def lees_live_state() -> Dict:
                 "open_trades": data.get("open_trades", []),
             }
     except Exception as e:
-        log(f"⚠️ live_state.json: {e}")
+        log(f"â ï¸ live_state.json: {e}")
     return {"beschikbaar": False, "n_posities": 0, "posities": {}}
 
 
 def lees_shadow_state() -> Dict:
-    """Leest shadow_trades.json — alle open shadow trades."""
+    """Leest shadow_trades.json â alle open shadow trades."""
     path = os.path.join(_get_data_dir(), "shadow_trades.json")
     try:
         if os.path.exists(path):
@@ -2780,12 +2780,12 @@ def lees_shadow_state() -> Dict:
                 "stats": stats,
             }
     except Exception as e:
-        log(f"⚠️ shadow_trades.json: {e}")
+        log(f"â ï¸ shadow_trades.json: {e}")
     return {"beschikbaar": False, "n_posities": 0}
 
 
 def lees_account_snapshot() -> Dict:
-    """Leest account_snapshot.json — laatste Bitvavo portfolio snapshot."""
+    """Leest account_snapshot.json â laatste Bitvavo portfolio snapshot."""
     for path in ["/data/account_snapshot.json",
                  os.path.join(_get_data_dir(), "account_snapshot.json")]:
         try:
@@ -2833,7 +2833,7 @@ def analyseer_open_posities_gezondheid(live_state: Dict,
             if opened > 0:
                 uren_open = (_time.time() - opened) / 3600
                 if uren_open > 20:
-                    problemen.append(f"{symbol}: {uren_open:.1f}u open — bijna max houdtijd")
+                    problemen.append(f"{symbol}: {uren_open:.1f}u open â bijna max houdtijd")
 
             # Check onder stop loss
             if stop > 0 and current < stop:
@@ -2860,19 +2860,19 @@ def format_open_posities_rapport(data: Dict) -> str:
     if not data:
         return ""
     r = (
-        f"📂 OPEN POSITIES:\n"
-        f"• Live open:    {data.get('n_live',0)}\n"
-        f"• Shadow open:  {data.get('n_shadow',0)}\n"
-        f"• Floating PnL: €{data.get('floating_pnl',0):+.4f}\n"
+        f"ð OPEN POSITIES:\n"
+        f"â¢ Live open:    {data.get('n_live',0)}\n"
+        f"â¢ Shadow open:  {data.get('n_shadow',0)}\n"
+        f"â¢ Floating PnL: â¬{data.get('floating_pnl',0):+.4f}\n"
     )
     for pos in data.get("posities_detail", [])[:3]:
         pnl = safe_float(pos.get("pnl"))
-        emoji = "📈" if pnl >= 0 else "📉"
-        r += f"  {emoji} {pos['symbol']}: entry={pos['entry']:.6f} | nu={pos['current']:.6f} | PnL=€{pnl:+.4f}\n"
+        emoji = "ð" if pnl >= 0 else "ð"
+        r += f"  {emoji} {pos['symbol']}: entry={pos['entry']:.6f} | nu={pos['current']:.6f} | PnL=â¬{pnl:+.4f}\n"
     if data.get("problemen"):
-        r += "⚠️ PROBLEMEN:\n"
+        r += "â ï¸ PROBLEMEN:\n"
         for p in data["problemen"]:
-            r += f"  → {p}\n"
+            r += f"  â {p}\n"
     r += "\n"
     return r
 
@@ -2880,12 +2880,12 @@ def format_open_posities_rapport(data: Dict) -> str:
 def format_database_overzicht(overzicht: Dict) -> str:
     if not overzicht:
         return ""
-    r = "🗄️ DATABASE STATUS:\n"
+    r = "ðï¸ DATABASE STATUS:\n"
     for tabel, info in overzicht.items():
         n      = safe_int(info.get("n"))
         bestaat = info.get("bestaat", False)
-        status  = f"{n:,} rijen" if bestaat else "❌ ontbreekt"
-        r += f"• {tabel}: {status}\n"
+        status  = f"{n:,} rijen" if bestaat else "â ontbreekt"
+        r += f"â¢ {tabel}: {status}\n"
     r += "\n"
     return r
 
@@ -2895,24 +2895,24 @@ def format_bot_configuratie_rapport(data: Dict) -> str:
         return ""
     h = data.get("huidig", {})
     r = (
-        f"⚙️ BOT CONFIGURATIE:\n"
-        f"• Bot actief:    {'✅ JA' if h.get('bot_actief') else '🔴 NEE'}\n"
-        f"• Gepauzeerd:    {'⏸️ JA' if h.get('bot_gepauzeerd') else '✅ NEE'}\n"
-        f"• Drawdown modus:{'🔴 JA' if h.get('drawdown_modus') else '✅ NEE'}\n"
-        f"• Min score:     {h.get('min_score',0)}\n"
-        f"• ATR mult:      {h.get('atr_multiplier',0):.1f}\n"
-        f"• Trading uren:  {h.get('trading_start',0)}:00-{h.get('trading_end',0)}:00 UTC\n"
-        f"• Max per trade: €{h.get('max_per_trade',0):.2f}\n"
+        f"âï¸ BOT CONFIGURATIE:\n"
+        f"â¢ Bot actief:    {'â JA' if h.get('bot_actief') else 'ð´ NEE'}\n"
+        f"â¢ Gepauzeerd:    {'â¸ï¸ JA' if h.get('bot_gepauzeerd') else 'â NEE'}\n"
+        f"â¢ Drawdown modus:{'ð´ JA' if h.get('drawdown_modus') else 'â NEE'}\n"
+        f"â¢ Min score:     {h.get('min_score',0)}\n"
+        f"â¢ ATR mult:      {h.get('atr_multiplier',0):.1f}\n"
+        f"â¢ Trading uren:  {h.get('trading_start',0)}:00-{h.get('trading_end',0)}:00 UTC\n"
+        f"â¢ Max per trade: â¬{h.get('max_per_trade',0):.2f}\n"
     )
     if data.get("conflicten"):
-        r += "⚠️ CONFLICTEN:\n"
+        r += "â ï¸ CONFLICTEN:\n"
         for c in data["conflicten"]:
-            r += f"  → {c}\n"
+            r += f"  â {c}\n"
     r += "\n"
     return r
 
 
-# UITGEBREIDE BOUW_RAPPORT — integreert alle nieuwe features
+# UITGEBREIDE BOUW_RAPPORT â integreert alle nieuwe features
 # ============================================================
 def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]]:
     """
@@ -2950,14 +2950,15 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
     r_verdeling  = analyseer_r_verdeling(conn, dagen)
     score_corr   = analyseer_score_correlatie(conn, dagen)
     houdtijd     = analyseer_houdtijd(conn, dagen)
+    anomalieen   = houdtijd.get("anomalieen", [])  # fix: NameError
     week_verg    = vergelijk_periodes(conn)
     fee_data     = analyseer_fee_impact(conn, dagen)
     coin_ranking = bereken_coin_ranking(conn, dagen)
     alarmen      = check_alle_alarmen(conn)
     maand_perf   = get_maandelijkse_performance(conn)
 
-    # ── VOLLEDIGE TOEGANG ─────────────────────────────────
-    log("📡 Volledige toegang: Bitvavo + bestanden + DB + state...")
+    # ââ VOLLEDIGE TOEGANG âââââââââââââââââââââââââââââââââ
+    log("ð¡ Volledige toegang: Bitvavo + bestanden + DB + state...")
 
     # 1. Bitvavo live account
     prijzen       = get_bitvavo_ticker_prices()
@@ -2977,7 +2978,7 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
     pending_stats = analyseer_pending_approvals(conn)
     scoreboard    = analyseer_scoreboard_kwaliteit(conn)
 
-    # 5. Bot configuratie — ENV vs bot_state
+    # 5. Bot configuratie â ENV vs bot_state
     bot_config    = analyseer_bot_configuratie(conn)
 
     # Sla snapshot op voor dashboard
@@ -3004,95 +3005,95 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
     datum = now_utc().strftime("%d %B %Y")
     s = "+" if pnl >= 0 else ""
 
-    # ── RAPPORT OPBOUWEN ──────────────────────────────────
+    # ââ RAPPORT OPBOUWEN ââââââââââââââââââââââââââââââââââ
     r = (
-        f"🧠 AI COACH v2.0 — {datum}\n{'─'*34}\n"
+        f"ð§  AI COACH v2.0 â {datum}\n{'â'*34}\n"
         f"{n} trades | {dagen} dagen | UITGEBREID\n\n"
     )
 
     # Alarmen eerst
     r += format_alarm_rapport(alarmen)
 
-    # ── BITVAVO ACCOUNT ───────────────────────────────────
+    # ââ BITVAVO ACCOUNT âââââââââââââââââââââââââââââââââââ
     r += format_bitvavo_rapport(bitvavo_data)
 
-    # ── OPEN POSITIES ─────────────────────────────────────
+    # ââ OPEN POSITIES âââââââââââââââââââââââââââââââââââââ
     r += format_open_posities_rapport(open_pos)
 
-    # ── BOT CONFIGURATIE ──────────────────────────────────
+    # ââ BOT CONFIGURATIE ââââââââââââââââââââââââââââââââââ
     r += format_bot_configuratie_rapport(bot_config)
 
-    # ── DATABASE STATUS ───────────────────────────────────
+    # ââ DATABASE STATUS âââââââââââââââââââââââââââââââââââ
     r += format_database_overzicht(db_overzicht)
 
-    # ── ACCOUNT SNAPSHOT ──────────────────────────────────
+    # ââ ACCOUNT SNAPSHOT ââââââââââââââââââââââââââââââââââ
     if account_snap.get("beschikbaar"):
         r += (
-            f"📸 ACCOUNT SNAPSHOT:\n"
-            f"• Portfolio: €{account_snap.get('total_eur',0):.4f}\n"
-            f"• Cash EUR:  €{account_snap.get('eur_available',0):.4f}\n"
-            f"• Status:    {account_snap.get('status','?')}\n"
-            f"• Tijdstip:  {account_snap.get('ts','?')}\n\n"
+            f"ð¸ ACCOUNT SNAPSHOT:\n"
+            f"â¢ Portfolio: â¬{account_snap.get('total_eur',0):.4f}\n"
+            f"â¢ Cash EUR:  â¬{account_snap.get('eur_available',0):.4f}\n"
+            f"â¢ Status:    {account_snap.get('status','?')}\n"
+            f"â¢ Tijdstip:  {account_snap.get('ts','?')}\n\n"
         )
 
-    # ── PENDING APPROVALS ─────────────────────────────────
+    # ââ PENDING APPROVALS âââââââââââââââââââââââââââââââââ
     if pending_stats:
         exe_r = pending_stats.get("executie_ratio_7d", 0)
         r += (
-            f"📋 PENDING APPROVALS:\n"
-            f"• Executie ratio (7d): {exe_r:.1f}% {'✅' if exe_r>=15 else '⚠️ laag'}\n"
-            f"• Verlopen vandaag:    {pending_stats.get('verlopen_vandaag',0)}\n"
-            f"• Per status: "
+            f"ð PENDING APPROVALS:\n"
+            f"â¢ Executie ratio (7d): {exe_r:.1f}% {'â' if exe_r>=15 else 'â ï¸ laag'}\n"
+            f"â¢ Verlopen vandaag:    {pending_stats.get('verlopen_vandaag',0)}\n"
+            f"â¢ Per status: "
             + " | ".join(f"{k}:{v}" for k,v in pending_stats.get("per_status",{}).items())
             + "\n\n"
         )
 
-    # ── SCOREBOARD KWALITEIT ──────────────────────────────
+    # ââ SCOREBOARD KWALITEIT ââââââââââââââââââââââââââââââ
     if scoreboard:
         r += (
-            f"🎓 EXPERIENCE SCOREBOARD:\n"
-            f"• Totaal combos:    {scoreboard.get('totaal_combos',0)}\n"
-            f"• Goed presterend:  {scoreboard.get('goed_presterende',0)} (WR≥55%, n≥20)\n"
-            f"• Slecht:           {scoreboard.get('slecht_presterende',0)} (WR<40%, n≥10)\n"
-            f"• Te weinig data:   {scoreboard.get('te_weinig_data',0)} (<10 trades)\n\n"
+            f"ð EXPERIENCE SCOREBOARD:\n"
+            f"â¢ Totaal combos:    {scoreboard.get('totaal_combos',0)}\n"
+            f"â¢ Goed presterend:  {scoreboard.get('goed_presterende',0)} (WRâ¥55%, nâ¥20)\n"
+            f"â¢ Slecht:           {scoreboard.get('slecht_presterende',0)} (WR<40%, nâ¥10)\n"
+            f"â¢ Te weinig data:   {scoreboard.get('te_weinig_data',0)} (<10 trades)\n\n"
         )
 
-    # ── CANDLE DATABASE ───────────────────────────────────
+    # ââ CANDLE DATABASE âââââââââââââââââââââââââââââââââââ
     if candle_stats:
         r += (
-            f"🕯️ CANDLE DATA:\n"
-            f"• Totaal candles:  {candle_stats.get('totaal_candles',0):,}\n"
-            f"• Unieke symbols:  {candle_stats.get('uniek_symbols',0)}\n"
-            f"• Verouderd (>6u): {candle_stats.get('verouderd',0)}"
-            + (f" → {', '.join(candle_stats.get('verouderde_symbols',[])[:3])}" if candle_stats.get("verouderd",0)>0 else "")
+            f"ð¯ï¸ CANDLE DATA:\n"
+            f"â¢ Totaal candles:  {candle_stats.get('totaal_candles',0):,}\n"
+            f"â¢ Unieke symbols:  {candle_stats.get('uniek_symbols',0)}\n"
+            f"â¢ Verouderd (>6u): {candle_stats.get('verouderd',0)}"
+            + (f" â {', '.join(candle_stats.get('verouderde_symbols',[])[:3])}" if candle_stats.get("verouderd",0)>0 else "")
             + "\n\n"
         )
 
     # Overzicht
     r += (
-        f"📊 OVERZICHT:\n"
-        f"• Win rate:      {wr:.1f}% ({safe_int(totalen.get('wins'))}W/{safe_int(totalen.get('losses'))}L)\n"
-        f"• PnL:           {s}€{pnl:.4f}\n"
-        f"• Profit Factor: {pf:.2f} {'✅' if pf>=1.5 else '⚠️'}\n"
-        f"• Drawdown nu:   {dd['huidige_dd']:.2f}R {'🔴' if dd['is_drawdown'] else '✅'}\n\n"
+        f"ð OVERZICHT:\n"
+        f"â¢ Win rate:      {wr:.1f}% ({safe_int(totalen.get('wins'))}W/{safe_int(totalen.get('losses'))}L)\n"
+        f"â¢ PnL:           {s}â¬{pnl:.4f}\n"
+        f"â¢ Profit Factor: {pf:.2f} {'â' if pf>=1.5 else 'â ï¸'}\n"
+        f"â¢ Drawdown nu:   {dd['huidige_dd']:.2f}R {'ð´' if dd['is_drawdown'] else 'â'}\n\n"
     )
 
     if dd_actie:
-        r += f"🔴 DRAWDOWN: {dd_actie}\n\n"
+        r += f"ð´ DRAWDOWN: {dd_actie}\n\n"
 
     r += format_week_vergelijking(week_verg)
     r += format_maand_performance(maand_perf)
 
     if setup_data:
-        r += "⚡ SETUP PERFORMANCE:\n"
+        r += "â¡ SETUP PERFORMANCE:\n"
         for row in setup_data:
             setup = safe_str(row.get("setup"), "-")
             s_wr  = safe_float(row.get("win_rate"))
             s_pf  = safe_float(row.get("profit_factor"))
             s_n   = safe_int(row.get("n"))
             gew   = setup_gew.get(setup, 1.0)
-            st    = "✅" if s_wr>=60 else "⚠️" if s_wr>=45 else "❌"
-            r += f"• {setup}: {s_wr:.1f}% WR | PF:{s_pf:.2f} | {s_n}x | gew:{gew:.1f} {st}\n"
+            st    = "â" if s_wr>=60 else "â ï¸" if s_wr>=45 else "â"
+            r += f"â¢ {setup}: {s_wr:.1f}% WR | PF:{s_pf:.2f} | {s_n}x | gew:{gew:.1f} {st}\n"
         r += "\n"
 
     r += format_score_correlatie_rapport(score_corr)
@@ -3102,53 +3103,53 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
     r += format_coin_ranking(coin_ranking)
 
     r += (
-        f"🔮 REGIME: {regime_vsp.get('huidig','?')} ({regime_vsp.get('strength',0):.0f}%)\n"
-        f"• Verwacht: {regime_vsp.get('voorspelling','?')} ({regime_vsp.get('betrouwbaarheid',0):.0f}%)\n"
-        f"• {regime_vsp.get('reden','')}\n\n"
+        f"ð® REGIME: {regime_vsp.get('huidig','?')} ({regime_vsp.get('strength',0):.0f}%)\n"
+        f"â¢ Verwacht: {regime_vsp.get('voorspelling','?')} ({regime_vsp.get('betrouwbaarheid',0):.0f}%)\n"
+        f"â¢ {regime_vsp.get('reden','')}\n\n"
     )
 
     if kansen:
-        r += "🎯 TRADE KANSEN:\n"
+        r += "ð¯ TRADE KANSEN:\n"
         for k in kansen[:5]:
-            match = "✅" if k["regime_match"] else "➡️"
-            r += f"• {k['setup']}/{k['regime']}: {k['verwachte_wr']:.1f}% WR | {k['prioriteit']} {match}\n"
+            match = "â" if k["regime_match"] else "â¡ï¸"
+            r += f"â¢ {k['setup']}/{k['regime']}: {k['verwachte_wr']:.1f}% WR | {k['prioriteit']} {match}\n"
         r += "\n"
 
     if suggesties:
-        r += "💡 SCANNER SUGGESTIES:\n"
+        r += "ð¡ SCANNER SUGGESTIES:\n"
         for sug in suggesties:
-            r += f"• {sug}\n"
+            r += f"â¢ {sug}\n"
         r += "\n"
 
     r += format_backtest_rapport(conn, dagen)
 
     if patroon["beste_uren"]:
-        r += "⏰ BESTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["beste_uren"][:4]) + "\n"
+        r += "â° BESTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["beste_uren"][:4]) + "\n"
     if patroon["slechte_uren"]:
-        r += "⛔ SLECHTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["slechte_uren"][:3]) + "\n"
+        r += "â SLECHTE UREN: " + ", ".join(f"{u['uur']:02d}:00 ({u['wr']:.0f}%)" for u in patroon["slechte_uren"][:3]) + "\n"
     if patroon["beste_dagen"]:
-        r += "📅 BESTE DAGEN: " + ", ".join(f"{d['dag']} ({d['wr']:.0f}%)" for d in patroon["beste_dagen"]) + "\n"
+        r += "ð BESTE DAGEN: " + ", ".join(f"{d['dag']} ({d['wr']:.0f}%)" for d in patroon["beste_dagen"]) + "\n"
     r += "\n"
 
     r += (
-        f"🪙 COIN ROTATIE: BL:{coin_rot['bl_totaal']} | WL:{coin_rot['wl_totaal']}\n"
+        f"ðª COIN ROTATIE: BL:{coin_rot['bl_totaal']} | WL:{coin_rot['wl_totaal']}\n"
     )
     if coin_rot["bl_nieuw"]:
-        r += f"• Nieuw geblokkeerd: {', '.join(coin_rot['bl_nieuw'][:3])}\n"
+        r += f"â¢ Nieuw geblokkeerd: {', '.join(coin_rot['bl_nieuw'][:3])}\n"
     if coin_rot["wl_nieuw"]:
-        r += f"• Nieuwe topper: {', '.join(coin_rot['wl_nieuw'][:3])}\n"
+        r += f"â¢ Nieuwe topper: {', '.join(coin_rot['wl_nieuw'][:3])}\n"
     r += "\n"
 
     if stop_advies["actie"] != "OK":
         r += (
-            f"🛑 STOP LOSS: {stop_advies['actie']}\n"
-            f"• ATR: {stop_advies['huidig']:.1f} → {stop_advies['aanbeveling']:.1f}\n"
-            f"• {stop_advies['reden']}\n\n"
+            f"ð STOP LOSS: {stop_advies['actie']}\n"
+            f"â¢ ATR: {stop_advies['huidig']:.1f} â {stop_advies['aanbeveling']:.1f}\n"
+            f"â¢ {stop_advies['reden']}\n\n"
         )
 
-    ed_st = "⚠️" if (swr - lwr) > EDGE_DECAY_DREMPEL else "✅"
-    r += f"⚡ EDGE DECAY: Sim {swr:.1f}% vs Live {lwr:.1f}% {ed_st}\n\n"
-    r += f"📈 PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} → {pf_trend.get('tweede_helft',0):.2f})\n\n"
+    ed_st = "â ï¸" if (swr - lwr) > EDGE_DECAY_DREMPEL else "â"
+    r += f"â¡ EDGE DECAY: Sim {swr:.1f}% vs Live {lwr:.1f}% {ed_st}\n\n"
+    r += f"ð PF TREND: {pf_trend.get('trend','?')} ({pf_trend.get('eerste_helft',0):.2f} â {pf_trend.get('tweede_helft',0):.2f})\n\n"
 
     # Auto aanpassingen
     auto_aanp = []
@@ -3164,12 +3165,12 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
     toegepast = pas_parameters_aan(conn, auto_aanp)
 
     if toegepast:
-        r += f"{'─'*34}\n🔧 AUTO AANPASSINGEN ({len(toegepast)}):\n"
+        r += f"{'â'*34}\nð§ AUTO AANPASSINGEN ({len(toegepast)}):\n"
         for a in toegepast:
-            r += f"✅ {a}\n"
+            r += f"â {a}\n"
         r += "\n"
 
-    # Claude finale — met volledig geheugen en anomalieën
+    # Claude finale â met volledig geheugen en anomalieÃ«n
     log("Claude finale beoordeling...")
     geheugen_context = bouw_geheugen_context_voor_claude(conn)
     claude_txt = claude_finale(totalen, setup_data, score_advies, stop_advies,
@@ -3179,9 +3180,9 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
                                anomalieen=anomalieen,
                                audit_score=100)
     if claude_txt:
-        r += f"{'─'*34}\n🧠 CLAUDE:\n{claude_txt}\n\n"
+        r += f"{'â'*34}\nð§  CLAUDE:\n{claude_txt}\n\n"
 
-    r += f"{'─'*34}\n🤖 BOT LOOPT DOOR\nCommands: STATUS | STOP | HEALTH"
+    r += f"{'â'*34}\nð¤ BOT LOOPT DOOR\nCommands: STATUS | STOP | HEALTH"
 
     kansen_lijst = [f"{k['setup']}/{k['regime']} ({k['verwachte_wr']:.1f}% WR)" for k in kansen[:5]]
     return r, toegepast, kansen_lijst
@@ -3189,15 +3190,15 @@ def bouw_uitgebreid_rapport(conn, dagen: int) -> Tuple[str, List[str], List[str]
 
 
 # ============================================================
-# SYSTEEM OBSERVATIE — VOLLEDIGE BOT MONITORING
+# SYSTEEM OBSERVATIE â VOLLEDIGE BOT MONITORING
 # ============================================================
 
-# ── EVENT LOGGER ────────────────────────────────────────────
+# ââ EVENT LOGGER ââââââââââââââââââââââââââââââââââââââââââââ
 def log_event(conn, categorie: str, event_type: str, omschrijving: str,
                data: Optional[Dict] = None, ernst: str = "INFO") -> None:
     """
-    Centrale event logger — elk relevant systeem event wordt bijgehouden.
-    Categorieën: CONFIG, TRADE, REGIME, BOT, ERROR, ALARM, COACH
+    Centrale event logger â elk relevant systeem event wordt bijgehouden.
+    CategorieÃ«n: CONFIG, TRADE, REGIME, BOT, ERROR, ALARM, COACH
     """
     try:
         with conn.cursor() as cur:
@@ -3211,7 +3212,7 @@ def log_event(conn, categorie: str, event_type: str, omschrijving: str,
         pass  # Never crash on logging
 
 
-# ── BOT STATE DIFF ───────────────────────────────────────────
+# ââ BOT STATE DIFF âââââââââââââââââââââââââââââââââââââââââââ
 def maak_state_snapshot(conn) -> Dict:
     """
     Maakt een snapshot van de volledige bot_state.
@@ -3256,9 +3257,9 @@ def maak_state_snapshot(conn) -> Dict:
                                      reden="Automatisch gedetecteerd")
 
             if diff:
-                log(f"🔍 State diff: {len(diff)} wijzigingen gedetecteerd")
+                log(f"ð State diff: {len(diff)} wijzigingen gedetecteerd")
                 for k, v in list(diff.items())[:5]:
-                    log(f"  {k}: {str(v['oud'])[:30]} → {str(v['nieuw'])[:30]}")
+                    log(f"  {k}: {str(v['oud'])[:30]} â {str(v['nieuw'])[:30]}")
 
         # Sla nieuwe snapshot op
         with conn.cursor() as cur:
@@ -3273,11 +3274,11 @@ def maak_state_snapshot(conn) -> Dict:
         return diff
 
     except Exception as e:
-        log(f"⚠️ State snapshot fout: {e}")
+        log(f"â ï¸ State snapshot fout: {e}")
         return {}
 
 
-# ── CONFIG WIJZIGINGEN ───────────────────────────────────────
+# ââ CONFIG WIJZIGINGEN âââââââââââââââââââââââââââââââââââââââ
 def log_config_wijziging(conn, parameter: str, oud: str, nieuw: str,
                           bron: str = "coach", reden: str = "") -> None:
     """
@@ -3294,9 +3295,9 @@ def log_config_wijziging(conn, parameter: str, oud: str, nieuw: str,
             """, (parameter, oud, nieuw, bron, reden))
         conn.commit()
         log_event(conn, "CONFIG", "WIJZIGING",
-                  f"{parameter}: {oud} → {nieuw}", {"bron": bron}, "INFO")
+                  f"{parameter}: {oud} â {nieuw}", {"bron": bron}, "INFO")
     except Exception as e:
-        log(f"⚠️ Config log fout: {e}")
+        log(f"â ï¸ Config log fout: {e}")
 
 
 def get_recente_config_wijzigingen(conn, uren: int = 48) -> List[Dict]:
@@ -3311,20 +3312,20 @@ def get_recente_config_wijzigingen(conn, uren: int = 48) -> List[Dict]:
 
 def format_config_wijzigingen(wijzigingen: List[Dict]) -> str:
     if not wijzigingen:
-        return "⚙️ GEEN CONFIG WIJZIGINGEN (48u)\n\n"
-    r = f"⚙️ CONFIG WIJZIGINGEN ({len(wijzigingen)}, afgelopen 48u):\n"
+        return "âï¸ GEEN CONFIG WIJZIGINGEN (48u)\n\n"
+    r = f"âï¸ CONFIG WIJZIGINGEN ({len(wijzigingen)}, afgelopen 48u):\n"
     for w in wijzigingen[:10]:
         tijdstip = safe_str(w.get("tijdstip", ""))[:16]
         param    = safe_str(w.get("parameter"))
         oud      = safe_str(w.get("oud_waarde", ""))[:20]
         nieuw    = safe_str(w.get("nieuw_waarde", ""))[:20]
         bron     = safe_str(w.get("bron", "coach"))
-        r += f"• {tijdstip} | {param}: {oud} → {nieuw} [{bron}]\n"
+        r += f"â¢ {tijdstip} | {param}: {oud} â {nieuw} [{bron}]\n"
     r += "\n"
     return r
 
 
-# ── BESTAND CHECKSUM MONITOR ─────────────────────────────────
+# ââ BESTAND CHECKSUM MONITOR âââââââââââââââââââââââââââââââââ
 def monitor_bestand_wijzigingen(conn) -> Dict:
     """
     Controleert of Python bestanden gewijzigd zijn.
@@ -3389,7 +3390,7 @@ def monitor_bestand_wijzigingen(conn) -> Dict:
                         "delta_regels": delta_regels,
                         "regels": regelaantal,
                     })
-                    log(f"📝 Bestand gewijzigd: {bestand} ({delta_regels:+d} regels)")
+                    log(f"ð Bestand gewijzigd: {bestand} ({delta_regels:+d} regels)")
                     log_event(conn, "BOT", "BESTAND_GEWIJZIGD",
                               f"{bestand}: {delta_regels:+d} regels", {"checksum": checksum})
 
@@ -3405,12 +3406,12 @@ def monitor_bestand_wijzigingen(conn) -> Dict:
             conn.commit()
 
         except Exception as e:
-            log(f"⚠️ Checksum {bestand}: {e}")
+            log(f"â ï¸ Checksum {bestand}: {e}")
 
     return {"gewijzigd": wijzigingen, "n": len(wijzigingen)}
 
 
-# ── WHATSAPP COMMANDO HISTORY ─────────────────────────────────
+# ââ WHATSAPP COMMANDO HISTORY âââââââââââââââââââââââââââââââââ
 def lees_whatsapp_commando_history(conn, uren: int = 72) -> List[Dict]:
     """
     Leest de WhatsApp commando history uit de bot_state of coach_commando_log.
@@ -3438,17 +3439,17 @@ def lees_whatsapp_commando_history(conn, uren: int = 72) -> List[Dict]:
 def format_commando_history(rows: List[Dict]) -> str:
     if not rows:
         return ""
-    r = f"📱 WHATSAPP HISTORY ({len(rows)} commando's, 72u):\n"
+    r = f"ð± WHATSAPP HISTORY ({len(rows)} commando's, 72u):\n"
     for row in rows[:8]:
         tijdstip = safe_str(row.get("tijdstip", ""))[:16]
         cmd      = safe_str(row.get("commando", "?"))
         status   = safe_str(row.get("bot_status_na", ""))
-        r += f"• {tijdstip} → {cmd} [{status}]\n"
+        r += f"â¢ {tijdstip} â {cmd} [{status}]\n"
     r += "\n"
     return r
 
 
-# ── REGIME OVERGANG LOGGING ────────────────────────────────────
+# ââ REGIME OVERGANG LOGGING ââââââââââââââââââââââââââââââââââââ
 def check_en_log_regime_overgang(conn, nieuw_regime: str) -> Optional[str]:
     """
     Detecteert regime overgangen en logt ze permanent.
@@ -3478,8 +3479,8 @@ def check_en_log_regime_overgang(conn, nieuw_regime: str) -> Optional[str]:
         conn.commit()
 
         bericht = (
-            f"🔀 REGIME OVERGANG: {oud_regime} → {nieuw_regime}\n"
-            f"BTC: €{btc_prijs:,.0f}\n"
+            f"ð REGIME OVERGANG: {oud_regime} â {nieuw_regime}\n"
+            f"BTC: â¬{btc_prijs:,.0f}\n"
             f"Coach past strategie aan."
         )
         log(bericht)
@@ -3493,7 +3494,7 @@ def check_en_log_regime_overgang(conn, nieuw_regime: str) -> Optional[str]:
         return bericht
 
     except Exception as e:
-        log(f"⚠️ Regime log fout: {e}")
+        log(f"â ï¸ Regime log fout: {e}")
         return None
 
 
@@ -3506,11 +3507,11 @@ def get_regime_overgang_history(conn, dagen: int = 30) -> List[Dict]:
     """, (dagen,))
 
 
-# ── ANOMALIE DETECTIE ─────────────────────────────────────────
+# ââ ANOMALIE DETECTIE âââââââââââââââââââââââââââââââââââââââââ
 def detecteer_en_log_anomalieen(conn, totalen: Dict, week_verg: Dict,
                                   fee_data: Dict, r_verd: Dict) -> List[Dict]:
     """
-    Detecteert statistische anomalieën in alle metrics.
+    Detecteert statistische anomalieÃ«n in alle metrics.
     Vergelijkt huidige waarden met historische gemiddelden.
     Logt elke anomalie permanent.
     """
@@ -3541,18 +3542,18 @@ def detecteer_en_log_anomalieen(conn, totalen: Dict, week_verg: Dict,
 
     # 1. Win rate anomalie
     if n >= 10 and wr < 35:
-        voeg_toe("WIN_RATE_CRASH", f"Win rate {wr:.1f}% — kritiek laag",
+        voeg_toe("WIN_RATE_CRASH", f"Win rate {wr:.1f}% â kritiek laag",
                  wr, 35.0, "KRITIEK")
     elif n >= 10 and wr > 85:
-        voeg_toe("WIN_RATE_ONREALISTISCH", f"Win rate {wr:.1f}% — verdacht hoog",
+        voeg_toe("WIN_RATE_ONREALISTISCH", f"Win rate {wr:.1f}% â verdacht hoog",
                  wr, 85.0, "LAAG")
 
     # 2. Profit factor anomalie
     if pf > 0 and pf < 0.8:
-        voeg_toe("PF_NEGATIEF", f"PF {pf:.2f} — systeem verliest geld",
+        voeg_toe("PF_NEGATIEF", f"PF {pf:.2f} â systeem verliest geld",
                  pf, 0.8, "KRITIEK")
     elif pf > 5.0:
-        voeg_toe("PF_ONREALISTISCH", f"PF {pf:.2f} — mogelijk data fout",
+        voeg_toe("PF_ONREALISTISCH", f"PF {pf:.2f} â mogelijk data fout",
                  pf, 5.0, "LAAG")
 
     # 3. Sterke week-over-week daling
@@ -3570,7 +3571,7 @@ def detecteer_en_log_anomalieen(conn, totalen: Dict, week_verg: Dict,
     # 5. Expectancy negatief
     expectancy = safe_float(r_verd.get("expectancy"))
     if n >= 10 and expectancy < -0.1:
-        voeg_toe("NEGATIEVE_EXPECTANCY", f"Expectancy {expectancy:.3f}R — systeem verliest per trade",
+        voeg_toe("NEGATIEVE_EXPECTANCY", f"Expectancy {expectancy:.3f}R â systeem verliest per trade",
                  expectancy, -0.1, "KRITIEK")
 
     # 6. Geen trades terwijl bot actief
@@ -3601,7 +3602,7 @@ def detecteer_en_log_anomalieen(conn, totalen: Dict, week_verg: Dict,
                     pass
 
     if anomalieen:
-        log(f"🔍 {len(anomalieen)} anomalieën gedetecteerd")
+        log(f"ð {len(anomalieen)} anomalieÃ«n gedetecteerd")
 
     sla_geheugen_op(conn, "anomalieen", "laatste_run", anomalieen)
     return anomalieen
@@ -3610,15 +3611,15 @@ def detecteer_en_log_anomalieen(conn, totalen: Dict, week_verg: Dict,
 def format_anomalie_rapport(anomalieen: List[Dict]) -> str:
     if not anomalieen:
         return ""
-    r = f"🔬 ANOMALIEEN ({len(anomalieen)}):\n"
+    r = f"ð¬ ANOMALIEEN ({len(anomalieen)}):\n"
     for a in anomalieen:
-        emoji = "🔴" if a["ernst"] == "KRITIEK" else "🟡" if a["ernst"] == "HOOG" else "⚪"
+        emoji = "ð´" if a["ernst"] == "KRITIEK" else "ð¡" if a["ernst"] == "HOOG" else "âª"
         r += f"{emoji} {a['type']}: {a['beschrijving']}\n"
     r += "\n"
     return r
 
 
-# ── DATA VERSHEID MONITOR ────────────────────────────────────
+# ââ DATA VERSHEID MONITOR ââââââââââââââââââââââââââââââââââââ
 def monitor_data_versheid(conn) -> Dict:
     """
     Controleert of alle data vers is.
@@ -3633,7 +3634,7 @@ def monitor_data_versheid(conn) -> Dict:
     checks = [
         {
             "naam": "candles_recent",
-            # Gebruik updated_at / created_at — veiligst, vermijdt close_time type issues
+            # Gebruik updated_at / created_at â veiligst, vermijdt close_time type issues
             "sql": """SELECT MAX(updated_at) AS laatste
                       FROM public.candles""",
             "max_uren": 2,
@@ -3692,7 +3693,7 @@ def monitor_data_versheid(conn) -> Dict:
             problemen.append(f"{check['omschrijving']}: query fout ({e})")
 
     if problemen:
-        log(f"⚠️ Data versheid problemen: {len(problemen)}")
+        log(f"â ï¸ Data versheid problemen: {len(problemen)}")
         for p in problemen:
             log_event(conn, "BOT", "DATA_VEROUDERD", p, {}, "HOOG")
 
@@ -3705,7 +3706,7 @@ def format_data_versheid(data: Dict) -> str:
     problemen = data.get("problemen", [])
     if not details:
         return ""
-    r = "📡 DATA VERSHEID:\n"
+    r = "ð¡ DATA VERSHEID:\n"
     labels = {
         "candles_recent": "Candles",
         "market_regime":  "Marktregime",
@@ -3715,21 +3716,21 @@ def format_data_versheid(data: Dict) -> str:
         info = details.get(key, {})
         status = safe_str(info.get("status", "?"))
         uren   = safe_float(info.get("uren_oud", 0))
-        emoji  = "✅" if status == "OK" else "⚠️"
-        r += f"• {label}: {emoji} {uren:.1f}u oud\n"
+        emoji  = "â" if status == "OK" else "â ï¸"
+        r += f"â¢ {label}: {emoji} {uren:.1f}u oud\n"
     if problemen:
-        r += f"⚠️ {len(problemen)} data problemen!\n"
+        r += f"â ï¸ {len(problemen)} data problemen!\n"
     r += "\n"
     return r
 
 
-# ── TRADE FLOW ANALYSE ────────────────────────────────────────
+# ââ TRADE FLOW ANALYSE ââââââââââââââââââââââââââââââââââââââââ
 def analyseer_trade_flow(conn) -> Dict:
     """
     Analyseert de volledige trade flow: van signaal tot gesloten trade.
-    Detecteert bottlenecks — waar gaat het mis in het proces?
+    Detecteert bottlenecks â waar gaat het mis in het proces?
 
-    Signal (multi_coin_score) → Pending Approval → Live Trade → Closed
+    Signal (multi_coin_score) â Pending Approval â Live Trade â Closed
     """
     try:
         # Signalen gegenereerd (pending_approvals)
@@ -3777,11 +3778,11 @@ def analyseer_trade_flow(conn) -> Dict:
 
         bottlenecks = []
         if n_sig > 0 and n_goed / max(n_sig, 1) < 0.05:
-            bottlenecks.append(f"Veel signalen ({n_sig}), maar slechts {n_goed} goedgekeurd — score drempel te hoog?")
+            bottlenecks.append(f"Veel signalen ({n_sig}), maar slechts {n_goed} goedgekeurd â score drempel te hoog?")
         if n_goed > 0 and n_live < n_goed * 0.5:
-            bottlenecks.append(f"Signalen goedgekeurd maar niet uitgevoerd — max trades bereikt?")
+            bottlenecks.append(f"Signalen goedgekeurd maar niet uitgevoerd â max trades bereikt?")
         if n_live > 0 and n_ges < n_live * 0.3:
-            bottlenecks.append(f"Trades open maar niet gesloten — max houdtijd niet bereikt of bot probleem")
+            bottlenecks.append(f"Trades open maar niet gesloten â max houdtijd niet bereikt of bot probleem")
 
         # Gem. tijd van signaal tot entry
         # pending_approvals.symbol + experience_trades.coin/symbol
@@ -3811,7 +3812,7 @@ def analyseer_trade_flow(conn) -> Dict:
         return data
 
     except Exception as e:
-        log(f"⚠️ Trade flow analyse: {e}")
+        log(f"â ï¸ Trade flow analyse: {e}")
         return {}
 
 
@@ -3819,24 +3820,24 @@ def format_trade_flow(data: Dict) -> str:
     if not data:
         return ""
     r = (
-        f"🔄 TRADE FLOW (7 dagen):\n"
-        f"• Signalen:     {data.get('signalen_7d',0)}\n"
-        f"• Goedgekeurd:  {data.get('goedgekeurd_7d',0)}\n"
-        f"• Verlopen:     {data.get('verlopen_7d',0)}\n"
-        f"• Live trades:  {data.get('live_7d',0)} ({data.get('conversie_pct',0):.1f}% conversie)\n"
-        f"• Gesloten:     {data.get('gesloten_7d',0)}\n"
+        f"ð TRADE FLOW (7 dagen):\n"
+        f"â¢ Signalen:     {data.get('signalen_7d',0)}\n"
+        f"â¢ Goedgekeurd:  {data.get('goedgekeurd_7d',0)}\n"
+        f"â¢ Verlopen:     {data.get('verlopen_7d',0)}\n"
+        f"â¢ Live trades:  {data.get('live_7d',0)} ({data.get('conversie_pct',0):.1f}% conversie)\n"
+        f"â¢ Gesloten:     {data.get('gesloten_7d',0)}\n"
     )
     if data.get("gem_min_entry"):
-        r += f"• Gem. entry tijd: {data['gem_min_entry']:.1f} min na signaal\n"
+        r += f"â¢ Gem. entry tijd: {data['gem_min_entry']:.1f} min na signaal\n"
     if data.get("bottlenecks"):
-        r += "⚠️ Bottlenecks:\n"
+        r += "â ï¸ Bottlenecks:\n"
         for b in data["bottlenecks"]:
-            r += f"  → {b}\n"
+            r += f"  â {b}\n"
     r += "\n"
     return r
 
 
-# ── VOLLEDIGE SYSTEEM AUDIT ───────────────────────────────────
+# ââ VOLLEDIGE SYSTEEM AUDIT âââââââââââââââââââââââââââââââââââ
 def voer_systeem_audit_uit(conn) -> Dict:
     """
     Voert een complete audit uit van alle bot componenten.
@@ -3900,17 +3901,17 @@ def voer_systeem_audit_uit(conn) -> Dict:
     try:
         bals = get_bitvavo_balances()
         eur_bal = bals.get("EUR", 0)
-        check("bitvavo_api", True, f"Bitvavo OK — EUR: €{eur_bal:.2f}")
+        check("bitvavo_api", True, f"Bitvavo OK â EUR: â¬{eur_bal:.2f}")
     except Exception as e:
         check("bitvavo_api", False, f"Bitvavo niet bereikbaar: {e}", "HOOG", 15)
 
-    # 5. Recente data aanwezig — candles tabel kan verschillende schemas hebben
+    # 5. Recente data aanwezig â candles tabel kan verschillende schemas hebben
     try:
         recente_candle = run_scalar(conn, "SELECT COUNT(*) FROM public.candles", default=0)
     except Exception:
         recente_candle = 0
     if safe_int(recente_candle) == 0:
-        check("recente_candles", False, "Geen candles in DB — fetcher nog niet gedraaid?", "LAAG", 5)
+        check("recente_candles", False, "Geen candles in DB â fetcher nog niet gedraaid?", "LAAG", 5)
     else:
         check("recente_candles", True, f"{recente_candle} candles in DB")
 
@@ -3922,7 +3923,7 @@ def voer_systeem_audit_uit(conn) -> Dict:
     """, default=0)
     if safe_int(verlopen_old) > 50:
         check("pending_cleanup", False,
-              f"{verlopen_old} oude verlopen signalen — DB cleanup nodig", "LAAG", 5)
+              f"{verlopen_old} oude verlopen signalen â DB cleanup nodig", "LAAG", 5)
     else:
         check("pending_cleanup", True, "Pending approvals schoon")
 
@@ -3938,12 +3939,12 @@ def voer_systeem_audit_uit(conn) -> Dict:
     dv = safe_float(dagverlies)
     if dv >= DAILY_STOP_LOSS_EUR:
         check("dagverlies", False,
-              f"Dagverlies €{dv:.4f} ≥ limiet €{DAILY_STOP_LOSS_EUR}", "KRITIEK", 20)
+              f"Dagverlies â¬{dv:.4f} â¥ limiet â¬{DAILY_STOP_LOSS_EUR}", "KRITIEK", 20)
     elif dv >= DAILY_STOP_LOSS_EUR * 0.8:
         check("dagverlies", False,
-              f"Dagverlies €{dv:.4f} — 80% van limiet bereikt", "HOOG", 5)
+              f"Dagverlies â¬{dv:.4f} â 80% van limiet bereikt", "HOOG", 5)
     else:
-        check("dagverlies", True, f"Dagverlies €{dv:.4f} OK")
+        check("dagverlies", True, f"Dagverlies â¬{dv:.4f} OK")
 
     # 8. Anthropic API check
     try:
@@ -3965,23 +3966,23 @@ def format_systeem_audit(audit: Dict) -> str:
     score = audit.get("score", 100)
     kritiek = audit.get("kritieke_fouten", 0)
     waarsch = audit.get("waarschuwingen", 0)
-    emoji = "✅" if score >= 90 else "⚠️" if score >= 70 else "🔴"
+    emoji = "â" if score >= 90 else "â ï¸" if score >= 70 else "ð´"
 
-    r = f"🔍 SYSTEEM AUDIT: {score}/100 {emoji}\n"
-    r += f"• Kritieke fouten: {kritiek} | Waarschuwingen: {waarsch}\n"
+    r = f"ð SYSTEEM AUDIT: {score}/100 {emoji}\n"
+    r += f"â¢ Kritieke fouten: {kritiek} | Waarschuwingen: {waarsch}\n"
 
     # Toon alleen mislukte checks
     fouten = [c for c in audit.get("checks", []) if not c["ok"]]
     if fouten:
         r += "Problemen:\n"
         for f in fouten[:5]:
-            ernst_emoji = "🔴" if f["ernst"] == "KRITIEK" else "🟡"
+            ernst_emoji = "ð´" if f["ernst"] == "KRITIEK" else "ð¡"
             r += f"  {ernst_emoji} {f['naam']}: {f['bericht']}\n"
     r += "\n"
     return r
 
 
-# ── COACH DAGBOEK ─────────────────────────────────────────────
+# ââ COACH DAGBOEK âââââââââââââââââââââââââââââââââââââââââââââ
 def schrijf_dagboek(conn, rapport: str, beslissingen: List[str],
                     anomalieen: List[Dict], totalen: Dict,
                     start_tijd: datetime) -> None:
@@ -4001,7 +4002,7 @@ def schrijf_dagboek(conn, rapport: str, beslissingen: List[str],
         samenvatting = (
             f"WR={safe_float(totalen.get('win_rate')):.1f}% | "
             f"PF={safe_float(totalen.get('profit_factor')):.2f} | "
-            f"PnL=€{safe_float(totalen.get('net_pnl')):.4f} | "
+            f"PnL=â¬{safe_float(totalen.get('net_pnl')):.4f} | "
             f"{safe_int(totalen.get('n'))} trades"
         )
         metrics_json = {
@@ -4040,9 +4041,9 @@ def schrijf_dagboek(conn, rapport: str, beslissingen: List[str],
                 round(run_duur, 1),
             ))
         conn.commit()
-        log(f"📖 Dagboek geschreven ({run_duur:.0f}s run)")
+        log(f"ð Dagboek geschreven ({run_duur:.0f}s run)")
     except Exception as e:
-        log(f"⚠️ Dagboek fout: {e}")
+        log(f"â ï¸ Dagboek fout: {e}")
         try:
             conn.rollback()
         except Exception:
@@ -4060,17 +4061,17 @@ def get_dagboek_history(conn, n: int = 10) -> List[Dict]:
 def format_dagboek_history(rows: List[Dict]) -> str:
     if not rows:
         return ""
-    r = f"📖 COACH DAGBOEK (laatste {len(rows)} runs):\n"
+    r = f"ð COACH DAGBOEK (laatste {len(rows)} runs):\n"
     for row in rows:
         datum = safe_str(row.get("datum", ""))
         samenvatting = safe_str(row.get("samenvatting", ""))
         duur = safe_float(row.get("run_duur_sec", 0))
-        r += f"• {datum}: {samenvatting} ({duur:.0f}s)\n"
+        r += f"â¢ {datum}: {samenvatting} ({duur:.0f}s)\n"
     r += "\n"
     return r
 
 
-# ── GEHEUGEN ZOEKEN ───────────────────────────────────────────
+# ââ GEHEUGEN ZOEKEN âââââââââââââââââââââââââââââââââââââââââââ
 def zoek_geheugen(conn, query: str) -> List[Dict]:
     """
     Doorzoekt het coach geheugen op een zoekterm.
@@ -4112,7 +4113,7 @@ def haal_volledig_geheugen_op(conn) -> Dict:
     return geheugen
 
 
-# ── ENV VARIABELEN MONITOR ────────────────────────────────────
+# ââ ENV VARIABELEN MONITOR ââââââââââââââââââââââââââââââââââââ
 def monitor_env_variabelen(conn) -> Dict:
     """
     Leest alle relevante ENV variabelen en vergelijkt ze met bot_state.
@@ -4153,7 +4154,7 @@ def monitor_env_variabelen(conn) -> Dict:
     sla_geheugen_op(conn, "env_vars", "snapshot", env_vars)
     if conflicten:
         sla_geheugen_op(conn, "env_vars", "conflicten", conflicten)
-        log(f"⚠️ {len(conflicten)} ENV/state conflicten gedetecteerd")
+        log(f"â ï¸ {len(conflicten)} ENV/state conflicten gedetecteerd")
 
     return {"env_vars": env_vars, "conflicten": conflicten}
 
@@ -4161,15 +4162,15 @@ def monitor_env_variabelen(conn) -> Dict:
 def format_env_rapport(data: Dict) -> str:
     conflicten = data.get("conflicten", [])
     if not conflicten:
-        return "⚙️ ENV/STATE: Geen conflicten\n\n"
-    r = f"⚙️ ENV/STATE CONFLICTEN ({len(conflicten)}):\n"
+        return "âï¸ ENV/STATE: Geen conflicten\n\n"
+    r = f"âï¸ ENV/STATE CONFLICTEN ({len(conflicten)}):\n"
     for c in conflicten:
-        r += f"• {c['parameter']}: ENV={c['env_waarde']} vs STATE={c['state_waarde']}\n"
-    r += "→ Render ENV aanpassen of bot_state resetten\n\n"
+        r += f"â¢ {c['parameter']}: ENV={c['env_waarde']} vs STATE={c['state_waarde']}\n"
+    r += "â Render ENV aanpassen of bot_state resetten\n\n"
     return r
 
 
-# ── MAANDELIJKSE TREND ANALYSE ────────────────────────────────
+# ââ MAANDELIJKSE TREND ANALYSE ââââââââââââââââââââââââââââââââ
 def analyseer_langetermijn_trend(conn) -> Dict:
     """
     Kijkt naar de langetermijn trend over 90 dagen.
@@ -4224,21 +4225,21 @@ def format_langetermijn_trend(data: Dict) -> str:
     helling = data.get("helling_per_week", 0)
     eerste = data.get("eerste_wr", 0)
     laatste = data.get("laatste_wr", 0)
-    emoji = "📈" if trend == "STIJGEND" else "📉" if trend == "DALEND" else "➡️"
+    emoji = "ð" if trend == "STIJGEND" else "ð" if trend == "DALEND" else "â¡ï¸"
     return (
-        f"📊 90-DAAGSE TREND: {trend} {emoji}\n"
-        f"• Win rate: {eerste:.1f}% → {laatste:.1f}% ({helling:+.2f}%/week)\n\n"
+        f"ð 90-DAAGSE TREND: {trend} {emoji}\n"
+        f"â¢ Win rate: {eerste:.1f}% â {laatste:.1f}% ({helling:+.2f}%/week)\n\n"
     )
 
 
-# ── OPEN POSITIES REAL-TIME CHECK ─────────────────────────────
+# ââ OPEN POSITIES REAL-TIME CHECK âââââââââââââââââââââââââââââ
 def check_open_posities_realtime(conn) -> Dict:
     """
     Combineert DB open trades met live Bitvavo posities.
     Detecteert discrepanties: trades in DB maar niet op exchange, of vice versa.
     """
     try:
-        # DB open trades — schema: entry (niet entry_price), amount_eur
+        # DB open trades â schema: entry (niet entry_price), amount_eur
         db_open = run_query(conn, """
         SELECT coin,
                COALESCE(entry, stop_loss * 1.02) AS entry_prijs,
@@ -4304,7 +4305,7 @@ def check_open_posities_realtime(conn) -> Dict:
         return data
 
     except Exception as e:
-        log(f"⚠️ Open posities check: {e}")
+        log(f"â ï¸ Open posities check: {e}")
         return {"n_open": 0, "discrepanties": [], "posities": [], "totaal_floating_eur": 0}
 
 
@@ -4314,22 +4315,22 @@ def format_open_posities_realtime(data: Dict) -> str:
     n = data.get("n_open", 0)
     floating = data.get("totaal_floating_eur", 0)
     s = "+" if floating >= 0 else ""
-    r = f"📂 OPEN POSITIES: {n} | Floating: {s}€{floating:.4f}\n"
+    r = f"ð OPEN POSITIES: {n} | Floating: {s}â¬{floating:.4f}\n"
     for p in data.get("posities", [])[:5]:
         pnl = safe_float(p.get("pnl_pct"))
-        emoji = "🟢" if pnl > 0 else "🔴"
+        emoji = "ð¢" if pnl > 0 else "ð´"
         r += (f"  {emoji} {p.get('coin','?')}: "
-              f"entry €{p.get('entry',0):.4f} → live €{p.get('live',0):.4f} "
+              f"entry â¬{p.get('entry',0):.4f} â live â¬{p.get('live',0):.4f} "
               f"({pnl:+.1f}%)\n")
     if data.get("discrepanties"):
-        r += "⚠️ DISCREPANTIES:\n"
+        r += "â ï¸ DISCREPANTIES:\n"
         for d in data["discrepanties"]:
-            r += f"  → {d}\n"
+            r += f"  â {d}\n"
     r += "\n"
     return r
 
 
-# ── VOLLEDIG GEHEUGEN SAMENVATTING VOOR CLAUDE ───────────────
+# ââ VOLLEDIG GEHEUGEN SAMENVATTING VOOR CLAUDE âââââââââââââââ
 def bouw_geheugen_context_voor_claude(conn) -> str:
     """
     Bouwt een compacte samenvatting van het coach geheugen voor Claude.
@@ -4344,7 +4345,7 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
     if wijzigingen:
         context_delen.append(
             f"Config wijzigingen (7d): " +
-            ", ".join(f"{w.get('parameter')}:{w.get('oud_waarde')}→{w.get('nieuw_waarde')}"
+            ", ".join(f"{w.get('parameter')}:{w.get('oud_waarde')}â{w.get('nieuw_waarde')}"
                       for w in wijzigingen[:5])
         )
 
@@ -4353,7 +4354,7 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
     if regime_hist:
         context_delen.append(
             f"Regime overgangen (30d): " +
-            ", ".join(f"{r.get('oud_regime')}→{r.get('nieuw_regime')}"
+            ", ".join(f"{r.get('oud_regime')}â{r.get('nieuw_regime')}"
                       for r in regime_hist[:3])
         )
 
@@ -4369,7 +4370,7 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
             if aanp:
                 context_delen.append(f"Vorige run {datum}: {aanp}")
 
-    # Recente anomalieën
+    # Recente anomalieÃ«n
     anom = run_query(conn, """
     SELECT type, omschrijving FROM public.coach_anomalieen
     WHERE tijdstip >= NOW() - INTERVAL '7 days'
@@ -4377,7 +4378,7 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
     """)
     if anom:
         context_delen.append(
-            "Openstaande anomalieën: " +
+            "Openstaande anomalieÃ«n: " +
             ", ".join(safe_str(a.get("type")) for a in anom)
         )
 
@@ -4394,14 +4395,14 @@ def bouw_geheugen_context_voor_claude(conn) -> str:
 
 
 # ============================================================
-# UITBREIDING — GEAVANCEERDE LEERMODULE
+# UITBREIDING â GEAVANCEERDE LEERMODULE
 # Elke gesloten trade wordt geanalyseerd en opgeslagen
 # zodat de bot steeds selectiever wordt over tijd
 # ============================================================
 
 def analyseer_individuele_trade(conn, trade: Dict) -> Dict:
     """
-    Analyseert één gesloten trade diep.
+    Analyseert Ã©Ã©n gesloten trade diep.
     Slaat WHY-tags, setup kwaliteit en leerinzichten op.
     Wordt aangeroepen na elke trade sluiting.
     """
@@ -4423,10 +4424,10 @@ def analyseer_individuele_trade(conn, trade: Dict) -> Dict:
     winst  = target - entry if target > 0 and entry > 0 else 1
     rr     = round(winst / max(risico, 0.00001), 2)
 
-    # MAE als % van risico — hoe diep ging de trade onder water?
+    # MAE als % van risico â hoe diep ging de trade onder water?
     mae_pct_van_stop = round(mae / max(abs(risico), 0.00001) * 100, 1) if mae > 0 else 0
 
-    # MFE als % van target — hoe ver bereikte de trade het doel?
+    # MFE als % van target â hoe ver bereikte de trade het doel?
     mfe_pct_van_target = round(mfe / max(winst, 0.00001) * 100, 1) if mfe > 0 else 0
 
     # WHY tag genereren
@@ -4541,12 +4542,12 @@ def analyseer_setup_leerpatronen(conn, dagen: int = 30) -> Dict:
 
         if wr >= 60 and pf >= 1.5:
             top_setups.append(setup)
-            aanbevelingen.append(f"PRIORITEER {setup}: {wr:.1f}% WR, PF={pf:.2f} — top performer")
+            aanbevelingen.append(f"PRIORITEER {setup}: {wr:.1f}% WR, PF={pf:.2f} â top performer")
         elif wr < 40 and n >= 5:
             zwakke_setups.append(setup)
-            aanbevelingen.append(f"VERMIJD {setup}: {wr:.1f}% WR, PF={pf:.2f} — structureel zwak")
+            aanbevelingen.append(f"VERMIJD {setup}: {wr:.1f}% WR, PF={pf:.2f} â structureel zwak")
         elif gem_r > 0 and pf < 1.0:
-            aanbevelingen.append(f"ONDERZOEK {setup}: positief gem R maar PF<1 — exits te vroeg?")
+            aanbevelingen.append(f"ONDERZOEK {setup}: positief gem R maar PF<1 â exits te vroeg?")
 
     sla_geheugen_op(conn, "setup_patronen", f"analyse_{dagen}d", {
         "top":          top_setups,
@@ -4635,7 +4636,7 @@ def analyseer_uur_patronen_diep(conn, dagen: int = 60) -> Dict:
 def analyseer_coin_lifecycle(conn, coin: str, dagen: int = 90) -> Dict:
     """
     Analyseert de volledige lifecycle van een coin.
-    Win rate trend over tijd — verbetert of verslechtert de coin?
+    Win rate trend over tijd â verbetert of verslechtert de coin?
     Detecteert seasonality en patroonwisselingen.
     """
     rows = run_query(conn, """
@@ -4729,10 +4730,10 @@ def genereer_claude_weekoverzicht(conn) -> str:
     prompt = (
         f"Je bent een senior crypto trading coach. Geef een wekelijks overzicht in het Nederlands.\n\n"
         f"DEZE WEEK:\n"
-        f"- {n} trades | Win rate: {wr:.1f}% | PnL: €{pnl:.4f} | PF: {pf:.2f} | Gem R: {gem_r:.3f}\n\n"
+        f"- {n} trades | Win rate: {wr:.1f}% | PnL: â¬{pnl:.4f} | PF: {pf:.2f} | Gem R: {gem_r:.3f}\n\n"
         f"VORIGE WEEK:\n"
-        f"- {safe_int(v.get('n'))} trades | Win rate: {vwr:.1f}% | PnL: €{vpnl:.4f}\n\n"
-        f"Vergelijking: WR {wr-vwr:+.1f}% | PnL {pnl-vpnl:+.4f}€\n\n"
+        f"- {safe_int(v.get('n'))} trades | Win rate: {vwr:.1f}% | PnL: â¬{vpnl:.4f}\n\n"
+        f"Vergelijking: WR {wr-vwr:+.1f}% | PnL {pnl-vpnl:+.4f}â¬\n\n"
         f"Geef een analyse van 5-7 zinnen:\n"
         f"1. Is de performance verbeterd of verslechterd?\n"
         f"2. Wat is de belangrijkste oorzaak?\n"
@@ -4841,11 +4842,11 @@ def update_experience_scoreboard(conn) -> int:
                 conn.commit()
                 bijgewerkt += 1
             except Exception as e:
-                log(f"⚠️ Scoreboard update {symbol}/{setup}/{regime}: {e}")
+                log(f"â ï¸ Scoreboard update {symbol}/{setup}/{regime}: {e}")
                 try: conn.rollback()
                 except Exception: pass
 
-        log(f"✅ Scoreboard bijgewerkt: {bijgewerkt} entries")
+        log(f"â Scoreboard bijgewerkt: {bijgewerkt} entries")
         sla_geheugen_op(conn, "scoreboard", "laatste_update", {
             "tijdstip": now_utc().isoformat(),
             "n_entries": bijgewerkt,
@@ -4853,7 +4854,7 @@ def update_experience_scoreboard(conn) -> int:
         return bijgewerkt
 
     except Exception as e:
-        log(f"⚠️ Scoreboard update fout: {e}")
+        log(f"â ï¸ Scoreboard update fout: {e}")
         try: conn.rollback()
         except Exception: pass
         return 0
@@ -4861,7 +4862,7 @@ def update_experience_scoreboard(conn) -> int:
 
 def detecteer_regime_effect(conn, dagen: int = 60) -> Dict:
     """
-    Analyseert hoe het BTC regime de bot prestaties beïnvloedt.
+    Analyseert hoe het BTC regime de bot prestaties beÃ¯nvloedt.
     Per regime: win rate, PF, gem R, beste setup types.
     """
     rows = run_query(conn, """
@@ -4917,13 +4918,13 @@ def detecteer_regime_effect(conn, dagen: int = 60) -> Dict:
 def format_regime_effect(data: Dict) -> str:
     if not data:
         return ""
-    r = "🌐 REGIME EFFECT:\n"
+    r = "ð REGIME EFFECT:\n"
     for regime, info in data.items():
         wr   = info.get("gem_wr", 0)
         n    = info.get("n", 0)
         best = info.get("beste_setup","?")
-        emoji = "✅" if wr >= 55 else "⚠️" if wr >= 45 else "❌"
-        r += f"• {regime}: {wr:.1f}% WR ({n} trades) | Beste: {best} {emoji}\n"
+        emoji = "â" if wr >= 55 else "â ï¸" if wr >= 45 else "â"
+        r += f"â¢ {regime}: {wr:.1f}% WR ({n} trades) | Beste: {best} {emoji}\n"
     r += "\n"
     return r
 
@@ -4994,11 +4995,11 @@ def format_maandverwachting(data: Dict) -> str:
     tpm = data.get("trades_per_maand", 0)
     s   = "+" if vw >= 0 else ""
     return (
-        f"📈 VERWACHTE MAANDWINST:\n"
-        f"• Win rate: {wr:.1f}% | Expectancy: {exp:.3f}R\n"
-        f"• ~{tpm:.0f} trades/maand verwacht\n"
-        f"• Verwacht: {s}€{vw:.4f}\n"
-        f"• 95% interval: €{data.get('ci_laag',0):.4f} – €{data.get('ci_hoog',0):.4f}\n\n"
+        f"ð VERWACHTE MAANDWINST:\n"
+        f"â¢ Win rate: {wr:.1f}% | Expectancy: {exp:.3f}R\n"
+        f"â¢ ~{tpm:.0f} trades/maand verwacht\n"
+        f"â¢ Verwacht: {s}â¬{vw:.4f}\n"
+        f"â¢ 95% interval: â¬{data.get('ci_laag',0):.4f} â â¬{data.get('ci_hoog',0):.4f}\n\n"
     )
 
 
@@ -5028,7 +5029,7 @@ def log_coach_whatsapp_commando(conn, commando: str, afzender: str = "",
             """, (commando[:100], afzender[:50], resultaat[:200], bot_status[:20]))
         conn.commit()
     except Exception as e:
-        log(f"⚠️ Commando log fout: {e}")
+        log(f"â ï¸ Commando log fout: {e}")
         try: conn.rollback()
         except Exception: pass
 
@@ -5037,7 +5038,7 @@ def genereer_trade_coaching_tip(conn, trade: Dict) -> str:
     """
     Claude genereert een coaching tip voor elke individuele trade.
     Wordt opgeslagen bij de trade voor later terugkijken.
-    Kort en actionabel — max 2 zinnen.
+    Kort en actionabel â max 2 zinnen.
     """
     outcome = safe_str(trade.get("outcome","")).upper()
     setup   = safe_str(trade.get("setup_type","?"))
@@ -5068,30 +5069,30 @@ def bouw_volledig_leerrapport(conn, dagen: int = 30) -> str:
     regime_data  = detecteer_regime_effect(conn, dagen)
     verwachting  = bereken_verwachte_maandwinst(conn)
 
-    r = f"📚 LEERRAPPORT — {dagen} dagen\n{'═'*36}\n\n"
+    r = f"ð LEERRAPPORT â {dagen} dagen\n{'â'*36}\n\n"
 
     # Setup patronen
     if setup_data.get("top_setups"):
-        r += f"🏆 TOP SETUPS: {', '.join(setup_data['top_setups'][:3])}\n"
+        r += f"ð TOP SETUPS: {', '.join(setup_data['top_setups'][:3])}\n"
     if setup_data.get("zwakke_setups"):
-        r += f"⛔ VERMIJD: {', '.join(setup_data['zwakke_setups'][:3])}\n"
+        r += f"â VERMIJD: {', '.join(setup_data['zwakke_setups'][:3])}\n"
     r += "\n"
 
     # Aanbevelingen
     if setup_data.get("aanbevelingen"):
-        r += "💡 AANBEVELINGEN:\n"
+        r += "ð¡ AANBEVELINGEN:\n"
         for a in setup_data["aanbevelingen"][:4]:
-            r += f"  → {a}\n"
+            r += f"  â {a}\n"
         r += "\n"
 
     # Uur patronen
     if uur_data.get("beste_uren"):
         beste = [f"{safe_int(u.get('uur')):02d}:00" for u in uur_data["beste_uren"][:3]]
-        r += f"⏰ BESTE UREN: {', '.join(beste)}\n"
+        r += f"â° BESTE UREN: {', '.join(beste)}\n"
     if uur_data.get("beste_dagen"):
         dagen_namen = [safe_str(d.get("dag_naam","")).strip() for d in uur_data["beste_dagen"][:3]]
-        r += f"📅 BESTE DAGEN: {', '.join(dagen_namen)}\n"
-    r += f"💡 Aanbevolen window: {uur_data.get('aanbevolen_start',9)}:00-{uur_data.get('aanbevolen_end',17)}:00 UTC\n\n"
+        r += f"ð BESTE DAGEN: {', '.join(dagen_namen)}\n"
+    r += f"ð¡ Aanbevolen window: {uur_data.get('aanbevolen_start',9)}:00-{uur_data.get('aanbevolen_end',17)}:00 UTC\n\n"
 
     # Regime effect
     r += format_regime_effect(regime_data)
@@ -5102,9 +5103,9 @@ def bouw_volledig_leerrapport(conn, dagen: int = 30) -> str:
     # Claude weekoverzicht toevoegen
     week_analyse = genereer_claude_weekoverzicht(conn)
     if week_analyse:
-        r += f"{'─'*36}\n🧠 CLAUDE WEEKOVERZICHT:\n{week_analyse}\n\n"
+        r += f"{'â'*36}\nð§  CLAUDE WEEKOVERZICHT:\n{week_analyse}\n\n"
 
-    r += f"{'═'*36}\n"
+    r += f"{'â'*36}\n"
     return r
 
 
