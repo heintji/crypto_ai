@@ -188,6 +188,7 @@ def format_pct(rate: float) -> str:
 # WHATSAPP — kern functie, identiek in alle bestanden
 # Bot stuurt NOOIT automatisch behalve bij kritieke events
 # ============================================================
+_WA_SENT: dict = {}
 def send_whatsapp(message: str) -> bool:
     """
     Stuurt WhatsApp bericht via Twilio API.
