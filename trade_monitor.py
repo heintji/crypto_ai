@@ -187,13 +187,17 @@ def log(msg: str) -> None:
 
 
 def safe_int(x: Any, default: int = 0) -> int:
-    try: return int(x)
-    except Exception: return default
+    try:
+        return int(x)
+    except Exception:
+        return default
 
 
 def safe_float(x: Any, default: float = 0.0) -> float:
-    try: return float(x)
-    except Exception: return default
+    try:
+        return float(x)
+    except Exception:
+        return default
 
 
 def safe_str(x: Any, default: str = "") -> str:
@@ -201,7 +205,8 @@ def safe_str(x: Any, default: str = "") -> str:
     try:
         s = str(x).strip()
         return s if s else default
-    except Exception: return default
+    except Exception:
+        return default
 
 
 def utc_day_str(offset_days: int = 0) -> str:
@@ -825,7 +830,8 @@ def load_state() -> Dict[str, Any]:
         return {"positions": {}, "open_trades": []}
     finally:
         if conn2:
-            try: conn2.close()
+            try:
+                conn2.close()
             except: pass
 
 def save_state(state: Dict[str, Any]) -> None:
@@ -1070,7 +1076,8 @@ def process_live_trade(
                     "UPDATE experience_trades SET stop_loss=%s WHERE trade_key=%s",
                     (stop, trade_key))
                 conn.commit()
-            except Exception: pass
+            except Exception:
+                pass
 
     if current <= stop or r < 0:
         log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
@@ -1807,8 +1814,10 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
-        try: health_update("trade_monitor", "OK", f"{open_count} live posities bewaakt", live=open_count)
-        except Exception: pass
+        try:
+            health_update("trade_monitor", "OK", f"{open_count} live posities bewaakt", live=open_count)
+        except Exception:
+            pass
 
         # Sla run status op in bot_state voor dashboard
         try:
