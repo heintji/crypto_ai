@@ -986,6 +986,29 @@ def shadow_buy(
             "partial_sold_40": False,
         }
         save_shadow_state(state)
+        # DB write: shadow trade naar experience_trades
+        try:
+            import psycopg2, os as _os
+            _db = psycopg2.connect(_os.environ['DATABASE_URL'])
+            _cur = _db.cursor()
+            _tk = f"SHADOW|{symbol}|{int(time.time())}"
+            _cur.execute("""
+                INSERT INTO experience_trades
+                (trade_key, symbol, status, entry_price, stop_loss, target,
+                 qty, amount_eur, score, setup_type, regime, entry_time)
+                VALUES (%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                ON CONFLICT (trade_key) DO NOTHING
+            """, (_tk, symbol, entry,
+                  meta.get('stop', entry * 0.97),
+                  meta.get('target', entry * 1.06),
+                  qty, amount_eur,
+                  meta.get('score', 0),
+                  meta.get('setup_type','TREND_PULLBACK'),
+                  meta.get('regime','UNKNOWN')))
+            _db.commit()
+            _db.close()
+        except Exception as _dbe:
+            log(f"shadow_buy DB fout: {_dbe}")
         log(f"Ã°ÂÂÂ¤ Shadow BUY gelogd: {symbol} @ {entry:.6f}")
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_buy fout ({symbol}): {e}")
