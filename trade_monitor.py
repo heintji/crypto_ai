@@ -1127,15 +1127,21 @@ def process_live_trade(
             # 60% positie blijft open met stop op break-even.
             entry_p  = safe_float(trade.get("entry"))
             pct_move = (current - entry_p) / entry_p * 100 if entry_p > 0 else 0.0
-            send_whatsapp(
-                f"\U0001f4ca PARTIAL SELL: {symbol}\n"
-                f"\n"
-                f"\U0001f4b0 40% verkocht\n"
-                f"\U0001f4c8 R bereikt: {r:.2f}R\n"
-                f"\U0001f6d1 Stop -> break-even: EUR{entry_p:.6f}\n"
-                f"60% positie blijft open",
-                rate_key=f"partial_{symbol}"
-            )
+            pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+            # rate_key=f"partial_{symbol}",
+            # message=(
+            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
+            # f"{'Ã¢ÂÂ' * 28}\n\n"
+            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
+            # f"Entry:   {entry_p:.6f}\n"
+            # f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
+            # f"R:       {r:.2f}\n\n"
+            # f"60% positie nog open.\n"
+            # f"Stop staat op break-even.\n"
+            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
+            # f"Commands: TRADES | STATUS"
+            # ),
+            # )
 
     # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("partial_sold_40") and r < 1.0:
@@ -1241,13 +1247,17 @@ def _finalize_trade(
     send_whatsapp(
         rate_key=f"trade_closed_{symbol}",
         message=(
-            f"{emoji} TRADE GESLOTEN: {symbol}\n"
-            f"{'Ã¢ÂÂ' * 30}\n\n"
-            f"Ã°ÂÂÂ Resultaat:  {outcome}\n"
-            f"Ã°ÂÂÂ¶ PnL:        Ã¢ÂÂ¬{pnl_eur:.4f}\n"
-            f"Ã°ÂÂÂ R-multiple: {exit_r:.2f}R\n"
-            f"Ã°ÂÂÂ¯ Reden:      {exit_reden}\n"
-            f"Ã¢ÂÂ±Ã¯Â¸Â Houdtijd:   {hold_min:.0f} min\n"
+                        f"{emoji} TRADE GESLOTEN: {symbol}\n"
+            f"{'=' * 32}\n"
+            f"\n"
+            f"{'✅' if outcome == 'WIN' else '❌'} Resultaat:   {outcome}\n"
+            f"\U0001f4b6 PnL:         EUR{pnl_eur:+.3f}\n"
+            f"\U0001f4c8 R bij exit:  {exit_r:.2f}R\n"
+            f"\U0001f3c6 Max R bereikt: {mfe_r:.2f}R\n"
+            f"{'\U00002705 1R bereikt' if mfe_r >= 1.0 else '\U0000274c 1R NIET bereikt'}\n"
+            f"{'\U00002705 2R bereikt' if mfe_r >= 2.0 else '\U0000274c 2R niet bereikt'}\n"
+            f"\U0001f3af Reden:       {exit_reden}\n"
+            f"\u23f1\ufe0f Houdtijd:    {hold_min:.0f} min\n"
         )
     )
 
