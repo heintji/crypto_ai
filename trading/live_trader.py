@@ -84,6 +84,8 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
 MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "10")
+TRAILING_STOP_PCT      = float(os.getenv("TRAILING_STOP_PCT")        or "0.03")  # 3% trailing stop
+TRAILING_STOP_ACTIEF   = os.getenv("TRAILING_STOP_ACTIEF", "true").lower() == "true"
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES")         or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   or "2")
@@ -2170,6 +2172,34 @@ def main_loop():
                 """)
                 rows = cur.fetchall()
 
+
+            # ── Shadow-only trades: score 80-89 (geen live, wel shadow) ──
+            # shadow_only_query
+            cur.execute("""
+                SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
+                FROM pending_approvals
+                WHERE status = 'PENDING'
+                AND score >= 80 AND score < 90
+                AND expires_at > NOW()
+                ORDER BY score DESC
+                LIMIT 10
+            """)
+            shadow_rows = cur.fetchall()
+
+            for srow in shadow_rows:
+                try:
+                    sid, ssymbol, smarket, sscore, sentry, sstop, starget, skelly = srow
+                    # Alleen shadow — geen echte koop
+                    smeta = {"score": sscore, "setup_type": "TREND_PULLBACK", "regime": "SHADOW_ONLY",
+                             "shadow_only": True}
+                    sqty = round(float(skelly or 7) / float(sentry or 1), 6) if sentry else 0
+                    shadow_buy(ssymbol, float(sentry or 0), sqty,
+                               float(skelly or 7), smeta)
+                    cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
+                    conn.commit()
+                    log(f"Shadow-only: {ssymbol} score={sscore}")
+                except Exception as _se:
+                    log(f"Shadow-only fout ({ssymbol}): {_se}")
             for row in rows:
                 pid, symbol, market, score, entry, stop, target, kelly, live_ok = row
                 log(f"Ã°ÂÂÂ Pending: {symbol} score={score}")
