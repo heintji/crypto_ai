@@ -111,6 +111,8 @@ MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            o
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
 MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "5")
 DAILY_STOP_LOSS_EUR          = float(os.getenv("DAILY_STOP_LOSS_EUR")          or "5.00")
+TRAILING_STOP_PCT    = float(os.getenv("TRAILING_STOP_PCT",    "0.03"))  # 3% trailing
+TRAILING_STOP_ACTIEF = os.getenv("TRAILING_STOP_ACTIEF", "true").lower() == "true"
 MAX_CONSECUTIVE_LOSSES       = int(os.getenv("MAX_CONSECUTIVE_LOSSES")         or "3")
 CONSECUTIVE_LOSS_PAUSE_HOURS = int(os.getenv("CONSECUTIVE_LOSS_PAUSE_HOURS")   or "2")
 TRADING_HOURS_START          = int(os.getenv("TRADING_HOURS_START")            or "9")
