@@ -7,6 +7,14 @@ from __future__ import annotations
 import os, sys, json, time, traceback
 from datetime import datetime, timezone, timedelta
 
+
+# DB connectie helper
+import os as _os
+import psycopg2 as _psycopg2
+DATABASE_URL = _os.getenv("DATABASE_URL", "")
+
+def _db_connect():
+    return _psycopg2.connect(DATABASE_URL)
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
