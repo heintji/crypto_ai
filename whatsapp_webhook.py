@@ -73,6 +73,12 @@ import psycopg2
 import psycopg2.extras
 import requests
 from flask import Flask, request, jsonify
+try:
+    from bot_health_helper import health_update, health_fout
+except ImportError:
+    def health_update(*a, **k): pass
+    def health_fout(*a, **k): pass
+
 
 # Twilio optioneel — voor signature verificatie
 try:
@@ -2033,6 +2039,10 @@ def send_leeranalyse():
 # ============================================================
 # STARTUP
 # ============================================================
+# Health heartbeat bij opstart
+try: health_update("webhook", "OK", "webhook actief")
+except Exception: pass
+
 if __name__ == "__main__":
     log("=" * 60)
     log("WhatsApp Webhook v2.1 — gestart")
