@@ -2280,39 +2280,56 @@ def main_loop():
         log(f"ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂÃÂ DB verbinding mislukt: {e}")
         return
 
-    # === STATE SYNC MET DB ===
-    # Herstel open posities vanuit DB als enige bron van waarheid
+    # === STATE SYNC MET DB (eigen connectie) ===
+    # Herstel open posities vanuit DB — single source of truth
+    # Gebruikt EIGEN verbinding zodat main conn niet beschadigd raakt
     try:
-        with conn.cursor() as _cur:
-            _cur.execute("""
-                SELECT trade_key, symbol, bitvavo_market,
-                       entry, stop_loss, target, qty, amount_eur,
-                       entry_time, prebuy_id
-                FROM public.experience_trades
-                WHERE trade_key LIKE 'LIVE|%%'
-                  AND status = 'OPEN'
-                ORDER BY entry_time
-            """)
-            _open_rows = _cur.fetchall()
+        _sync_conn = db_connect()
+        try:
+            with _sync_conn.cursor() as _cur:
+                _cur.execute("""
+                    SELECT trade_key, symbol, bitvavo_market,
+                           entry, stop_loss, target, qty, amount_eur,
+                           entry_time, prebuy_id
+                    FROM public.experience_trades
+                    WHERE trade_key LIKE 'LIVE|%%'
+                      AND status = 'OPEN'
+                    ORDER BY entry_time
+                """)
+                _open_rows = _cur.fetchall()
+            _sync_conn.rollback()
+        finally:
+            _sync_conn.close()
+
         _db_positions = {}
         for _row in _open_rows:
             (_tk, _sym, _mkt, _entry, _stop, _tgt,
              _qty, _amt, _etime, _pid) = _row
             _db_positions[_sym] = {
-                "symbol":     _sym, "market": _mkt or f"{_sym[:-4]}-EUR",
-                "entry":      float(_entry or 0), "stop":    float(_stop or 0),
-                "target":     float(_tgt or 0),   "qty":     float(_qty or 0),
-                "amount_eur": float(_amt or 0),   "trade_key": _tk,
-                "opened_at":  int(_etime.timestamp()) if _etime else 0,
-                "status": "OPEN", "had_over_1r": False, "partial_sold_40": False,
-                "below_1r_count": 0, "max_price_seen": float(_entry or 0),
-                "min_price_seen": float(_entry or 0), "mfe_r": 0.0, "mae_r": 0.0,
+                "symbol":          _sym,
+                "market":          _mkt or f"{_sym[:-4]}-EUR",
+                "entry":           float(_entry or 0),
+                "stop":            float(_stop or 0),
+                "target":          float(_tgt or 0),
+                "qty":             float(_qty or 0),
+                "amount_eur":      float(_amt or 0),
+                "trade_key":       _tk,
+                "opened_at":       int(_etime.timestamp()) if _etime else 0,
+                "status":          "OPEN",
+                "had_over_1r":     False,
+                "partial_sold_40": False,
+                "below_1r_count":  0,
+                "max_price_seen":  float(_entry or 0),
+                "min_price_seen":  float(_entry or 0),
+                "mfe_r":           0.0,
+                "mae_r":           0.0,
             }
         _state_sync = {"positions": _db_positions, "open_trades": list(_db_positions.values())}
         save_state(_state_sync)
-        log(f"[DB] State sync met DB: {len(_db_positions)} open posities")
+        log(f"[DB] State sync: {len(_db_positions)} open posities hersteld uit DB")
     except Exception as _se:
-        log(f"\u26a0\ufe0f State sync fout: {_se}")
+        log(f"[WARN] State sync fout (niet kritiek): {_se}")
+
 
     while True:
         try:
