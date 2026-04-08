@@ -1232,6 +1232,38 @@ def _finalize_trade(
             severity="KRITIEK",
             open_trades=len(load_state().get("positions", {})),
         )
+        # ── Sell poging bijhouden ─────────────────────────────────
+        trade_key = trade.get("trade_key") or trade.get("id", "")
+        fout_msg  = sell_result.get("reason") or sell_result.get("error") or "onbekend"
+        try:
+            with conn.cursor() as _sc:
+                _sc.execute("""
+                    UPDATE experience_trades
+                    SET sell_pogingen      = COALESCE(sell_pogingen, 0) + 1,
+                        laatste_sell_poging = NOW(),
+                        sell_fout           = %s
+                    WHERE trade_key = %s
+                """, (fout_msg[:200], trade_key))
+                _sc.execute(
+                    "SELECT sell_pogingen FROM experience_trades WHERE trade_key = %s",
+                    (trade_key,))
+                _row = _sc.fetchone()
+                _pogingen = int(_row[0]) if _row else 1
+                conn.commit()
+            # WhatsApp alert na 3 mislukte pogingen
+            if _pogingen >= 3:
+                _wa_msg = (
+                    f"\u26a0\ufe0f SELL BLIJFT MISLUKKEN\n"
+                    f"Coin: {symbol}\n"
+                    f"Pogingen: {_pogingen}x\n"
+                    f"Fout: {fout_msg[:100]}\n"
+                    f"Trade: {trade_key[:40]}\n"
+                    f"\u2192 Controleer Bitvavo handmatig!"
+                )
+                send_whatsapp_rate_limited(_wa_msg, key=f"sell_mislukt_{symbol}")
+                log(f"[KRITIEK] SELL {symbol} al {_pogingen}x mislukt — WA gestuurd")
+        except Exception as _se:
+            log(f"sell_pogingen update fout: {_se}")
         return
 
     entry      = safe_float(trade.get("entry"))
