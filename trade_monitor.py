@@ -1256,6 +1256,7 @@ def _finalize_trade(
             f"\U0001f3c6 Max R bereikt: {mfe_r:.2f}R\n"
             f"{'\U00002705 1R bereikt' if mfe_r >= 1.0 else '\U0000274c 1R NIET bereikt'}\n"
             f"{'\U00002705 2R bereikt' if mfe_r >= 2.0 else '\U0000274c 2R niet bereikt'}\n"
+            f"{'\u00002705 Target bereikt' if exit_reden in ('TARGET', 'TARGET_REACHED') else '\u0000274c Target niet bereikt'}\n"
             f"\U0001f3af Reden:       {exit_reden}\n"
             f"\u23f1\ufe0f Houdtijd:    {hold_min:.0f} min\n"
         )
