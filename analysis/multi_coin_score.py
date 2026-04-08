@@ -95,6 +95,20 @@ import psycopg2
 import psycopg2.extras
 import requests
 
+def _schrijf_heartbeat(status='OK', details=''):
+    try:
+        import psycopg2, os as _os2
+        _db2 = psycopg2.connect(_os2.environ['DATABASE_URL'])
+        _c2  = _db2.cursor()
+        _c2.execute("UPDATE bot_health SET status=%s, laatste_run=NOW(), details=%s WHERE service=%s",
+            (status, str(details)[:200], 'multi_coin_score'))
+        if _c2.rowcount == 0:
+            _c2.execute("INSERT INTO bot_health (service,status,laatste_run,details) VALUES (%s,%s,NOW(),%s)",
+                ('multi_coin_score', status, str(details)[:200]))
+        _db2.commit(); _db2.close()
+    except Exception as _e2: print(f'[HEALTH] multi_coin_score: {_e2}')
+
+
 def get_btc_funding_rate() -> float:
     """Haal BTC funding rate op van Binance. Gratis API."""
     try:
@@ -3059,6 +3073,7 @@ if __name__ == "__main__":
             _conn.close()
         except Exception as _e:
             log(f"scanner_last_run fout: {_e}")
+            _schrijf_heartbeat('OK', f'scan klaar: {len(coins) if "coins" in dir() else 0} coins')
         sys.exit(0)
 
     except KeyboardInterrupt:
