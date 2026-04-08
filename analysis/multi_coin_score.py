@@ -94,6 +94,29 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import psycopg2
 import psycopg2.extras
 import requests
+
+def get_btc_funding_rate() -> float:
+    """Haal BTC funding rate op van Binance. Gratis API."""
+    try:
+        import urllib.request
+        url = "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"
+        data = json.loads(urllib.request.urlopen(url, timeout=5).read())
+        return float(data.get("lastFundingRate", 0))
+    except Exception:
+        return 0.0  # Bij fout: geen filter toepassen
+
+def funding_rate_ok(funding_rate: float) -> bool:
+    """
+    Funding rate filter:
+    - Sterk positief (>0.01) = markt overbought, SHORT druk verwacht → NIET kopen
+    - Sterk negatief (<-0.01) = markt oversold, LONG druk verwacht → WEL kopen (contrarian)
+    - Normaal: geen filter
+    """
+    if funding_rate > 0.01:   # >1% = te overbought
+        return False
+    return True  # Negatief of normaal = OK om te kopen
+
+
 try:
     from bot_health_helper import health_update, health_fout
 except ImportError:
@@ -2359,7 +2382,7 @@ def insert_pending(conn, prebuy: Dict) -> str:
         log(f"Pre-BUY: {prebuy['symbol']} score={prebuy['score']} "
             f"setup={prebuy['setup_type']} cluster={prebuy.get('coin_cluster','?')} "
             f"kelly=€{prebuy.get('kelly_grootte_eur', MAX_PER_TRADE_EUR):.2f} "
-            f"LIVE={'JA' if prebuy.get('live_toegestaan') else 'NEE'} "
+            live_toegestaan = (score >= 90)  # score 90+ mag live traden
             f"id={prebuy_id[:8]}")
         return prebuy_id
     except Exception as e:
@@ -2799,7 +2822,7 @@ def scan_universe(conn, drempels: Dict) -> int:
             )
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
-            live_toegestaan = live_ok and coin_cluster != "ZOMBIE"
+            live_toegestaan = (score >= 90)  # score 90+ mag live traden
 
             prebuy = {
                 "id":               str(uuid.uuid4()),
