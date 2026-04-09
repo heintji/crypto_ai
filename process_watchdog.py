@@ -191,7 +191,30 @@ def run():
             bericht += "\n"
 
         bericht += "Check direct!"
-        stuur_wa(bericht)
+        # ── Deduplicatie: max 1 WA per 4 uur voor dezelfde problemen ──
+        import hashlib
+        _prob_hash = hashlib.md5(",".join(sorted([p["service"]+p["type"] for p in problemen])).encode()).hexdigest()[:8]
+        _wa_key    = f"watchdog_wa_{_prob_hash}"
+        _stuur     = True
+        try:
+            _conn2 = psycopg2.connect(os.environ["DATABASE_URL"])
+            _cur2  = _conn2.cursor()
+            _cur2.execute("SELECT value FROM bot_state WHERE key=%s", (_wa_key,))
+            _row2  = _cur2.fetchone()
+            if _row2:
+                _last = datetime.fromisoformat(_row2[0])
+                if (datetime.now(timezone.utc) - _last).total_seconds() < 4 * 3600:
+                    _stuur = False
+                    log(f"WA dedup: zelfde problemen al gemeld {_prob_hash}, skip")
+            if _stuur:
+                stuur_wa(bericht)
+                _cur2.execute("INSERT INTO bot_state (key,value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=%s",
+                    (_wa_key, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
+                _conn2.commit()
+            _conn2.close()
+        except Exception as _de:
+            log(f"Dedup fout: {_de}")
+            stuur_wa(bericht)  # Bij fout toch sturen
         log(f"Alert verstuurd: {len(kritiek)} kritiek, {len(hoog)} hoog")
     else:
         log("Alle services OK \u2705 — geen alert")
