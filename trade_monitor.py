@@ -1849,6 +1849,12 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
 
+        # Heartbeat: trade_monitor is actief
+        try:
+            health_update(conn, "trade_monitor", "OK", "monitor actief")
+        except Exception:
+            pass
+
         # Sla run status op in bot_state voor dashboard
         try:
             set_bot_state(conn, "monitor_laatste_run",
