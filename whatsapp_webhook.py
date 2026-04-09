@@ -1871,41 +1871,6 @@ def whatsapp_webhook():
     return '<?xml version="1.0" encoding="UTF-8"?><Response></Response>', 200
 
 
-@app.route("/auto_buy", methods=["POST"])
-def auto_buy():
-    """
-    Interne route voor automatische BUY triggers.
-    Wordt aangeroepen door multi_coin_score.py na een goed signaal.
-    Vereist BOT_INTERNAL_SECRET header.
-    """
-    if not verify_internal_auth():
-        log("❌ Auto buy auth mislukt")
-        return jsonify({"ok": False, "error": "Unauthorized"}), 403
-
-    data      = request.get_json(silent=True) or {}
-    prebuy_id = safe_str(data.get("prebuy_id"))
-
-    if not prebuy_id:
-        return jsonify({"ok": False, "error": "prebuy_id ontbreekt"}), 400
-
-    log(f"🤖 Auto BUY trigger: prebuy_id={prebuy_id}")
-
-    conn = None
-    try:
-        conn    = db_connect()
-        ok, msg = execute_auto_buy(prebuy_id, conn)
-        return jsonify({"ok": ok, "message": msg}), 200 if ok else 400
-    except Exception as e:
-        log(f"❌ auto_buy route fout: {e}")
-        return jsonify({"ok": False, "error": str(e)}), 500
-    finally:
-        if conn:
-            try:
-                conn.close()
-            except Exception:
-                pass
-
-
 # ── Cron rapport routes ──────────────────────────────────
 @app.route("/send_daily_rapport", methods=["POST"])
 def send_daily_rapport():
