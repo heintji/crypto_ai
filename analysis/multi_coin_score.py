@@ -2407,7 +2407,6 @@ def insert_pending(conn, prebuy: Dict) -> str:
         log(f"Pre-BUY: {prebuy['symbol']} score={prebuy['score']} "
             f"setup={prebuy['setup_type']} cluster={prebuy.get('coin_cluster','?')} "
             f"kelly=€{prebuy.get('kelly_grootte_eur', MAX_PER_TRADE_EUR):.2f} "
-            live_toegestaan = (score >= 90)  # score 90+ mag live traden
             f"id={prebuy_id[:8]}")
         return prebuy_id
     except Exception as e:
