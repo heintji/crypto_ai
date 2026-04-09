@@ -2461,6 +2461,167 @@ def detecteer_stale_trades(conn) -> None:
 # ============================================================
 # HOOFD MONITOR LOOP
 # ============================================================
+# ══════════════════════════════════════════════════════════════
+# RECONCILIATIE — DB vs Bitvavo wallet vergelijken
+# ══════════════════════════════════════════════════════════════
+_laatste_reconciliatie: float = 0.0
+RECONCILIATIE_INTERVAL = 300  # elke 5 minuten
+
+def reconcilieer_trades() -> None:
+    """
+    Vergelijkt open trades in DB met Bitvavo wallet.
+    Als mismatch → WhatsApp alert + automatisch herstel.
+    """
+    global _laatste_reconciliatie
+    now = time.time()
+    if now - _laatste_reconciliatie < RECONCILIATIE_INTERVAL:
+        return
+    _laatste_reconciliatie = now
+
+    try:
+        # 1. Haal open trades uit DB
+        conn = db_connect()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT trade_key, symbol, entry, amount_eur, qty
+            FROM experience_trades
+            WHERE source = 'LIVE' AND status = 'OPEN'
+        """)
+        db_open = {r[1]: {"trade_key": r[0], "entry": r[2], "eur": r[3], "qty": r[4]}
+                   for r in cur.fetchall()}
+
+        # 2. Haal Bitvavo wallet op
+        bv = bitvavo_client()
+        balances = bv.balance({})
+        wallet = {}
+        if isinstance(balances, list):
+            for b in balances:
+                sym = b.get("symbol", "")
+                avail = float(b.get("available", 0))
+                if avail > 0.000001 and sym not in ("EUR", "USDT"):
+                    wallet[sym] = avail
+
+        # 3. Vergelijk
+        mismatches = []
+
+        # In DB OPEN maar niet in wallet
+        for sym, info in db_open.items():
+            base = sym.replace("USDT", "").replace("-EUR", "")
+            if base not in wallet:
+                mismatches.append(f"DB OPEN maar niet in wallet: {sym} (trade_key={info['trade_key'][:20]})")
+                # Automatisch sluiten in DB
+                try:
+                    cur.execute("""
+                        UPDATE experience_trades
+                        SET status='CLOSED', outcome='CLOSED', pnl_pct=0,
+                            closed_at=NOW()
+                        WHERE trade_key=%s AND status='OPEN'
+                    """, (info['trade_key'],))
+                    conn.commit()
+                    log(f"[RECON] Auto-gesloten in DB: {sym} (niet in wallet)")
+                except Exception as e:
+                    log(f"[RECON] Fout bij auto-sluiten {sym}: {e}")
+
+        # In wallet maar niet in DB
+        for sym, qty in wallet.items():
+            sym_usdt = f"{sym}USDT"
+            if sym_usdt not in db_open and qty * 10 > 1:  # min ~1 EUR waarde
+                mismatches.append(f"In wallet maar NIET in DB: {sym} qty={qty:.6f}")
+
+        conn.close()
+
+        if mismatches:
+            bericht = (
+                "TRADE RECONCILIATIE MISMATCH\n"
+                + "=" * 32 + "\n"
+                + "\n".join(mismatches) + "\n"
+                + "\nCheck Bitvavo en DB direct!"
+            )
+            log(f"[RECON] {len(mismatches)} mismatches gevonden!")
+            send_whatsapp(bericht)
+            # Claude analyseren
+            _claude_audit_recon(mismatches)
+        else:
+            log(f"[RECON] Alles in sync: {len(db_open)} DB trades = wallet")
+
+    except Exception as e:
+        log(f"[RECON] Fout: {e}")
+
+
+def _claude_audit_recon(mismatches: list) -> None:
+    """Claude analyseert reconciliatie mismatch en geeft advies."""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        prompt = f"""Je bent trade monitor AI voor een crypto bot.
+
+Er zijn {len(mismatches)} mismatches gevonden tussen de database en Bitvavo wallet:
+{chr(10).join(mismatches)}
+
+Geef in 3 punten:
+1. Wat is er waarschijnlijk misgegaan?
+2. Wat is het risico voor het kapitaal?
+3. Wat moet er direct gedaan worden?
+
+Antwoord in het Nederlands, max 200 woorden."""
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        advies = msg.content[0].text if msg.content else "Geen analyse beschikbaar"
+        log(f"[RECON] Claude advies: {advies[:200]}")
+
+        wa_msg = (
+            "CLAUDE ANALYSE RECONCILIATIE\n"
+            + "=" * 32 + "\n"
+            + advies[:400]
+        )
+        send_whatsapp(wa_msg)
+    except Exception as e:
+        log(f"[RECON] Claude audit fout: {e}")
+
+
+def claude_audit_sell_fout(trade_key: str, symbol: str, fout: str, open_trades: int) -> None:
+    """Claude analyseert een sell fout en geeft advies wat te doen."""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        prompt = f"""Je bent trade monitor AI voor een crypto bot.
+
+De sell functie is mislukt:
+- Trade: {trade_key}
+- Coin: {symbol}
+- Fout: {fout}
+- Open trades: {open_trades}
+
+Geef in 2 punten:
+1. Wat ging er mis en wat is het risico?
+2. Wat zijn de stappen om dit handmatig op te lossen op Bitvavo?
+
+Antwoord in het Nederlands, max 150 woorden."""
+
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=250,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        advies = msg.content[0].text if msg.content else "Geen analyse"
+        log(f"[AUDIT] Claude sell advies: {advies[:200]}")
+
+        wa_msg = (
+            "CLAUDE ANALYSE SELL FOUT\n"
+            + "=" * 32 + "\n"
+            + f"Coin: {symbol}\n"
+            + f"Fout: {fout[:80]}\n\n"
+            + advies[:350]
+        )
+        send_whatsapp(wa_msg)
+    except Exception as e:
+        log(f"[AUDIT] Claude sell audit fout: {e}")
+
+
 def run_monitor_loop() -> None:
     """
     Continue monitor loop Ã¢ÂÂ draait als Render Background Worker.
