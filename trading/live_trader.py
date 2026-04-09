@@ -2020,6 +2020,9 @@ def sell(
 
         # SELL order plaatsen
         ok, order_data = place_market_sell(market, qty, fraction)
+        # Bescherm tegen string response van Bitvavo
+        if isinstance(order_data, str):
+            order_data = {"errorCode": 0, "filledAmount": 0, "error": order_data}
 
         if not ok:
             err = str(order_data.get("error", "SELL mislukt"))
