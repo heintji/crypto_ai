@@ -1851,7 +1851,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         # Heartbeat: trade_monitor is actief
         try:
-            health_update(conn, "trade_monitor", "OK", "monitor actief")
+            health_update("trade_monitor", "OK", "monitor actief")
         except Exception:
             pass
 
