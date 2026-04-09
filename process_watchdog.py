@@ -191,27 +191,37 @@ def run():
             bericht += "\n"
 
         bericht += "Check direct!"
-        # ── Deduplicatie: max 1 WA per 4 uur voor dezelfde problemen ──
-        import hashlib
-        _prob_hash = hashlib.md5(",".join(sorted([p["service"]+p["type"] for p in problemen])).encode()).hexdigest()[:8]
-        _wa_key    = f"watchdog_wa_{_prob_hash}"
-        _stuur     = True
+        # ── Deduplicatie per service: max 1 WA per 4 uur per service ──
         try:
             _conn2 = psycopg2.connect(os.environ["DATABASE_URL"])
             _cur2  = _conn2.cursor()
-            _cur2.execute("SELECT value FROM bot_state WHERE key=%s", (_wa_key,))
-            _row2  = _cur2.fetchone()
-            if _row2:
-                _last = datetime.fromisoformat(_row2[0])
-                if (datetime.now(timezone.utc) - _last).total_seconds() < 4 * 3600:
-                    _stuur = False
-                    log(f"WA dedup: zelfde problemen al gemeld {_prob_hash}, skip")
-            if _stuur:
-                stuur_wa(bericht)
-                _cur2.execute("INSERT INTO bot_state (key,value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=%s",
-                    (_wa_key, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat()))
-                _conn2.commit()
+            _te_sturen = []
+            for _p in problemen:
+                _wa_key = f"watchdog_wa_{_p['service'].lower().replace(' ','_')}"
+                _cur2.execute("SELECT value FROM bot_state WHERE key=%s", (_wa_key,))
+                _row2 = _cur2.fetchone()
+                _mag_sturen = True
+                if _row2:
+                    try:
+                        _last = datetime.fromisoformat(_row2[0])
+                        if (datetime.now(timezone.utc) - _last).total_seconds() < 4 * 3600:
+                            _mag_sturen = False
+                    except Exception:
+                        pass
+                if _mag_sturen:
+                    _te_sturen.append(_p)
+                    _cur2.execute(
+                        "INSERT INTO bot_state (key,value) VALUES (%s,%s) ON CONFLICT (key) DO UPDATE SET value=%s",
+                        (_wa_key, datetime.now(timezone.utc).isoformat(), datetime.now(timezone.utc).isoformat())
+                    )
+            _conn2.commit()
             _conn2.close()
+            if _te_sturen:
+                stuur_wa(bericht)
+        except Exception as _e2:
+            log(f"WA dedup fout: {_e2}")
+            stuur_wa(bericht)
+
         except Exception as _de:
             log(f"Dedup fout: {_de}")
             stuur_wa(bericht)  # Bij fout toch sturen
