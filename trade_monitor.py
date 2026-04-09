@@ -1846,6 +1846,10 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         log(
             f"Monitor run klaar ({elapsed}s) Ã¢ÂÂ "
+            try:
+                health_update("trade_monitor", "OK", "monitor actief")
+            except Exception:
+                pass
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
         try:
