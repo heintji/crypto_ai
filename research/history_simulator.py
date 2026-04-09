@@ -345,6 +345,7 @@ def load_candles_map_for_needed_symbols(conn, symbols: List[str], timeframe: str
     unique_symbols = sorted(set([s for s in symbols if s]))
     result: Dict[str, List[Candle]] = {}
     for s in unique_symbols:
+        markt_score_val = 0  # default: geen extreme greed blokkade
         result[s] = load_candles(conn, s, timeframe)
         print(f"📈 loaded candles {s} {timeframe}: {len(result[s])}")
     return result
