@@ -2195,6 +2195,14 @@ def main_loop():
                 """)
                 rows = cur.fetchall()
 
+                # ── bot_running check: als live UIT → rows leeg maken ──
+                try:
+                    _bot_run = get_bot_state(conn, "bot_running", "true")
+                    if str(_bot_run).lower() in ("false", "0", "nee", "off"):
+                        rows = []  # live kopen geblokkeerd
+                except Exception:
+                    pass
+
                 # ── Shadow-only: score 80-89, geen live geld ──
                 cur.execute("""
                     SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
