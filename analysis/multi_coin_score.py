@@ -2418,31 +2418,8 @@ def insert_pending(conn, prebuy: Dict) -> str:
         return ""
 
 
-def trigger_auto_buy(prebuy_id: str) -> bool:
-    """Triggert /auto_buy op whatsapp_webhook.py."""
-    if not WEBHOOK_BASE_URL:
-        log("WEBHOOK_BASE_URL niet ingesteld — auto_buy niet getriggerd")
-        return False
-    try:
-        resp = requests.post(
-            f"{WEBHOOK_BASE_URL}/auto_buy",
-            headers={"X-Bot-Auth": BOT_INTERNAL_SECRET},
-            json={"prebuy_id": prebuy_id},
-            timeout=20,
-        )
-        if resp.ok:
-            log(f"Auto BUY getriggerd: {prebuy_id[:8]}")
-            return True
-        log(f"Auto BUY fout: {resp.status_code}: {resp.text[:100]}")
-        return False
-    except Exception as e:
-        log(f"Auto BUY exception: {e}")
-        return False
 
 
-# ============================================================
-# DAGELIJKS RAPPORT
-# ============================================================
 def is_rapport_tijd() -> bool:
     nu = now_utc()
     return nu.hour == RAPPORT_HOUR_UTC and nu.minute < 15
@@ -2918,7 +2895,6 @@ def scan_universe(conn, drempels: Dict) -> int:
                     _SESSIE["live_trades"] += 1
                 else:
                     _SESSIE["shadow_trades"] += 1
-                trigger_auto_buy(prebuy_id)
                 # Shadow trade aanmaken bij elk signaal
                 try:
                     with conn.cursor() as _sc:
