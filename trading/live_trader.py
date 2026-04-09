@@ -994,8 +994,8 @@ def shadow_buy(
             _tk = f"SHADOW|{symbol}|{int(time.time())}"
             _cur.execute("""
                 INSERT INTO experience_trades
-                (trade_key, symbol, status, entry_price, stop_loss, target,
-                 qty, amount_eur, score, setup_type, regime, entry_time)
+                (trade_key, symbol, status, entry, stop, target,
+                 qty, amount_eur, score, setup_type, market_regime, entry_time)
                 VALUES (%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,NOW())
                 ON CONFLICT (trade_key) DO NOTHING
             """, (_tk, symbol, entry,
@@ -1004,7 +1004,7 @@ def shadow_buy(
                   qty, amount_eur,
                   meta.get('score', 0),
                   meta.get('setup_type','TREND_PULLBACK'),
-                  meta.get('regime','UNKNOWN')))
+                  meta.get('market_regime', meta.get('regime','UNKNOWN'))))
             _db.commit()
             _db.close()
         except Exception as _dbe:
