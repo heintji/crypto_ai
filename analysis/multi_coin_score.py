@@ -281,12 +281,16 @@ def log(msg: str) -> None:
     print(f"[{ts}] [SCANNER] {msg}", flush=True)
 
 def safe_int(x: Any, default: int = 0) -> int:
-    try: return int(x)
-    except Exception: return default
+    try:
+        return int(x)
+    except Exception:
+        return default
 
 def safe_float(x: Any, default: float = 0.0) -> float:
-    try: return float(x)
-    except Exception: return default
+    try:
+        return float(x)
+    except Exception:
+        return default
 
 def safe_str(x: Any, default: str = "") -> str:
     if x is None: return default
@@ -813,8 +817,10 @@ def sla_sessie_naar_tabel(conn) -> None:
         log("Sessie opgeslagen in scanner_sessies tabel")
     except Exception as e:
         log(f"Sessie naar tabel fout: {e}")
-        try: conn.rollback()
-        except Exception: pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
 
 
 def log_sessie_voortgang(n: int, totaal: int) -> None:
@@ -1375,8 +1381,10 @@ def update_coin_blacklist_whitelist(conn) -> None:
         if wl_verwijderd:
             log(f"Whitelist -{len(wl_verwijderd)}: {', '.join(wl_verwijderd[:5])}")
         log(f"BL/WL update klaar: {len(nieuwe_bl)} blacklisted, {len(nieuwe_wl)} whitelisted")
-        try: health_update("multi_coin_score", "OK", f"scan klaar")
-        except Exception: pass
+        try:
+            health_update("multi_coin_score", "OK", f"scan klaar")
+        except Exception:
+            pass
     except Exception as e:
         safe_rollback(conn)
         log(f"BL/WL update fout: {e}")
@@ -1422,7 +1430,10 @@ def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
             result["verschil"]   = round(result["sim_wr"] - result["live_wr"], 4)
             result["edge_decay"] = result["verschil"] > 0.15
     except Exception as e:
-        try: conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         except: pass
         log(f"Edge decay check fout ({symbol}): {e}")
     return result
@@ -2401,8 +2412,10 @@ def insert_pending(conn, prebuy: Dict) -> str:
         return prebuy_id
     except Exception as e:
         log(f"insert_pending fout ({prebuy['symbol']}): {e}")
-        try: conn.rollback()
-        except Exception: pass
+        try:
+            conn.rollback()
+        except Exception:
+            pass
         return ""
 
 
