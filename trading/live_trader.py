@@ -1068,6 +1068,27 @@ def shadow_sell(
             state["positions"][symbol]["amount_eur"] *= (1 - fraction)
 
         save_shadow_state(state)
+        # DB update: shadow trade sluiten in experience_trades
+        try:
+            import psycopg2 as _pg3, os as _os3
+            _pnl_pct = round((exit_price - entry) / entry * 100, 4) if entry else 0
+            _db3 = _pg3.connect(_os3.environ['DATABASE_URL'])
+            _c3  = _db3.cursor()
+            _c3.execute("""
+                UPDATE experience_trades
+                SET outcome    = %s,
+                    exit_price = %s,
+                    pnl_pct    = %s,
+                    closed_at  = NOW()
+                WHERE symbol = %s
+                AND source = 'SHADOW'
+                AND outcome = 'OPEN'
+                AND entry_time >= NOW() - INTERVAL '48 hours'
+            """, ('CLOSED', exit_price, _pnl_pct, symbol))
+            _db3.commit()
+            _db3.close()
+        except Exception as _dbe3:
+            log(f"shadow_sell DB update fout: {_dbe3}")
         log(f"Ã°ÂÂÂ¤ Shadow SELL: {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f}")
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_sell fout ({symbol}): {e}")
