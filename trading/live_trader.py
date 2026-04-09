@@ -990,12 +990,6 @@ def shadow_buy(
         save_shadow_state(state)
         # DB write: shadow trade naar experience_trades
         try:
-            import psycopg2, os as _os
-            _db = psycopg2.connect(_os.environ['DATABASE_URL'])
-            _cur = _db.cursor()
-            _tk = f"SHADOW|{symbol}|{int(time.time())}"
-        # DB write: shadow trade naar experience_trades
-        try:
             import psycopg2 as _pg2, os as _os2
             _db2 = _pg2.connect(_os2.environ['DATABASE_URL'])
             _c2  = _db2.cursor()
