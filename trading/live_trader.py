@@ -992,23 +992,33 @@ def shadow_buy(
             _db = psycopg2.connect(_os.environ['DATABASE_URL'])
             _cur = _db.cursor()
             _tk = f"SHADOW|{symbol}|{int(time.time())}"
-            _cur.execute("""
+        # DB write: shadow trade naar experience_trades
+        try:
+            import psycopg2 as _pg2, os as _os2
+            _db2 = _pg2.connect(_os2.environ['DATABASE_URL'])
+            _c2  = _db2.cursor()
+            _tk2 = f"SHADOW|{symbol}|{int(time.time())}"
+            _c2.execute("""
                 INSERT INTO experience_trades
-                (trade_key, symbol, status, entry, stop, target,
-                 qty, amount_eur, score, setup_type, market_regime, entry_time)
-                VALUES (%s,%s,'OPEN',%s,%s,%s,%s,%s,%s,%s,%s,NOW())
+                (trade_key, source, coin, symbol, timestamp,
+                 entry_time, setup_type, market_regime,
+                 entry, stop, target, qty, amount_eur, score,
+                 outcome, created_at)
+                VALUES (%s,'SHADOW',%s,%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',NOW())
                 ON CONFLICT (trade_key) DO NOTHING
-            """, (_tk, symbol, entry,
-                  meta.get('stop', entry * 0.97),
-                  meta.get('target', entry * 1.06),
-                  qty, amount_eur,
-                  meta.get('score', 0),
-                  meta.get('setup_type','TREND_PULLBACK'),
-                  meta.get('market_regime', meta.get('regime','UNKNOWN'))))
-            _db.commit()
-            _db.close()
-        except Exception as _dbe:
-            log(f"shadow_buy DB fout: {_dbe}")
+            """, (_tk2, symbol, symbol,
+                  meta.get('setup_type', 'TREND_PULLBACK'),
+                  meta.get('regime', 'UNKNOWN'),
+                  float(entry or 0),
+                  float(meta.get('stop', float(entry or 0) * 0.97)),
+                  float(meta.get('target', float(entry or 0) * 1.06)),
+                  float(qty or 0),
+                  float(amount_eur or 0),
+                  float(meta.get('score', 0))))
+            _db2.commit()
+            _db2.close()
+        except Exception as _dbe2:
+            log(f"shadow_buy DB fout: {_dbe2}")
         log(f"Ã°ÂÂÂ¤ Shadow BUY gelogd: {symbol} @ {entry:.6f}")
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_buy fout ({symbol}): {e}")
