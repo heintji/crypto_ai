@@ -211,6 +211,7 @@ def send_whatsapp(message: str) -> bool:
         log(f"WhatsApp (geen Twilio): {message[:80]}")
         return False
     try:
+        headers_twilio = {"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"}
         resp = requests.post(
             f"https://api.twilio.com/2010-04-01/Accounts"
             f"/{TWILIO_ACCOUNT_SID}/Messages.json",
@@ -218,9 +219,10 @@ def send_whatsapp(message: str) -> bool:
             data={
                 "From": TWILIO_WHATSAPP_FROM,
                 "To":   TWILIO_WHATSAPP_TO,
-                "Body": message,
+                "Body": message.encode("utf-8").decode("utf-8"),
             },
             timeout=15,
+            headers=headers_twilio,
         )
         if resp.status_code in (200, 201):
             log(f"Ã¢ÂÂ WhatsApp verzonden ({len(message)} tekens)")
