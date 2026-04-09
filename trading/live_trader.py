@@ -1928,15 +1928,33 @@ def buy_eur(
 
         log(f"Ã¢ÂÂ Live BUY: {symbol} @ Ã¢ÂÂ¬{entry:.6f} qty={qty:.6f} stop={stop:.6f}")
         send_whatsapp_rate_limited(
-            f"Ã°ÂÂÂ¢ TRADE GEOPEND: {symbol}\n"
-            f"Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ\n\n"
-            f"Ã°ÂÂÂ° Bedrag:  Ã¢ÂÂ¬{amount_eur:.2f}\n"
-            f"Ã°ÂÂÂ Entry:   Ã¢ÂÂ¬{entry:.6f}\n"
-            f"Ã°ÂÂÂ Stop:    Ã¢ÂÂ¬{stop:.6f}\n"
-            f"Ã°ÂÂÂ¯ Target:  Ã¢ÂÂ¬{target:.6f}\n",
+            f"[TRADE GEOPEND] {symbol}\n"
+            f"{'='*30}\n"
+            f"[EUR]    {amount_eur:.2f}\n"
+            f"[ENTRY]  {entry:.6f}\n"
+            f"[STOP]   {stop:.6f}\n"
+            f"[TARGET] {target:.6f}\n"
+            f"[SCORE]  {meta.get('score', 0):.0f} | {meta.get('setup_type','?')}",
             key=f"buy_{symbol}"
         )
-        return True, f"BUY {symbol} @ Ã¢ÂÂ¬{entry:.6f}"
+        # Claude koop audit - bevestig dat trade correct geregistreerd is
+        try:
+            import anthropic as _ant
+            _cl = _ant.Anthropic()
+            _audit = _cl.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=150,
+                messages=[{"role":"user","content":
+                    f"Crypto bot koop audit:\nCoin: {symbol}\nScore: {meta.get('score',0)}\n"
+                    f"Entry: {entry:.6f} Stop: {stop:.6f} Target: {target:.6f}\n"
+                    f"Setup: {meta.get('setup_type','?')} Regime: {meta.get('regime','?')}\n"
+                    f"Bevestig in 1 zin of dit een goede trade is. Noem het risico/reward ratio."
+                }]
+            )
+            _advies = _audit.content[0].text if _audit.content else ""
+            log(f"[AUDIT] Koop: {_advies[:120]}")
+        except Exception:
+            pass
 
     except Exception as e:
         safe_rollback(conn)
