@@ -1263,6 +1263,10 @@ def _finalize_trade(
                     f"\u2192 Controleer Bitvavo handmatig!"
                 )
                 send_whatsapp_rate_limited(_wa_msg, key=f"sell_mislukt_{symbol}")
+                try:
+                    claude_audit_sell_fout(trade_key, symbol, str(last_error), open_count)
+                except Exception:
+                    pass
                 log(f"[KRITIEK] SELL {symbol} al {_pogingen}x mislukt — WA gestuurd")
         except Exception as _se:
             log(f"sell_pogingen update fout: {_se}")
