@@ -2007,7 +2007,8 @@ def send_leeranalyse():
 # STARTUP
 # ============================================================
 # Health heartbeat bij opstart
-try: health_update("webhook", "OK", "webhook actief")
+try:
+    health_update("webhook", "OK", "webhook actief")
 except Exception: pass
 
 if __name__ == "__main__":
