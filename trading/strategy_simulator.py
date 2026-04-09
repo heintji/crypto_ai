@@ -362,6 +362,7 @@ def main():
         _fng_waarde = 0; _fng_label = "NEUTRAL"  # fix: undefined
         _nieuws_r = 0; _oi_r = 0; _btc_dom_r = 0  # fix: undefined
         for sym in coins:
+            markt_score_val = 0  # default: geen extreme greed
             # Extreme Greed filter: sla over als markt in Extreme Greed
             if markt_score_val <= -2:
                 break  # stop hele loop bij Extreme Greed
