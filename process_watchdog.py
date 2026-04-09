@@ -28,10 +28,10 @@ def send_whatsapp(msg: str) -> bool:
             "Body": msg[:1500],
             "From": f"whatsapp:{fr_num}",
             "To":   f"whatsapp:{to_num}",
-        }).encode()
+        }, encoding="utf-8").encode("utf-8")
         url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
         creds = base64.b64encode(f"{sid}:{auth}".encode()).decode()
-        req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {creds}"})
+        req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"})
         urllib.request.urlopen(req, timeout=10)
         return True
     except Exception as e:
