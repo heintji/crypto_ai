@@ -46,10 +46,16 @@ DEFAULT_COINS = ["BTCUSDT","ETHUSDT","SOLUSDT","BNBUSDT","XRPUSDT",
 def now_utc(): return datetime.now(timezone.utc)
 def log(m): print(f"[SIM {now_utc():%H:%M:%S}] {m}", flush=True)
 def sf(v, d=0.0):
-    try: return float(v or d)
+    try:
+        return float(v or d)
+    except Exception:
+        pass
     except: return d
 def safe_rb(conn):
-    try: conn.rollback()
+    try:
+        conn.rollback()
+    except Exception:
+        pass
     except: pass
 
 def db_connect(retries=DB_CONNECT_RETRIES):
