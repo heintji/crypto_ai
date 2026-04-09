@@ -219,7 +219,7 @@ def send_whatsapp(message: str) -> bool:
             data={
                 "From": TWILIO_WHATSAPP_FROM,
                 "To":   TWILIO_WHATSAPP_TO,
-                "Body": message.encode("utf-8").decode("utf-8"),
+                "Body": message,
             },
             timeout=15,
             headers=headers_twilio,
