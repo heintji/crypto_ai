@@ -2277,6 +2277,10 @@ def main_loop():
         except Exception:
             pass
         try:
+            try:
+                health_update(conn, "live_trader", "OK", "trader actief")
+            except Exception:
+                pass
             set_bot_state(conn, "live_trader_last_ts", now_utc().isoformat())
             set_bot_state(conn, "live_trader_busy", "false")
         except Exception:
