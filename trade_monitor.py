@@ -88,7 +88,6 @@ import requests
 try:
     from bot_health_helper import health_update, health_fout
 except ImportError:
-    def health_update(*a, **k): pass
     def health_fout(*a, **k): pass
 
 
