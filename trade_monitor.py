@@ -855,19 +855,21 @@ def get_open_symbols(state: Dict[str, Any]) -> List[str]:
     return list((state.get("positions") or {}).keys())
 
 
-def load_shadow_state() -> Dict[str, Any]:
-    """Laadt open shadow posities uit experience_trades DB — niet uit JSON."""
-    conn2 = None
+def load_shadow_state(conn=None) -> Dict[str, Any]:
+    """Laadt open shadow posities uit experience_trades DB."""
+    own_conn = False
     try:
-        conn2 = db_connect()
-        cur2 = conn2.cursor()
-        cur2.execute("""
-            SELECT trade_key, symbol, bitvavo_market, entry, stop, target,
-                   qty, amount_eur, setup_type, score, entry_time
-            FROM experience_trades
-            WHERE status = 'OPEN' AND source = 'SHADOW'
-        """)
-        rows = cur2.fetchall()
+        if conn is None:
+            conn = db_connect()
+            own_conn = True
+        with conn.cursor() as cur2:
+            cur2.execute("""
+                SELECT trade_key, symbol, bitvavo_market, entry, stop, target,
+                       qty, amount_eur, setup_type, score, entry_time
+                FROM experience_trades
+                WHERE status = 'OPEN' AND source = 'SHADOW'
+            """)
+            rows = cur2.fetchall()
         positions = {}
         for r in rows:
             key = r[0] or f"SHADOW|{r[1]}|0"
@@ -890,9 +892,9 @@ def load_shadow_state() -> Dict[str, Any]:
         log(f"load_shadow_state DB fout: {e}")
         return {"positions": {}, "open_trades": []}
     finally:
-        if conn2:
+        if own_conn and conn:
             try:
-                conn2.close()
+                conn.close()
             except Exception:
                 pass
 
@@ -1806,7 +1808,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         # Ã¢ÂÂÃ¢ÂÂ SHADOW TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         try:
-            shadow_state   = load_shadow_state()
+            shadow_state   = load_shadow_state(conn)
             shadow_symbols = get_open_shadow_symbols(shadow_state)
 
             if target_symbol:
@@ -1879,7 +1881,7 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         # Ã¢ÂÂÃ¢ÂÂ Run statistieken Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         open_live   = len(load_state().get("positions", {}))
-        open_shadow = len(load_shadow_state().get("positions", {}))
+        open_shadow = len(load_shadow_state(conn).get("positions", {}))
         elapsed     = round(time.time() - run_start, 2)
 
         log(
