@@ -1,35 +1,34 @@
+"""Pre-BUY Signals page."""
 import streamlit as st
 from dashboard.db import get_pending_signals, get_signal_stats
-from dashboard.styles import status_badge
+from dashboard.styles import badge
 
 def render():
-    st.header("Pre-BUY Signals")
+    st.markdown("### Pre-BUY Signals")
 
-    # Stats summary
     stats = get_signal_stats()
     if not stats.empty:
-        cols = st.columns(len(stats))
+        cols = st.columns(min(len(stats), 6))
         for i, (_, row) in enumerate(stats.iterrows()):
             with cols[i % len(cols)]:
-                st.metric(row["status"], int(row["n"]))
+                color_map = {"PENDING":"yellow","CONSUMED":"green","SHADOW":"blue",
+                             "EXPIRED":"red","FAILED":"red","SKIPPED":"purple"}
+                c = color_map.get(row["status"], "blue")
+                label = f'{row["status"]}: {int(row["n"])}'
+                st.markdown(badge(label, c), unsafe_allow_html=True)
 
-    st.divider()
-
-    # Signal list
+    st.markdown("")
     signals = get_pending_signals()
     if signals.empty:
         st.info("Geen recente signalen")
         return
 
-    # Filter
-    status_filter = st.multiselect("Filter op status",
-        signals["status"].unique().tolist(),
-        default=["PENDING", "CONSUMED", "SHADOW"])
+    statuses = signals["status"].unique().tolist()
+    defaults = [s for s in ["PENDING","CONSUMED","SHADOW"] if s in statuses]
+    selected = st.multiselect("Filter", statuses, default=defaults, key="sig_filter")
 
-    filtered = signals[signals["status"].isin(status_filter)] if status_filter else signals
-
-    cols_show = [c for c in ["symbol", "score", "status", "entry", "stop", "target",
-                              "kelly_grootte_eur", "live_toegestaan", "created_at", "expires_at"]
-                if c in filtered.columns]
-
-    st.dataframe(filtered[cols_show], use_container_width=True, hide_index=True)
+    filtered = signals[signals["status"].isin(selected)] if selected else signals
+    cols = [c for c in ["symbol","score","status","entry","stop","target",
+                        "kelly_grootte_eur","live_toegestaan","created_at"]
+            if c in filtered.columns]
+    st.dataframe(filtered[cols], use_container_width=True, hide_index=True)

@@ -1,82 +1,87 @@
+"""Overview page — at-a-glance bot status."""
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
-from dashboard.db import (get_bot_state, get_bot_val, get_open_trades,
-                          get_daily_pnl, get_portfolio_value, get_win_rate_summary,
-                          get_bot_health)
-from dashboard.styles import metric_html, badge, status_badge
+from dashboard.db import (get_bot_state, get_open_trades, get_daily_pnl,
+                          get_portfolio_value, get_win_rate_summary, get_bot_health)
+from dashboard.styles import card, badge, status_badge, status_dot
 
 def render():
-    st.header("Overview")
-
-    # Top metrics row
     state = get_bot_state()
     portfolio = get_portfolio_value()
     wins_today, losses_today, pnl_today = get_daily_pnl()
     open_live = get_open_trades("LIVE")
     open_shadow = get_open_trades("SHADOW")
 
-    bot_active = state.get("bot_active", "false") == "true"
-    bot_running = state.get("bot_running", "false") == "true"
-    regime = state.get("btc_regime_huidig", "UNKNOWN")
+    bot_on = state.get("bot_active","false") == "true" and state.get("bot_running","false") == "true"
+    regime = state.get("btc_regime_huidig", "?")
 
-    # Status row
+    # Hero cards
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        status = "ACTIEF" if (bot_active and bot_running) else "GESTOPT"
-        color = "green" if status == "ACTIEF" else "red"
-        st.markdown(metric_html("Bot Status", status_badge(status)), unsafe_allow_html=True)
+        color = "green" if bot_on else "red"
+        st.markdown(card("Bot Status", "ACTIEF" if bot_on else "UIT", color=color), unsafe_allow_html=True)
     with c2:
-        st.metric("Portfolio", f"€{portfolio:.2f}")
+        st.markdown(card("Portfolio", f"€{portfolio:.2f}", color="purple"), unsafe_allow_html=True)
     with c3:
-        st.metric("PnL Vandaag", f"€{pnl_today:+.2f}", f"{wins_today}W / {losses_today}L")
+        up = pnl_today >= 0
+        st.markdown(card("PnL Vandaag", f"€{pnl_today:+.2f}",
+                        f"{wins_today}W / {losses_today}L", up=up,
+                        color="green" if up else "red"), unsafe_allow_html=True)
     with c4:
-        st.metric("Open Live", str(len(open_live)))
+        st.markdown(card("Open Live", str(len(open_live)),
+                        f"{len(open_shadow)} shadow"), unsafe_allow_html=True)
     with c5:
-        regime_colors = {"BULL": "green", "BEAR": "red", "RANGE": "yellow"}
-        st.markdown(metric_html("BTC Regime", f'<span class="badge badge-{regime_colors.get(regime, "blue")}">{regime}</span>'), unsafe_allow_html=True)
+        r_color = {"BULL":"green","BEAR":"red","RANGE":"yellow"}.get(regime,"")
+        st.markdown(card("BTC Regime", regime, color=r_color), unsafe_allow_html=True)
 
-    st.divider()
+    st.markdown("")
 
-    # Open positions
-    if not open_live.empty:
-        st.subheader(f"Open Live Trades ({len(open_live)})")
-        display_df = open_live[["symbol", "entry", "stop", "target", "amount_eur",
-                                "mfe_r", "mae_r", "score", "setup_type", "entry_time"]].copy()
-        display_df.columns = ["Coin", "Entry", "Stop", "Target", "EUR", "MFE (R)", "MAE (R)", "Score", "Setup", "Sinds"]
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-    else:
-        st.info("Geen open live trades")
+    # Open positions table
+    col_left, col_right = st.columns([2, 1])
 
-    # Win rate summary
-    wr_df = get_win_rate_summary()
-    if not wr_df.empty:
-        st.subheader("Win Rate per Type")
-        for _, row in wr_df.iterrows():
-            total = int(row["total"])
-            wins = int(row["wins"])
-            wr = round(wins / total * 100, 1) if total > 0 else 0
-            source = row["source"]
-            col1, col2, col3, col4 = st.columns(4)
-            with col1: st.metric(source, f"{wr}%")
-            with col2: st.metric("Trades", f"{wins}W / {int(row['losses'])}L")
-            with col3: st.metric("Totaal PnL", f"€{float(row['total_pnl'] or 0):+.2f}")
-            with col4: st.metric("Avg R", f"{float(row['avg_r'] or 0):.2f}")
+    with col_left:
+        st.markdown("### Open Live Trades")
+        if not open_live.empty:
+            df = open_live[["symbol","entry","stop","target","amount_eur","mfe_r","mae_r","score","setup_type","entry_time"]].copy()
+            df.columns = ["Coin","Entry","Stop","Target","EUR","MFE(R)","MAE(R)","Score","Setup","Sinds"]
+            # Round numeric columns
+            for c in ["Entry","Stop","Target","MFE(R)","MAE(R)"]:
+                if c in df.columns:
+                    df[c] = pd.to_numeric(df[c], errors="coerce").round(6)
+            df["EUR"] = pd.to_numeric(df["EUR"], errors="coerce").round(2)
+            df["Score"] = pd.to_numeric(df["Score"], errors="coerce").round(0)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        else:
+            st.info("Geen open live trades")
 
-    # Service health
-    st.subheader("Services")
-    health = get_bot_health()
-    if not health.empty:
+    with col_right:
+        st.markdown("### Services")
+        health = get_bot_health()
         now = datetime.now(timezone.utc)
-        cols = st.columns(len(health))
-        for i, (_, row) in enumerate(health.iterrows()):
-            with cols[i % len(cols)]:
+        if not health.empty:
+            for _, row in health.iterrows():
                 lr = row["laatste_run"]
                 if lr:
-                    if lr.tzinfo is None:
-                        lr = lr.replace(tzinfo=timezone.utc)
+                    lr = lr.replace(tzinfo=timezone.utc) if lr.tzinfo is None else lr
                     mins = int((now - lr).total_seconds() / 60)
-                    ok = mins < (row["heartbeat_sec"] * 2 // 60)
-                    st.markdown(f"{'🟢' if ok else '🔴'} **{row['service']}** ({mins}m)")
+                    hb = row["heartbeat_sec"] or 60
+                    ok = mins < (hb * 2 // 60 + 1)
+                    label = f"{mins}m" if mins < 60 else f"{mins//60}h{mins%60}m"
+                    st.markdown(f"{status_dot(ok)} **{row['service']}** · {label}", unsafe_allow_html=True)
                 else:
-                    st.markdown(f"⚪ **{row['service']}** (nooit)")
+                    st.markdown(f"{status_dot(False)} **{row['service']}** · nooit", unsafe_allow_html=True)
+
+    # Win rate summary
+    st.markdown("### Win Rate")
+    wr_df = get_win_rate_summary()
+    if not wr_df.empty:
+        cols = st.columns(len(wr_df))
+        for i, (_, row) in enumerate(wr_df.iterrows()):
+            total = int(row["total"])
+            wins = int(row["wins"])
+            wr = round(wins/total*100,1) if total > 0 else 0
+            with cols[i]:
+                st.metric(row["source"], f"{wr}%", f"{wins}W/{int(row['losses'])}L · €{float(row['total_pnl'] or 0):+.2f}")
+    else:
+        st.info("Geen gesloten trades")

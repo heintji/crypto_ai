@@ -1,80 +1,83 @@
+"""Performance & Win Rate Analysis."""
 import streamlit as st
 import pandas as pd
-from dashboard.db import get_win_rate_summary, get_win_rate_by, get_trades
+from dashboard.db import get_win_rate_summary, get_win_rate_by
+from dashboard.styles import card
 
 def render():
-    st.header("Performance & Win Rate Analyse")
+    st.markdown("### Performance & Win Rate")
 
-    # Overall summary
-    st.subheader("Totaal per Trade Type")
     summary = get_win_rate_summary()
-    if not summary.empty:
-        for _, row in summary.iterrows():
-            total = int(row["total"])
-            wins = int(row["wins"])
-            losses = int(row["losses"])
-            wr = round(wins / total * 100, 1) if total > 0 else 0
-            with st.expander(f"{row['source']} — {wr}% win rate ({total} trades)", expanded=True):
-                c1, c2, c3, c4, c5 = st.columns(5)
-                with c1: st.metric("Win Rate", f"{wr}%")
-                with c2: st.metric("Wins / Losses", f"{wins} / {losses}")
-                with c3: st.metric("Totaal PnL", f"€{float(row['total_pnl'] or 0):+.2f}")
-                with c4: st.metric("Avg Win", f"€{float(row['avg_win'] or 0):+.4f}")
-                with c5: st.metric("Avg Loss", f"€{float(row['avg_loss'] or 0):.4f}")
+    if summary.empty:
+        st.info("Geen gesloten trades voor analyse")
+        return
 
-    st.divider()
+    # Summary cards per source
+    cols = st.columns(len(summary))
+    for i, (_, row) in enumerate(summary.iterrows()):
+        total = int(row["total"])
+        wins = int(row["wins"])
+        losses = int(row["losses"])
+        wr = round(wins/total*100,1) if total > 0 else 0
+        pnl = float(row["total_pnl"] or 0)
+        with cols[i]:
+            color = "green" if wr >= 50 else "red"
+            st.markdown(card(
+                row["source"],
+                f"{wr}%",
+                f"{wins}W/{losses}L · €{pnl:+.2f} · R:{float(row['avg_r'] or 0):.2f}",
+                color=color, up=wr>=50
+            ), unsafe_allow_html=True)
 
-    # Source filter for breakdown
-    source_options = ["Alle"] + (list(summary["source"]) if not summary.empty else [])
-    selected_source = st.selectbox("Filter op type", source_options)
-    source_param = None if selected_source == "Alle" else selected_source
+    st.markdown("")
 
-    # Win rate by setup
-    st.subheader("Win Rate per Setup Type")
-    setup_df = get_win_rate_by("setup_type", source_param)
-    if not setup_df.empty:
-        # Color code: green for good, red for bad
-        st.dataframe(setup_df.rename(columns={
-            "groep": "Setup", "total": "Trades", "wins": "Wins", "losses": "Losses",
-            "win_rate": "Win %", "total_pnl": "PnL €", "avg_r": "Avg R"
-        }), use_container_width=True, hide_index=True)
+    # Filter
+    source_opts = ["Alle"] + list(summary["source"])
+    sel = st.selectbox("Filter op type", source_opts, key="perf_filter")
+    src = None if sel == "Alle" else sel
 
-        # Visual: best vs worst
-        best = setup_df.head(3)
-        worst = setup_df.tail(3)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**✅ Beste setups:**")
-            for _, r in best.iterrows():
-                st.markdown(f"- {r['groep']}: **{r['win_rate']}%** ({r['total']} trades, €{float(r['total_pnl'] or 0):+.2f})")
-        with col2:
-            st.markdown("**❌ Slechtste setups:**")
-            for _, r in worst.iterrows():
-                st.markdown(f"- {r['groep']}: **{r['win_rate']}%** ({r['total']} trades, €{float(r['total_pnl'] or 0):+.2f})")
+    # Tabs for breakdown
+    tab1, tab2, tab3 = st.tabs(["Per Setup", "Per Regime", "Per Coin"])
 
-    st.divider()
+    with tab1:
+        df = get_win_rate_by("setup_type", src)
+        if df.empty:
+            st.info("Niet genoeg data (min 3 trades per setup)")
+        else:
+            df = df.rename(columns={"groep":"Setup","total":"Trades","wins":"W","losses":"L",
+                                     "win_rate":"Win%","total_pnl":"PnL €","avg_r":"Avg R"})
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            # Best vs worst
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**✅ Best**")
+                for _, r in df.head(3).iterrows():
+                    st.markdown(f"- **{r['Setup']}**: {r['Win%']}% ({r['Trades']} trades, €{float(r['PnL €'] or 0):+.2f})")
+            with c2:
+                st.markdown("**❌ Worst**")
+                for _, r in df.tail(3).iterrows():
+                    st.markdown(f"- **{r['Setup']}**: {r['Win%']}% ({r['Trades']} trades, €{float(r['PnL €'] or 0):+.2f})")
 
-    # Win rate by regime
-    st.subheader("Win Rate per BTC Regime")
-    regime_df = get_win_rate_by("market_regime", source_param)
-    if not regime_df.empty:
-        st.dataframe(regime_df.rename(columns={
-            "groep": "Regime", "total": "Trades", "wins": "Wins", "losses": "Losses",
-            "win_rate": "Win %", "total_pnl": "PnL €", "avg_r": "Avg R"
-        }), use_container_width=True, hide_index=True)
+    with tab2:
+        df = get_win_rate_by("market_regime", src)
+        if df.empty:
+            st.info("Niet genoeg data")
+        else:
+            st.dataframe(df.rename(columns={"groep":"Regime","total":"Trades","wins":"W","losses":"L",
+                                             "win_rate":"Win%","total_pnl":"PnL €","avg_r":"Avg R"}),
+                        use_container_width=True, hide_index=True)
 
-    st.divider()
-
-    # Win rate by coin (top/bottom)
-    st.subheader("Win Rate per Coin")
-    coin_df = get_win_rate_by("symbol", source_param)
-    if not coin_df.empty:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.markdown("**Top coins:**")
-            top = coin_df.head(10)
-            st.dataframe(top.rename(columns={"groep": "Coin", "win_rate": "Win %", "total": "Trades", "total_pnl": "PnL €"})[["Coin", "Win %", "Trades", "PnL €"]], hide_index=True)
-        with col2:
-            st.markdown("**Slechtste coins:**")
-            bottom = coin_df.tail(10)
-            st.dataframe(bottom.rename(columns={"groep": "Coin", "win_rate": "Win %", "total": "Trades", "total_pnl": "PnL €"})[["Coin", "Win %", "Trades", "PnL €"]], hide_index=True)
+    with tab3:
+        df = get_win_rate_by("symbol", src)
+        if df.empty:
+            st.info("Niet genoeg data")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Top coins**")
+                top = df.head(10).rename(columns={"groep":"Coin","win_rate":"Win%","total":"Trades","total_pnl":"PnL €"})
+                st.dataframe(top[["Coin","Win%","Trades","PnL €"]], hide_index=True)
+            with c2:
+                st.markdown("**Slechtste coins**")
+                bot = df.tail(10).rename(columns={"groep":"Coin","win_rate":"Win%","total":"Trades","total_pnl":"PnL €"})
+                st.dataframe(bot[["Coin","Win%","Trades","PnL €"]], hide_index=True)

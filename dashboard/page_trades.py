@@ -1,59 +1,61 @@
+"""Trade pages — reusable for LIVE/SHADOW/SIM."""
 import streamlit as st
 import pandas as pd
 from dashboard.db import get_trades, get_open_trades
 
 def render(source: str, title: str):
-    st.header(title)
+    st.markdown(f"### {title}")
 
-    # Tabs: open vs closed
-    tab_open, tab_closed = st.tabs(["Open", "Gesloten"])
+    tab_open, tab_closed = st.tabs(["🟢 Open", "📋 Gesloten"])
 
     with tab_open:
-        open_df = get_open_trades(source)
-        if open_df.empty:
-            st.info(f"Geen open {source} trades")
+        df = get_open_trades(source)
+        if df.empty:
+            st.info(f"Geen open {source.lower()} trades")
         else:
-            st.metric("Open posities", len(open_df))
-
-            # Format for display
-            display = open_df.copy()
-            cols_show = [c for c in ["symbol", "entry", "stop", "target", "amount_eur",
-                                      "mfe_r", "mae_r", "score", "setup_type",
-                                      "market_regime", "entry_time", "max_price_seen", "min_price_seen"]
-                        if c in display.columns]
-            st.dataframe(display[cols_show], use_container_width=True, hide_index=True)
+            st.caption(f"{len(df)} open posities")
+            cols = [c for c in ["symbol","entry","stop","target","amount_eur",
+                                "mfe_r","mae_r","max_price_seen","min_price_seen",
+                                "score","setup_type","market_regime","entry_time"]
+                    if c in df.columns]
+            display = df[cols].copy()
+            # Round floats
+            for c in display.select_dtypes(include=["float64","float32"]).columns:
+                display[c] = display[c].round(6)
+            st.dataframe(display, use_container_width=True, hide_index=True)
 
     with tab_closed:
-        closed_df = get_trades(source=source, status="CLOSED", limit=200)
-        if closed_df.empty:
-            st.info(f"Geen gesloten {source} trades")
-        else:
-            # Summary metrics
-            wins = len(closed_df[closed_df["outcome"] == "WIN"])
-            losses = len(closed_df[closed_df["outcome"] == "LOSS"])
-            total = wins + losses
-            wr = round(wins / total * 100, 1) if total > 0 else 0
-            total_pnl = closed_df["pnl_eur"].sum() if "pnl_eur" in closed_df.columns else 0
-            avg_r = closed_df["result_r"].mean() if "result_r" in closed_df.columns else 0
+        df = get_trades(source=source, status="CLOSED", limit=300)
+        if df.empty:
+            st.info(f"Geen gesloten {source.lower()} trades")
+            return
 
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.metric("Win Rate", f"{wr}%")
-            with c2: st.metric("W/L", f"{wins} / {losses}")
-            with c3: st.metric("Totaal PnL", f"€{total_pnl:+.2f}")
-            with c4: st.metric("Avg R", f"{avg_r:.2f}" if pd.notna(avg_r) else "0")
+        # Filter out non-real outcomes
+        real = df[df["outcome"].isin(["WIN","LOSS"])]
+        wins = len(real[real["outcome"]=="WIN"])
+        losses = len(real[real["outcome"]=="LOSS"])
+        total = wins + losses
+        wr = round(wins/total*100,1) if total > 0 else 0
+        pnl = real["pnl_eur"].sum() if "pnl_eur" in real.columns else 0
+        avg_r = real["result_r"].mean() if "result_r" in real.columns and not real["result_r"].isna().all() else 0
 
-            # Trade table
-            cols_show = [c for c in ["symbol", "outcome", "entry", "exit_price", "pnl_eur",
-                                      "result_r", "mfe_r", "mae_r", "setup_type", "market_regime",
-                                      "entry_time", "exit_time", "exit_reden", "score", "amount_eur",
-                                      "stop", "target", "max_price_seen", "min_price_seen"]
-                        if c in closed_df.columns]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric("Win Rate", f"{wr}%")
+        with c2: st.metric("W / L", f"{wins} / {losses}")
+        with c3: st.metric("Totaal PnL", f"€{pnl:+.2f}" if pd.notna(pnl) else "€0")
+        with c4: st.metric("Avg R", f"{avg_r:.2f}" if pd.notna(avg_r) else "0")
 
-            # Color the outcome column
-            def color_outcome(val):
-                if val == "WIN": return "color: #3fb950"
-                if val == "LOSS": return "color: #f85149"
-                return ""
-
-            styled = closed_df[cols_show].style.applymap(color_outcome, subset=["outcome"] if "outcome" in cols_show else [])
-            st.dataframe(styled, use_container_width=True, hide_index=True)
+        # Trade table
+        cols = [c for c in ["symbol","outcome","entry","exit_price","pnl_eur",
+                            "result_r","mfe_r","mae_r","setup_type","market_regime",
+                            "entry_time","exit_time","exit_reden","score","amount_eur",
+                            "stop","target","max_price_seen","min_price_seen"]
+                if c in df.columns]
+        display = df[cols].copy()
+        for c in display.select_dtypes(include=["float64","float32"]).columns:
+            display[c] = display[c].round(4)
+        st.dataframe(display, use_container_width=True, hide_index=True,
+                     column_config={
+                         "outcome": st.column_config.TextColumn("Outcome", width="small"),
+                         "pnl_eur": st.column_config.NumberColumn("PnL €", format="%.4f"),
+                     })
