@@ -133,6 +133,51 @@ def get_win_rate_by(group_col: str, source: str = None) -> pd.DataFrame:
     """, params)
 
 
+# --- Chart data ---
+
+@st.cache_data(ttl=60)
+def get_pnl_per_day(source: str = None, days: int = 30) -> pd.DataFrame:
+    """PnL per dag voor equity curve."""
+    src = f"AND source = '{source}'" if source else ""
+    return run_query(f"""
+        SELECT exit_time::date as dag,
+               COUNT(*) as trades,
+               COUNT(*) FILTER(WHERE outcome='WIN') as wins,
+               COUNT(*) FILTER(WHERE outcome='LOSS') as losses,
+               COALESCE(SUM(pnl_eur), 0) as pnl_dag,
+               SUM(SUM(pnl_eur)) OVER (ORDER BY exit_time::date) as cum_pnl
+        FROM experience_trades
+        WHERE status='CLOSED' AND outcome IN ('WIN','LOSS')
+        AND exit_time >= CURRENT_DATE - INTERVAL '{days} days'
+        {src}
+        GROUP BY exit_time::date
+        ORDER BY dag
+    """)
+
+@st.cache_data(ttl=60)
+def get_outcome_distribution(source: str = None) -> pd.DataFrame:
+    """Win/loss verdeling voor pie chart."""
+    src = f"AND source = '{source}'" if source else ""
+    return run_query(f"""
+        SELECT outcome, COUNT(*) as n
+        FROM experience_trades
+        WHERE status='CLOSED' AND outcome IN ('WIN','LOSS') {src}
+        GROUP BY outcome
+    """)
+
+@st.cache_data(ttl=60)
+def get_pnl_histogram(source: str = None) -> pd.DataFrame:
+    """PnL verdeling per trade."""
+    src = f"AND source = '{source}'" if source else ""
+    return run_query(f"""
+        SELECT pnl_eur
+        FROM experience_trades
+        WHERE status='CLOSED' AND outcome IN ('WIN','LOSS')
+        AND pnl_eur IS NOT NULL {src}
+        ORDER BY pnl_eur
+    """)
+
+
 # --- Bot state ---
 
 @st.cache_data(ttl=10)

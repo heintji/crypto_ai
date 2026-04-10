@@ -191,11 +191,7 @@ def card(label: str, value: str, delta: str = "", color: str = "", up: bool = Tr
         d_cls = "up" if up else "down"
         arrow = "▲" if up else "▼"
         delta_html = f'<div class="card-delta {d_cls}">{arrow} {delta}</div>'
-    return f'''<div class="{cls}">
-        <div class="card-label">{label}</div>
-        <div class="card-value">{value}</div>
-        {delta_html}
-    </div>'''
+    return f'<div class="{cls}"><div class="card-label">{label}</div><div class="card-value">{value}</div>{delta_html}</div>'
 
 def badge(text: str, color: str = "blue") -> str:
     return f'<span class="badge badge-{color}">{text}</span>'
