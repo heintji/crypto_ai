@@ -2351,6 +2351,16 @@ def insert_pending(conn, prebuy: Dict) -> str:
         risico = prebuy["entry"] - prebuy["stop"]
         winst  = prebuy["target"] - prebuy["entry"]
         rr     = round(winst / max(risico, 1e-10), 2)
+    # Check of coin al een OPEN trade heeft
+    try:
+        with conn.cursor() as _dc:
+            _dc.execute("SELECT COUNT(*) FROM experience_trades WHERE coin=%s AND outcome='OPEN'", (coin,))
+            if _dc.fetchone()[0] > 0:
+                log(f"insert_pending skip {prebuy['symbol']}: al een OPEN trade")
+                return ""
+    except Exception:
+        pass
+
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -2881,6 +2891,16 @@ def scan_universe(conn, drempels: Dict) -> int:
                     "vol_zone_high":    vol_zone_high,
                 },
             }
+
+            # Check of coin al een OPEN trade heeft
+            try:
+                with conn.cursor() as _dc:
+                    _dc.execute("SELECT COUNT(*) FROM experience_trades WHERE coin=%s AND outcome='OPEN'", (symbol_usdt.replace("USDT","").replace("BUSD",""),))
+                    if _dc.fetchone()[0] > 0:
+                        log(f"Skip {symbol_usdt}: al een OPEN trade")
+                        continue
+            except Exception:
+                pass
 
             prebuy_id = insert_pending(conn, prebuy)
             if prebuy_id:

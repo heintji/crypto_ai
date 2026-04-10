@@ -1816,6 +1816,20 @@ def buy_eur(
             log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
             return False, msg
 
+        # 4b. Duplicate check — voorkom dubbele OPEN trade voor zelfde symbol
+        try:
+            with conn.cursor() as _dc:
+                _dc.execute(
+                    "SELECT COUNT(*) FROM experience_trades WHERE symbol=%s AND source='LIVE' AND status='OPEN'",
+                    (symbol,))
+                if _dc.fetchone()[0] > 0:
+                    msg = f"{symbol} heeft al een OPEN live trade"
+                    log(f"⚠ {msg}")
+                    log_naar_bot_state(f"BUY geblokkeerd: {msg}", busy=False)
+                    return False, msg
+        except Exception:
+            pass
+
         # 5. EUR balance check
         eur_balance = get_eur_balance()
         if eur_balance < amount_eur:
@@ -2263,6 +2277,12 @@ def main_loop():
                 for row in rows:
                     try:
                         pid, rsymbol, rmarket, rscore, rentry, rstop, rtarget, rkelly, _live = row
+                        # Duplicate check
+                        with conn.cursor() as _dc:
+                            _dc.execute("SELECT COUNT(*) FROM experience_trades WHERE symbol=%s AND source='LIVE' AND status='OPEN'", (rsymbol,))
+                            if _dc.fetchone()[0] > 0:
+                                log(f"Skip {rsymbol}: al een OPEN live trade")
+                                continue
                         rmeta = {"score": rscore, "setup_type": "TREND_PULLBACK",
                                  "regime": "LIVE", "prebuy_id": pid}
                         ok, msg = buy_eur(rsymbol, float(rkelly or 7), rmeta)

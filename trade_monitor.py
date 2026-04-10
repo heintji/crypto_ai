@@ -897,12 +897,8 @@ def load_shadow_state() -> Dict[str, Any]:
                 pass
 
 def save_shadow_state(state: Dict[str, Any]) -> None:
-    """Slaat shadow state op Ã¢ÂÂ atomisch via tmp file."""
-    _ensure_dir(SHADOW_STATE_PATH)
-    tmp = SHADOW_STATE_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, SHADOW_STATE_PATH)
+    """No-op — shadow state lives in DB now."""
+    pass
 
 
 def get_open_shadow_symbols(shadow_state: Dict[str, Any]) -> List[str]:
@@ -1580,6 +1576,7 @@ def _log_shadow_outcome(
                 outcome, pnl_eur, pnl_r, result_r,
                 mfe_r, mae_r, time_minutes,
                 bot_confidence,
+                exit_price, status, closed_at,
                 exit_time, created_at, updated_at
             ) VALUES (
                 %s,'SHADOW',TRUE,%s,NOW(),NOW(),
@@ -1587,6 +1584,7 @@ def _log_shadow_outcome(
                 %s,%s,%s,%s,
                 %s,%s,%s,
                 %s,
+                %s,'CLOSED',NOW(),
                 NOW(),NOW(),NOW()
             )
             ON CONFLICT (trade_key) DO UPDATE SET
@@ -1597,6 +1595,9 @@ def _log_shadow_outcome(
                 mfe_r        = EXCLUDED.mfe_r,
                 mae_r        = EXCLUDED.mae_r,
                 time_minutes = EXCLUDED.time_minutes,
+                exit_price   = EXCLUDED.exit_price,
+                status       = 'CLOSED',
+                closed_at    = NOW(),
                 exit_time    = NOW(),
                 updated_at   = NOW()
             """, (
@@ -1605,6 +1606,7 @@ def _log_shadow_outcome(
                 outcome, round(pnl_eur, 4), exit_r, exit_r,
                 mfe_r, mae_r, hold_min,
                 score,
+                exit_price,
             ))
         conn.commit()
         log(
