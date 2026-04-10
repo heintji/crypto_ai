@@ -856,33 +856,45 @@ def get_open_symbols(state: Dict[str, Any]) -> List[str]:
 
 
 def load_shadow_state() -> Dict[str, Any]:
-    """
-    Laadt de shadow trade state.
-
-    FIX vs v2.0: als JSON een list is (corrupt) ipv dict
-    crashte alles met 'list object has no attribute setdefault'.
-    Nu: isinstance check + reset naar leeg dict bij corruptie.
-    """
-    _ensure_dir(SHADOW_STATE_PATH)
-    if not os.path.exists(SHADOW_STATE_PATH):
-        return {"positions": {}, "open_trades": []}
+    """Laadt open shadow posities uit experience_trades DB — niet uit JSON."""
+    conn2 = None
     try:
-        with open(SHADOW_STATE_PATH, "r", encoding="utf-8") as f:
-            s = json.load(f)
-        # FIX: corrupt JSON (list ipv dict) Ã¢ÂÂ reset
-        if not isinstance(s, dict):
-            log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_trades.json was geen dict ({type(s).__name__}) Ã¢ÂÂ reset")
-            s = {}
-    except Exception:
-        s = {}
-    s.setdefault("positions", {})
-    s.setdefault("open_trades", [])
-    # Zorg dat positions een dict is, niet een list
-    if not isinstance(s["positions"], dict):
-        log("Ã¢ÂÂ Ã¯Â¸Â shadow positions was geen dict Ã¢ÂÂ reset naar leeg")
-        s["positions"] = {}
-    return s
-
+        conn2 = db_connect()
+        cur2 = conn2.cursor()
+        cur2.execute("""
+            SELECT trade_key, symbol, bitvavo_market, entry, stop, target,
+                   qty, amount_eur, setup_type, score, entry_time
+            FROM experience_trades
+            WHERE status = 'OPEN' AND source = 'SHADOW'
+        """)
+        rows = cur2.fetchall()
+        positions = {}
+        for r in rows:
+            key = r[0] or f"SHADOW|{r[1]}|0"
+            positions[r[1]] = {
+                "symbol":     r[1],
+                "market":     r[2] or f"{r[1][:-4]}-EUR",
+                "entry":      float(r[3] or 0),
+                "stop":       float(r[4] or 0),
+                "target":     float(r[5] or 0),
+                "qty":        float(r[6] or 0),
+                "amount_eur": float(r[7] or 0),
+                "setup_type": r[8],
+                "score":      r[9],
+                "entry_time": str(r[10]),
+                "trade_key":  key,
+                "source":     "SHADOW",
+            }
+        return {"positions": positions, "open_trades": list(positions.keys())}
+    except Exception as e:
+        log(f"load_shadow_state DB fout: {e}")
+        return {"positions": {}, "open_trades": []}
+    finally:
+        if conn2:
+            try:
+                conn2.close()
+            except Exception:
+                pass
 
 def save_shadow_state(state: Dict[str, Any]) -> None:
     """Slaat shadow state op Ã¢ÂÂ atomisch via tmp file."""
