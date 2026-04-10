@@ -757,11 +757,17 @@ def update_trade_in_db(
                 outcome    = %s,
                 pnl_eur    = %s,
                 exit_time  = %s,
+                exit_price = %s,
+                fee_eur    = %s,
+                mfe_r      = %s,
+                mae_r      = %s,
+                result_r   = %s,
                 status     = 'CLOSED',
                 closed_at  = NOW(),
                 updated_at = NOW()
             WHERE trade_key = %s OR (symbol = %s AND source = 'LIVE' AND status = 'OPEN')
-            """, (outcome, pnl_eur, exit_time, trade_key, symbol))
+            """, (outcome, pnl_eur, exit_time, exit_price, fee_eur,
+                  mfe_r, mae_r, exit_r, trade_key, symbol))
 
             if cur.rowcount == 0:
                 cur.execute("""
@@ -973,12 +979,24 @@ def _calc_r(entry: float, stop: float, current: float) -> float:
 
 def _holding_minutes(trade: Dict[str, Any]) -> float:
     """Berekent hoe lang trade al open staat in minuten."""
+    # Probeer epoch timestamp (in-memory trades)
     opened_at = safe_float(
         trade.get("opened_at") or trade.get("monitor_started_at")
     )
-    if not opened_at:
-        return 0.0
-    return (time.time() - opened_at) / 60
+    if opened_at and opened_at > 1000000000:
+        return (time.time() - opened_at) / 60
+    # Fallback: entry_time string uit DB
+    entry_time_str = trade.get("entry_time") or ""
+    if entry_time_str:
+        try:
+            from datetime import datetime as _dt
+            et = _dt.fromisoformat(str(entry_time_str).replace("Z", "+00:00"))
+            if et.tzinfo is None:
+                et = et.replace(tzinfo=timezone.utc)
+            return (now_utc() - et).total_seconds() / 60
+        except Exception:
+            pass
+    return 0.0
 
 
 # ============================================================
@@ -1083,7 +1101,7 @@ def process_live_trade(
             except Exception:
                 pass
 
-    if current <= stop or r < 0:
+    if current <= stop:
         log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STOP_LOSS"})
         _finalize_trade(symbol, trade, current, result, conn, "STOP_LOSS")
