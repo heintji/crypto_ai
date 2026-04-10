@@ -1812,6 +1812,12 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         try:
             shadow_state   = load_shadow_state(conn)
+            # DIAGNOSTIC: schrijf shadow count naar bot_state
+            try:
+                set_bot_state(conn, "debug_shadow_count", str(len(shadow_state.get("positions", {}))))
+                conn.commit()
+            except Exception:
+                safe_rollback(conn)
             shadow_symbols = get_open_shadow_symbols(shadow_state)
 
             if target_symbol:
@@ -1851,6 +1857,11 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
 
         except Exception as e:
             log(f"Ã¢ÂÂ Ã¯Â¸Â Shadow monitor fout: {e}")
+            try:
+                set_bot_state(conn, "debug_shadow_error", str(e)[:200])
+                conn.commit()
+            except Exception:
+                pass
 
         # Ã¢ÂÂÃ¢ÂÂ Positielimiet check Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         check_positie_limieten(conn)
