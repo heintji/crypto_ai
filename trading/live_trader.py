@@ -81,7 +81,7 @@ BINANCE_BASE = "https://api.binance.com/api/v3"
 # ============================================================
 # FASE 1 LIMIETEN Ã¢ÂÂ identiek aan alle andere bestanden
 # ============================================================
-MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "1.00")
+MAX_PER_TRADE_EUR            = float(os.getenv("MAX_PER_TRADE_EUR")            or "15.00")
 MAX_REAL_TRADES_PER_DAY      = int(os.getenv("MAX_REAL_TRADES_PER_DAY")        or "10")
 MAX_OPEN_REAL_TRADES         = int(os.getenv("MAX_OPEN_REAL_TRADES")           or "10")
 TRAILING_STOP_PCT      = float(os.getenv("TRAILING_STOP_PCT")        or "0.03")  # 3% trailing stop
