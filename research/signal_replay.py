@@ -67,7 +67,7 @@ def get_replayable_signals(conn, limit: int = BATCH_SIZE) -> list:
                    pa.created_at, pa.kelly_grootte_eur, pa.coin,
                    pa.btc_regime, pa.rr_ratio, pa.timeframe, pa.status
             FROM pending_approvals pa
-            WHERE pa.status IN ('EXPIRED', 'SKIPPED', 'FAILED', 'REJECTED')
+            WHERE pa.score >= 80
             AND pa.entry IS NOT NULL AND pa.entry > 0
             AND pa.stop IS NOT NULL AND pa.stop > 0
             AND pa.target IS NOT NULL AND pa.target > 0
