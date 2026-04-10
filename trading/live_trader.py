@@ -454,6 +454,7 @@ def set_bot_state(conn, key: str, value: str) -> None:
             """, (key, value))
         conn.commit()
     except Exception as e:
+        safe_rollback(conn)
         log(f"Ã¢ÂÂ Ã¯Â¸Â set_bot_state fout: {e}")
 
 
@@ -869,14 +870,14 @@ def get_current_price(symbol_usdt: str, market: str) -> Optional[float]:
     return None
 
 
-def get_eur_balance() -> float:
-    """Haalt beschikbaar EUR saldo op van Bitvavo."""
+def get_eur_balance(coin: str = "EUR") -> float:
+    """Haalt beschikbaar saldo op van Bitvavo voor opgegeven coin (default EUR)."""
     ok, data = _bitvavo_request("GET", "/balance")
     if not ok or not data:
         return 0.0
     if isinstance(data, list):
         for item in data:
-            if safe_str(item.get("symbol")) == "EUR":
+            if safe_str(item.get("symbol")) == coin:
                 return safe_float(item.get("available", 0))
     elif isinstance(data, dict):
         return safe_float(data.get("available", 0))
@@ -989,9 +990,9 @@ def shadow_buy(
         }
         save_shadow_state(state)
         # DB write: shadow trade naar experience_trades
+        _db2 = None
         try:
-            import psycopg2 as _pg2, os as _os2
-            _db2 = _pg2.connect(_os2.environ['DATABASE_URL'])
+            _db2 = db_connect()
             _c2  = _db2.cursor()
             _tk2 = f"SHADOW|{symbol}|{int(time.time())}"
             _c2.execute("""
@@ -1012,9 +1013,11 @@ def shadow_buy(
                   float(amount_eur or 0),
                   float(meta.get('score', 0))))
             _db2.commit()
-            _db2.close()
         except Exception as _dbe2:
             log(f"shadow_buy DB fout: {_dbe2}")
+        finally:
+            if _db2:
+                _db2.close()
         log(f"Ã°ÂÂÂ¤ Shadow BUY gelogd: {symbol} @ {entry:.6f}")
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_buy fout ({symbol}): {e}")
@@ -1065,26 +1068,29 @@ def shadow_sell(
 
         save_shadow_state(state)
         # DB update: shadow trade sluiten in experience_trades
+        _db3 = None
         try:
-            import psycopg2 as _pg3, os as _os3
             _pnl_pct = round((exit_price - entry) / entry * 100, 4) if entry else 0
-            _db3 = _pg3.connect(_os3.environ['DATABASE_URL'])
+            _db3 = db_connect()
             _c3  = _db3.cursor()
             _c3.execute("""
                 UPDATE experience_trades
                 SET outcome    = %s,
                     exit_price = %s,
                     pnl_pct    = %s,
+                    pnl_eur    = %s,
                     closed_at  = NOW()
                 WHERE symbol = %s
                 AND source = 'SHADOW'
                 AND outcome = 'OPEN'
                 AND entry_time >= NOW() - INTERVAL '48 hours'
-            """, ('CLOSED', exit_price, _pnl_pct, symbol))
+            """, (outcome, exit_price, _pnl_pct, round(pnl_eur, 4), symbol))
             _db3.commit()
-            _db3.close()
         except Exception as _dbe3:
             log(f"shadow_sell DB update fout: {_dbe3}")
+        finally:
+            if _db3:
+                _db3.close()
         log(f"Ã°ÂÂÂ¤ Shadow SELL: {symbol} {outcome} Ã¢ÂÂ¬{pnl_eur:.4f}")
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â shadow_sell fout ({symbol}): {e}")
@@ -1956,6 +1962,8 @@ def buy_eur(
         except Exception:
             pass
 
+        return True, f"BUY {symbol} OK"
+
     except Exception as e:
         safe_rollback(conn)
         report_error(e, "buy_eur", symbol, "KRITIEK")
@@ -2274,6 +2282,7 @@ def main_loop():
                         log(f"Shadow-only: {ssymbol} score={sscore}")
                     except Exception as _se:
                         log(f"Shadow-only fout: {_se}")
+                conn.commit()
 
 
         except Exception as e:
@@ -2287,10 +2296,7 @@ def main_loop():
                 except Exception as _re:
                     log("DB reconnect mislukt: " + str(_re))
             log(f"Ã¢ÂÂ Loop fout: {e}")
-            try:
-                conn.rollback()
-            except Exception:
-                pass
+            safe_rollback(conn)
 
         # Heartbeat  dashboard kan zien dat de bot leeft
         try:
@@ -2298,10 +2304,6 @@ def main_loop():
         except Exception:
             pass
         try:
-            try:
-                health_update("live_trader", "OK", "trader actief")
-            except Exception:
-                pass
             set_bot_state(conn, "live_trader_last_ts", now_utc().isoformat())
             set_bot_state(conn, "live_trader_busy", "false")
         except Exception:

@@ -66,7 +66,7 @@
 #   -> Leest van public.btc_regime_4h (BTC regime filter)
 #   -> Leest van public.coach_memory (adaptieve params)
 #   -> Schrijft naar public.scanner_sessies (statistieken)
-#   -> Triggert /auto_buy op whatsapp_webhook.py
+#   -> Schrijft naar pending_approvals (live_trader koopt via whatsapp_webhook)
 #   -> Claude AI analyseert elk signaal + fouten + sessie
 #
 # IDENTIEK AAN ALLE ANDERE BESTANDEN:
@@ -1434,7 +1434,6 @@ def get_edge_decay_coin(conn, symbol: str) -> Dict[str, Any]:
             conn.rollback()
         except Exception:
             pass
-        except: pass
         log(f"Edge decay check fout ({symbol}): {e}")
     return result
 
@@ -2691,10 +2690,6 @@ def scan_universe(conn, drempels: Dict) -> int:
             setup_type, why_base = detect_setup_type(candles_4h, candles_1h)
             if setup_type == "UNKNOWN":
                 tel_filter("geen_setup"); update_sessie(symbol_usdt, 0, "geen_setup"); continue
-            # FIX: BREAKOUT_RETEST geblokkeerd  43% WR te laag, alleen TREND_PULLBACK
-            if "BREAKOUT" in setup_type or "RETEST" in setup_type:
-                tel_filter("breakout_geblokkeerd"); update_sessie(symbol_usdt, 0, "breakout_geblokkeerd"); continue
-
             # FIX v4.1: BREAKOUT_RETEST in BEAR blokkeren
             # Shadow data: 149 trades, 28.9% win rate = verliesgevend.
             # In een bearish BTC markt mislukt bijna elke uitbraak poging.
@@ -3061,7 +3056,7 @@ if __name__ == "__main__":
             _conn.close()
         except Exception as _e:
             log(f"scanner_last_run fout: {_e}")
-            _schrijf_heartbeat('OK', f'scan klaar: {len(coins) if "coins" in dir() else 0} coins')
+        _schrijf_heartbeat('OK', f'scan klaar: {_SESSIE.get("gescand", 0)} coins')
         sys.exit(0)
 
     except KeyboardInterrupt:

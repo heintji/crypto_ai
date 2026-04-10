@@ -190,7 +190,7 @@ Schrijf in het Nederlands, beknopt en direct."""
 
         bericht = (
             f" *DAGRAPPORT*  {now_utc():%d %b %Y}\n"
-            f"{""*30}\n"
+            f"{"="*30}\n"
             f"Live: {s['totaal']} trades | WR: {s['winrate']}% | PnL: {s['totaal_pnl']:.2f}\n"
             f"Shadow: {sh['totaal']} trades | WR: {sh['winrate']}%\n"
             f"Regime: {stats['regime']}\n\n"
@@ -253,7 +253,7 @@ Schrijf in het Nederlands, als een echte trading coach."""
 
         bericht = (
             f" *WEEKRAPPORT*  week {now_utc():%W %Y}\n"
-            f"{""*30}\n"
+            f"{"="*30}\n"
             f"7d: {s7['totaal']} trades | WR: {s7['winrate']}% | {s7['totaal_pnl']:.2f}\n"
             f"30d: {s30['totaal']} trades | WR: {s30['winrate']}% | {s30['totaal_pnl']:.2f}\n"
             f"Shadow 7d: {sh7['winrate']}% | Regime: {stats7['regime']}\n\n"
@@ -329,7 +329,7 @@ Schrijf in het Nederlands, professioneel en actionable."""
 
         bericht = (
             f" *MAANDANALYSE*  {now_utc():%B %Y}\n"
-            f"{""*30}\n"
+            f"{"="*30}\n"
             f"30d live: {s['totaal']} trades | WR: {s['winrate']}% | {s['totaal_pnl']:.2f}\n"
             f"30d shadow: {sh['totaal']} trades | WR: {sh['winrate']}%\n"
             f"Regime: {stats30['regime']}\n"
@@ -407,7 +407,6 @@ def _stuur_wa(bericht: str) -> None:
         naar = os.getenv('TWILIO_WHATSAPP_TO', '')
         if not all([sid, auth, van, naar]):
             print('[COACH] Twilio niet geconfigureerd')
-            _stuur_wa(rapport)
             return
         _req.post(
             f'https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json',
@@ -441,7 +440,6 @@ def main():
         conn.close()
     log("AI Coach klaar.")
 
-_schrijf_heartbeat('OK', 'ai_coach klaar')
-
 if __name__ == "__main__":
     main()
+    _schrijf_heartbeat('OK', 'ai_coach klaar')

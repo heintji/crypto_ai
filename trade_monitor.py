@@ -88,6 +88,7 @@ import requests
 try:
     from bot_health_helper import health_update, health_fout
 except ImportError:
+    def health_update(*a, **k): pass
     def health_fout(*a, **k): pass
 
 
@@ -1073,10 +1074,12 @@ def process_live_trade(
             stop = trailing_stop_prijs
             log(f"Trailing stop {symbol}: nieuw stop={stop:.6f} (prijs={current:.6f})")
             try:
-                cur.execute(
-                    "UPDATE experience_trades SET stop_loss=%s WHERE trade_key=%s",
-                    (stop, trade_key))
-                conn.commit()
+                trade_key = trade.get("trade_key") or trade.get("id", "")
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE experience_trades SET stop_loss=%s WHERE trade_key=%s",
+                        (stop, trade_key))
+                    conn.commit()
             except Exception:
                 pass
 
@@ -1261,9 +1264,9 @@ def _finalize_trade(
                     f"Trade: {trade_key[:40]}\n"
                     f"\u2192 Controleer Bitvavo handmatig!"
                 )
-                send_whatsapp_rate_limited(_wa_msg, key=f"sell_mislukt_{symbol}")
+                send_whatsapp(_wa_msg, rate_key=f"sell_mislukt_{symbol}")
                 try:
-                    claude_audit_sell_fout(trade_key, symbol, str(last_error), open_count)
+                    claude_audit_sell_fout(trade_key, symbol, str(fout_msg), len(load_state().get("positions", {})))
                 except Exception:
                     pass
                 log(f"[KRITIEK] SELL {symbol} al {_pogingen}x mislukt — WA gestuurd")
@@ -2494,6 +2497,7 @@ def reconcilieer_trades() -> None:
                    for r in cur.fetchall()}
 
         # 2. Haal Bitvavo wallet op
+        from trading.live_trader import bitvavo_client
         bv = bitvavo_client()
         balances = bv.balance({})
         wallet = {}
@@ -2652,18 +2656,20 @@ def run_monitor_loop() -> None:
     while True:
         try:
             run_monitor_once()
-            stuur_dagrapport(conn)
-        except Exception:
-            pass
         except Exception as e:
             log(f"Ã¢ÂÂ Monitor loop fout: {type(e).__name__}: {e}")
         # HEARTBEAT naar bot_state na elke monitor run
         try:
             _hb = db_connect()
-            set_bot_state_value(_hb, "trade_monitor_last_check", now_utc().isoformat())
+            set_bot_state(_hb, "trade_monitor_last_check", now_utc().isoformat())
             _hb.close()
         except Exception:
             pass
+        # Reconciliatie: vergelijk DB met Bitvavo wallet
+        try:
+            reconcilieer_trades()
+        except Exception as e:
+            log(f"Reconciliatie fout: {type(e).__name__}: {e}")
         time.sleep(MONITOR_INTERVAL_SEC)
 
 

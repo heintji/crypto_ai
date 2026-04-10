@@ -414,7 +414,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 250) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-sonnet-4-6",
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -486,7 +486,7 @@ Analyseer de shadow trade performance in 3 zinnen Nederlands.
 SHADOW STATISTIEKEN:
 - Wins:           {wins}
 - Losses:         {losses}
-- Win rate:       {wins/(wins+losses)*100:.1f}% (als data beschikbaar)
+- Win rate:       {wins/(wins+losses)*100:.1f if (wins+losses) > 0 else 0.0}% (als data beschikbaar)
 - Profit Factor:  {pf:.2f}
 - Beste setup:    {top_setup}
 - Slechtste setup: {bot_setup}

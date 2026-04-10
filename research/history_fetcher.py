@@ -976,22 +976,23 @@ def check_verse_candles(conn, symbol: str, interval: str) -> bool:
     }.get(interval, 7_200)
 
     cutoff = now_utc() - timedelta(seconds=max_oud_sec)
+    # Update market_regime tabel
     try:
         with conn.cursor() as cur:
             cur.execute("""
+                INSERT INTO market_regime (symbol, timeframe, regime, updated_at)
+                SELECT symbol, '1h', 'RANGE', NOW()
+                FROM (SELECT DISTINCT symbol FROM candles WHERE timeframe='1h') s
+                ON CONFLICT (symbol, timeframe) DO UPDATE SET updated_at=NOW()
+            """)
+            conn.commit()
+            print('[FETCHER] market_regime updated')
+    except Exception as _mre:
+        print(f'[FETCHER] market_regime fout: {_mre}')
 
-            # Update market_regime tabel
-            try:
-                cur.execute("""
-                    INSERT INTO market_regime (symbol, timeframe, regime, updated_at)
-                    SELECT symbol, '1h', 'RANGE', NOW()
-                    FROM (SELECT DISTINCT symbol FROM candles WHERE timeframe='1h') s
-                    ON CONFLICT (symbol, timeframe) DO UPDATE SET updated_at=NOW()
-                """)
-                conn.commit()
-                print('[FETCHER] market_regime updated')
-            except Exception as _mre:
-                print(f'[FETCHER] market_regime fout: {_mre}')
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
             SELECT MAX(open_time) FROM public.candles
             WHERE symbol = %s AND timeframe = %s
             """, (symbol, interval))

@@ -1,1 +1,1 @@
-notepad multi_coin_log.py
+# multi_coin_log.py — placeholder voor multi coin logging

@@ -11,6 +11,7 @@ def health_update(service: str, status: str = "OK", details: str = "", **kwargs)
     """Update heartbeat voor een service in bot_health tabel."""
     if not DATABASE_URL:
         return False
+    conn = None
     try:
         conn = psycopg2.connect(DATABASE_URL)
         cur  = conn.cursor()
@@ -27,12 +28,14 @@ def health_update(service: str, status: str = "OK", details: str = "", **kwargs)
                 VALUES (%s, %s, NOW(), %s)
             """, (service, status, str(details)[:200]))
         conn.commit()
-        conn.close()
         return True
     except Exception as e:
         print(f"[HEALTH] {service} heartbeat fout: {e}")
         return False
+    finally:
+        if conn:
+            conn.close()
 
 def health_fout(service: str, fout: str = "") -> bool:
     """Registreer een fout voor een service."""
-    return health_update(service, "FOUT", fout[:200])
+    return health_update(service, "ERROR", fout[:200])

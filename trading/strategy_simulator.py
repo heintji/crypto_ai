@@ -49,14 +49,12 @@ def sf(v, d=0.0):
     try:
         return float(v or d)
     except Exception:
-        pass
-    except: return d
+        return d
 def safe_rb(conn):
     try:
         conn.rollback()
     except Exception:
         pass
-    except: pass
 
 def db_connect(retries=DB_CONNECT_RETRIES):
     """Verbinding met PostgreSQL, max retries pogingen met 3s wachttijd."""
@@ -76,7 +74,7 @@ def whatsapp(msg):
     try:
         r = requests.post(f"{url}/send_whatsapp", json={"message":msg}, timeout=10)
         return r.status_code==200
-    except: return False
+    except Exception: return False
 
 # --- Indicatoren ---
 def ema(prices, n):
@@ -129,16 +127,16 @@ def get_regime(conn):
             cur.execute("SELECT regime,close,ema200 FROM public.btc_regime_4h ORDER BY open_time DESC LIMIT 1")
             r=cur.fetchone()
         return (r[0] or "RANGE",sf(r[1]),sf(r[2])) if r else ("RANGE",0.0,0.0)
-    except: return "RANGE",0.0,0.0
+    except Exception: return "RANGE",0.0,0.0
 
 def get_fng():
     """Fear & Greed Index van alternative.me. 0=extreme fear, 100=extreme greed."""
     try:
         r=requests.get("https://api.alternative.me/fng/?limit=1", timeout=8)
         return int(r.json()["data"][0]["value"])
-    except: return 50
+    except Exception: return 50
 
-def get_coins(conn):
+def get_coins(conn, markt_score_val=0):
     """Haalt alle coins op die voldoende candle data hebben (>=25 1h candles).
     Pakt direct uit de candles tabel zodat alle beschikbare coins meedoen,
     niet alleen coins die al eerder gehandeld zijn."""
@@ -285,7 +283,8 @@ def sim_result(sig, c1h):
 
 def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None,
                fng_waarde=None, fng_label=None, funding_r=None, funding_v=None,
-               nieuws_r=None, oi_r=None, btc_dom_r=None, cross_score=None):
+               nieuws_r=None, oi_r=None, btc_dom_r=None, cross_score=None,
+               markt_advies="", markt_score_val=0, _cluster=""):
     """Slaat SIM trade op met alle signalen apart voor combinatie analyse.
     Elke trade registreert: strategie + filter bitmap + F&G + nieuws + funding
     + OI + BTC dominantie. Zo kun je later querien welke combinatie het beste werkt.
@@ -399,7 +398,7 @@ def main():
                 for fn, needs4h in strats:
                     try:
                         sig = fn(c1_ctx, c4_ctx, regime) if needs4h else fn(c1_ctx, regime)
-                    except: continue
+                    except Exception: continue
                     if not sig: continue
 
                     # Outcome direct bepalen op basis van volgende candle
@@ -431,7 +430,9 @@ def main():
                         fng_waarde=_fng_waarde,fng_label=_fng_label,
                         funding_r=_fr_r,funding_v=_fr_v,
                         nieuws_r=_nieuws_r,oi_r=_oi_r,btc_dom_r=_btc_dom_r,
-                        cross_score=markt_score_val):
+                        cross_score=markt_score_val,
+                        markt_advies="",markt_score_val=markt_score_val,
+                        _cluster=_cluster or ""):
                         tot+=1; wins+=(1 if oc=="WIN" else 0); losses+=(1 if oc=="LOSS" else 0)
                         if tot<=20:  # log alleen eerste 20 om output kort te houden
                             log(f"  {sig['nm']:<20} {sym:<12} flags={flags:03d} "

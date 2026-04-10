@@ -14,31 +14,6 @@ Stuurt een duidelijk WhatsApp bericht als iets mis is:
 import os, psycopg2, time, urllib.request, urllib.parse, base64
 from datetime import datetime, timezone, timedelta
 
-def send_whatsapp(msg: str) -> bool:
-    """Stuur WhatsApp alert via Twilio."""
-    try:
-        sid    = os.environ.get("TWILIO_SID", "")
-        auth   = os.environ.get("TWILIO_AUTH", "")
-        to_num = os.environ.get("WA_TO_NUMBER", "")
-        fr_num = os.environ.get("WA_FROM_NUMBER", "")
-        if not all([sid, auth, to_num, fr_num]):
-            print(f"[WATCHDOG] WA config ontbreekt")
-            return False
-        data = urllib.parse.urlencode({
-            "Body": msg[:1500],
-            "From": f"whatsapp:{fr_num}",
-            "To":   f"whatsapp:{to_num}",
-        }, encoding="utf-8").encode("utf-8")
-        url = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
-        creds = base64.b64encode(f"{sid}:{auth}".encode()).decode()
-        req = urllib.request.Request(url, data=data, headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded;charset=utf-8"})
-        urllib.request.urlopen(req, timeout=10)
-        return True
-    except Exception as e:
-        print(f"[WATCHDOG] WA fout: {e}")
-        return False
-
-
 DATABASE_URL         = os.getenv('DATABASE_URL', '')
 TWILIO_ACCOUNT_SID   = os.getenv('TWILIO_ACCOUNT_SID', '')
 TWILIO_AUTH_TOKEN    = os.getenv('TWILIO_AUTH_TOKEN', '')
@@ -221,10 +196,6 @@ def run():
         except Exception as _e2:
             log(f"WA dedup fout: {_e2}")
             stuur_wa(bericht)
-
-        except Exception as _de:
-            log(f"Dedup fout: {_de}")
-            stuur_wa(bericht)  # Bij fout toch sturen
         log(f"Alert verstuurd: {len(kritiek)} kritiek, {len(hoog)} hoog")
     else:
         log("Alle services OK \u2705 — geen alert")
