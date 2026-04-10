@@ -399,7 +399,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 250) -> str:
     Roept Claude API aan voor analyse.
 
     Identiek aan _claude_analyse() in alle andere bestanden.
-    Model: claude-sonnet-4-20250514 (altijd Sonnet 4)
+    Model: claude-sonnet-4-6 (altijd Sonnet 4)
     Timeout: 25 seconden
     Geeft lege string bij fout — shadow trades gaan altijd door.
     """
@@ -479,6 +479,7 @@ def claude_analyseer_shadow_performance(
     Claude analyseert de algehele shadow performance.
     Wordt aangeroepen in het wekelijks rapport via whatsapp_webhook.py.
     """
+    win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
     prompt = f"""
 Je bent een crypto trading coach.
 Analyseer de shadow trade performance in 3 zinnen Nederlands.
@@ -486,7 +487,7 @@ Analyseer de shadow trade performance in 3 zinnen Nederlands.
 SHADOW STATISTIEKEN:
 - Wins:           {wins}
 - Losses:         {losses}
-- Win rate:       {wins/(wins+losses)*100:.1f if (wins+losses) > 0 else 0.0}% (als data beschikbaar)
+- Win rate:       {win_rate:.1f}% (als data beschikbaar)
 - Profit Factor:  {pf:.2f}
 - Beste setup:    {top_setup}
 - Slechtste setup: {bot_setup}

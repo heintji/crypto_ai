@@ -51,7 +51,7 @@ def _log_agent(conn, status: str, inp: dict, out: dict,
     except Exception as e:
         log(f"agent_logs fout: {e}")
         try: conn.rollback()
-        except: pass
+        except Exception: pass
 
 # 
 # Claude circuit breaker
@@ -187,7 +187,7 @@ Antwoord ALLEEN in dit JSON formaat (geen markdown):
             conn = db_connect()
             _log_agent(conn, "ERROR", inp, {}, 0, duration, str(e))
             conn.close()
-        except: pass
+        except Exception: pass
         return {"go": True, "reden": f"Claude fout (auto-GO): {str(e)[:60]}", "tokens": 0, "script_mode": True}
 
 

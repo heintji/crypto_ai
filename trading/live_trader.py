@@ -2174,7 +2174,7 @@ def sell(
 # ============================================================
 # MAIN Ã¢ÂÂ configuratie check + Bitvavo test
 # ============================================================
-if __name__ == "__main__":
+def _configuratie_check():
     log("=" * 60)
     log("Live Trader v3.0 Ã¢ÂÂ configuratie check")
     log("=" * 60)
@@ -2259,6 +2259,23 @@ def main_loop():
                 except Exception:
                     pass
 
+                # ── Verwerk live pending_approvals met buy_eur() ──
+                for row in rows:
+                    try:
+                        pid, rsymbol, rmarket, rscore, rentry, rstop, rtarget, rkelly, _live = row
+                        rmeta = {"score": rscore, "setup_type": "TREND_PULLBACK",
+                                 "regime": "LIVE", "prebuy_id": pid}
+                        ok, msg = buy_eur(rsymbol, float(rkelly or 7), rmeta)
+                        if ok:
+                            cur.execute("UPDATE pending_approvals SET status='CONSUMED' WHERE id=%s", (pid,))
+                            conn.commit()
+                            log(f"Live BUY: {rsymbol} score={rscore} — {msg}")
+                        else:
+                            log(f"Live BUY mislukt: {rsymbol} — {msg}")
+                    except Exception as _be:
+                        log(f"Live BUY fout {row[1] if len(row) > 1 else '?'}: {_be}")
+                        safe_rollback(conn)
+
                 # ── Shadow-only: score 80-89, geen live geld ──
                 cur.execute("""
                     SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
@@ -2313,4 +2330,5 @@ def main_loop():
 
 # Start main loop
 if __name__ == "__main__":
+    _configuratie_check()
     main_loop()

@@ -84,7 +84,7 @@ def _log_agent(conn, mode, tokens, duration, status, fout=""):
     except Exception as e:
         log(f"agent_log fout: {e}")
         try: conn.rollback()
-        except: pass
+        except Exception: pass
 
 def _haal_stats(conn, dagen: int) -> dict:
     """Haal trade stats op voor de afgelopen N dagen."""
@@ -292,7 +292,7 @@ def maandanalyse(conn):
                 ORDER BY wr ASC LIMIT 5
             """)
             blacklist_kand = [{"coin": r[0], "n": r[1], "wr": float(r[2])} for r in cur.fetchall()]
-    except:
+    except Exception:
         blacklist_kand = []
 
     bl_str = ", ".join([f"{c['coin']} ({c['wr']}%)" for c in blacklist_kand]) or "geen"

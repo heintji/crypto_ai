@@ -834,7 +834,7 @@ def load_state() -> Dict[str, Any]:
         if conn2:
             try:
                 conn2.close()
-            except: pass
+            except Exception: pass
 
 def save_state(state: Dict[str, Any]) -> None:
     """Slaat state op Ã¢ÂÂ atomisch via tmp file."""
