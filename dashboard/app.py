@@ -23,6 +23,7 @@ with st.sidebar:
         ("overview",    "📊  Overview"),
         ("live",        "💰  Live Trades"),
         ("shadow",      "👻  Shadow Trades"),
+        ("replay",      "🔄  Signal Replay"),
         ("sim",         "🧪  Sim Trades"),
         ("signals",     "📡  Signals"),
         ("performance", "📈  Performance"),
@@ -40,6 +41,7 @@ p = st.session_state.page
 if p == "overview":     page_overview.render()
 elif p == "live":       page_trades.render("LIVE", "Live Trades")
 elif p == "shadow":     page_trades.render("SHADOW", "Shadow Trades")
+elif p == "replay":     page_trades.render("REPLAY", "Signal Replay")
 elif p == "sim":        page_trades.render("SIM", "Sim Trades")
 elif p == "signals":    page_signals.render()
 elif p == "performance":page_performance.render()
