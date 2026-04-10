@@ -30,6 +30,11 @@ import os, sys, time, math, requests, psycopg2
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple, Dict, Any
 
+try:
+    from bot_health_helper import health_update
+except ImportError:
+    def health_update(*a, **k): pass
+
 DATABASE_URL       = os.environ.get("DATABASE_URL", "")
 DB_CONNECT_RETRIES = 3
 SIM_POSITION_EUR   = 5.0
@@ -446,5 +451,9 @@ def main():
     finally:
         conn.close()
     log("="*60); log("Simulator klaar"); log("="*60)
+    try:
+        health_update("strategy_sim", "OK", f"{tot} trades, {wins}W/{losses}L")
+    except Exception:
+        pass
 
 if __name__=="__main__": main()

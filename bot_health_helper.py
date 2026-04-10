@@ -13,7 +13,7 @@ def health_update(service: str, status: str = "OK", details: str = "", **kwargs)
         return False
     conn = None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg2.connect(DATABASE_URL, sslmode="require")
         cur  = conn.cursor()
         cur.execute("""
             UPDATE bot_health
