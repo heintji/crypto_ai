@@ -1774,37 +1774,42 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             # )
 
         # Ã¢ÂÂÃ¢ÂÂ LIVE TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-        state   = load_state()
-        symbols = get_open_symbols(state)
+        try:
+            state   = load_state()
+            symbols = get_open_symbols(state)
 
-        if target_symbol:
-            symbols = [s for s in symbols if s == target_symbol]
+            if target_symbol:
+                symbols = [s for s in symbols if s == target_symbol]
 
-        live_changed = False
-        _RUN_STATS["live_checked"] = _RUN_STATS.get("live_checked", 0) + len(symbols)
+            live_changed = False
+            _RUN_STATS["live_checked"] = _RUN_STATS.get("live_checked", 0) + len(symbols)
 
-        for symbol in symbols:
-            trade = (state.get("positions") or {}).get(symbol)
-            if not trade:
-                continue
-            if is_coin_blacklisted(conn, symbol):
-                log(f"Ã¢ÂÂ« {symbol} op blacklist Ã¢ÂÂ trade al open, bewaken")
-            try:
-                changed, sold = process_live_trade(symbol, trade, conn)
-                if changed:
-                    live_changed = True
-                if sold:
-                    state["positions"].pop(symbol, None)
-                    state["open_trades"] = [
-                        t for t in (state.get("open_trades") or [])
-                        if t.get("symbol") != symbol
-                    ]
-            except Exception as e:
-                report_error(e, "process_live_trade", symbol, "HOOG",
-                             open_trades=len(symbols))
+            for symbol in symbols:
+                trade = (state.get("positions") or {}).get(symbol)
+                if not trade:
+                    continue
+                if is_coin_blacklisted(conn, symbol):
+                    log(f"Ã¢ÂÂ« {symbol} op blacklist Ã¢ÂÂ trade al open, bewaken")
+                try:
+                    changed, sold = process_live_trade(symbol, trade, conn)
+                    if changed:
+                        live_changed = True
+                    if sold:
+                        state["positions"].pop(symbol, None)
+                        state["open_trades"] = [
+                            t for t in (state.get("open_trades") or [])
+                            if t.get("symbol") != symbol
+                        ]
+                except Exception as e:
+                    report_error(e, "process_live_trade", symbol, "HOOG",
+                                 open_trades=len(symbols))
 
-        if live_changed:
-            save_state(state)
+            if live_changed:
+                save_state(state)
+        except Exception as _le:
+            log(f"Live trades sectie fout: {_le}")
+            safe_rollback(conn)
+
 
         # Ã¢ÂÂÃ¢ÂÂ SHADOW TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
         # Reset transactie voor shadow sectie
