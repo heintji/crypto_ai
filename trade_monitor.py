@@ -1807,6 +1807,9 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             save_state(state)
 
         # Ã¢ÂÂÃ¢ÂÂ SHADOW TRADES Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+        # Reset transactie voor shadow sectie
+        safe_rollback(conn)
+
         try:
             shadow_state   = load_shadow_state(conn)
             shadow_symbols = get_open_shadow_symbols(shadow_state)
