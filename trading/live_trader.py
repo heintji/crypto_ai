@@ -2020,6 +2020,9 @@ def sell(
        outcome, exit_reden, r_multiple}
     """
     meta = meta or {}
+    # Defensief: clean symbol uit trade_key (LIVE|ANKRUSDT|123 → ANKRUSDT)
+    if "|" in symbol:
+        symbol = symbol.split("|")[1]
     # Check of coin echt op Bitvavo staat
     if fraction >= 1.0:
         try:

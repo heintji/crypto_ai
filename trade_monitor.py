@@ -831,7 +831,7 @@ def load_state() -> Dict[str, Any]:
         positions = {}
         for r in rows:
             key = r[0] or f"LIVE|{r[1]}|0"
-            positions[key] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "peak_price": float(r[13] or r[3] or 0)}
+            positions[r[1]] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "max_price_seen": float(r[13] or r[3] or 0), "trade_key": key}
         return {"positions": positions, "open_trades": list(positions.keys())}
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â load_state DB fout: {e}")
@@ -957,6 +957,9 @@ def _execute_sell(
     meta:     Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Voert sell uit via live_trader.py."""
+    # Extract clean symbol uit trade_key (LIVE|ANKRUSDT|123 → ANKRUSDT)
+    if "|" in symbol:
+        symbol = symbol.split("|")[1]
     try:
         sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "src"))
         from trading.live_trader import sell as live_sell
@@ -1239,6 +1242,30 @@ def process_live_trade(
     if not trade.get("min_price_seen") or current < safe_float(trade.get("min_price_seen"), current):
         trade["min_price_seen"] = current
         changed = True
+
+    # Persist tracking data naar DB (elke run)
+    try:
+        _tk = trade.get("trade_key", "")
+        if _tk:
+            with conn.cursor() as _tc:
+                _tc.execute("""
+                    UPDATE experience_trades SET
+                        max_price_seen = %s,
+                        min_price_seen = %s,
+                        mfe_r = %s,
+                        mae_r = %s,
+                        monitor_updated_at = NOW()
+                    WHERE trade_key = %s
+                """, (
+                    trade.get("max_price_seen"),
+                    trade.get("min_price_seen"),
+                    trade.get("mfe_r", 0),
+                    trade.get("mae_r", 0),
+                    _tk,
+                ))
+                conn.commit()
+    except Exception:
+        safe_rollback(conn)
 
     trade["last_check"] = int(time.time())
     return changed, False
@@ -1818,11 +1845,17 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
         try:
             shadow_state   = load_shadow_state(conn)
             # DIAGNOSTIC: schrijf shadow count naar bot_state
+            # DIAGNOSTIC v2
             try:
-                set_bot_state(conn, "debug_shadow_count", str(len(shadow_state.get("positions", {}))))
+                _sc = len(shadow_state.get("positions", {}))
+                _sk = list(shadow_state.get("positions", {}).keys())[:5]
+                set_bot_state(conn, "debug_shadow_count", str(_sc))
+                set_bot_state(conn, "debug_shadow_keys", str(_sk)[:200])
                 conn.commit()
-            except Exception:
-                safe_rollback(conn)
+            except Exception as _de:
+                set_bot_state(conn, "debug_shadow_error", f"diag: {_de}")
+                try: conn.commit()
+                except: pass
             shadow_symbols = get_open_shadow_symbols(shadow_state)
 
             if target_symbol:
