@@ -2105,14 +2105,11 @@ def sell(
         if not ok:
             err = str(order_data.get("error", str(order_data)[:200]))
             err_code = order_data.get("errorCode", "?")
-            log(f"SELL MISLUKT: {symbol} market={market} qty={qty} error={err} code={err_code} full={str(order_data)[:300]}")
-            report_error(
-                Exception(f"SELL {symbol}: {err} (code={err_code})"), "sell.place_market_sell",
-                symbol, "KRITIEK",
-            )
+            is_ghost = order_data.get("ghost", False) or err_code in (212, 216, "212", "216")
+            log(f"SELL MISLUKT: {symbol} market={market} qty={qty} error={err} code={err_code} ghost={is_ghost}")
             full_err = f"{err} code={err_code} market={market} qty={qty:.6f}"
             log_naar_bot_state(f"SELL fout: {full_err[:80]}", busy=False, error=full_err[:200])
-            return {"ok": False, "reason": full_err[:200]}
+            return {"ok": False, "reason": full_err[:200], "ghost": is_ghost, "errorCode": err_code}
 
         exit_price = safe_float(order_data.get("_parsed_price"))
         sold_qty   = safe_float(order_data.get("_parsed_sold_qty"), qty * fraction)
