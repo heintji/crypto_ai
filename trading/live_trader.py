@@ -2034,8 +2034,8 @@ def sell(
             coin = symbol.replace("USDT","").replace("EUR","")
             bal = get_eur_balance(coin) if coin != "EUR" else get_eur_balance()
             if bal <= 0:
-                send_whatsapp_rate_limited(f"Ã¢ÂÂ Ã¯Â¸Â SELL GEBLOKKEERD: {symbol}\nGeen {coin} op Bitvavo", key=f"sell_check_{symbol}")
-                return {"ok": False, "reason": f"Geen {coin} op Bitvavo"}
+                log(f"Balance check: {coin} niet gevonden op Bitvavo")
+                log(f"Balance: {coin}=0, probeer sell toch")
         except Exception:
             pass
 
