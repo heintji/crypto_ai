@@ -253,6 +253,17 @@ def get_portfolio_value() -> float:
         return 0.0
 
 
+@st.cache_data(ttl=30)
+def get_ghost_count() -> Tuple[int, float]:
+    """Aantal GHOST trades en hun totale PnL."""
+    df = run_query("""
+        SELECT COUNT(*) as n, COALESCE(SUM(pnl_eur), 0) as pnl
+        FROM experience_trades WHERE outcome='GHOST'
+    """)
+    if df.empty:
+        return 0, 0.0
+    return int(df.iloc[0]["n"]), float(df.iloc[0]["pnl"])
+
 @st.cache_data(ttl=15)
 def get_daily_pnl() -> Tuple[int, int, float]:
     df = run_query("""

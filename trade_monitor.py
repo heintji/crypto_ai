@@ -1298,7 +1298,7 @@ def _finalize_trade(
                 with conn.cursor() as _gc:
                     _gc.execute("""
                         UPDATE experience_trades SET
-                            status='CLOSED', outcome='LOSS', exit_reden=%s,
+                            status='CLOSED', outcome='GHOST', exit_reden=%s,
                             exit_time=NOW(), closed_at=NOW(), pnl_eur=-%s,
                             sell_fout=%s
                         WHERE trade_key=%s OR (symbol=%s AND source='LIVE' AND status='OPEN')
