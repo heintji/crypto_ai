@@ -24,7 +24,8 @@ with st.sidebar:
         ("live",        "💰  Live Trades"),
         ("shadow",      "👻  Shadow Trades"),
         ("replay",      "🔄  Signal Replay"),
-        ("sim",         "🧪  Sim Trades"),
+        ("review",      "📝  Trade Review"),
+        ("sim",         "🧪  Strategy Sim"),
         ("signals",     "📡  Signals"),
         ("brain",       "🧠  Brain"),
         ("analyse",     "🔬  Analyse"),
@@ -44,7 +45,8 @@ if p == "overview":     page_overview.render()
 elif p == "live":       page_trades.render("LIVE", "Live Trades")
 elif p == "shadow":     page_trades.render("SHADOW", "Shadow Trades")
 elif p == "replay":     page_trades.render("REPLAY", "Signal Replay")
-elif p == "sim":        page_trades.render("SIM", "Sim Trades")
+elif p == "review":     page_trades.render("REAL_REVIEW", "Trade Review")
+elif p == "sim":        page_trades.render("SIM", "Strategy Sim")
 elif p == "signals":    page_signals.render()
 elif p == "brain":      page_brain.render()
 elif p == "analyse":    page_analyse.render()
