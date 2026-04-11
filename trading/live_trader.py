@@ -2043,18 +2043,46 @@ def sell(
 
     conn = None
     try:
-        state = load_state()
-        positions = state.get("positions") or {}
-        pos = positions.get(symbol)
+        # Haal trade info op — eerst JSON, dan DB als fallback
+        pos = None
+        try:
+            state = load_state()
+            positions = state.get("positions") or {}
+            pos = positions.get(symbol)
+            if not pos:
+                for k, v in positions.items():
+                    if isinstance(v, dict) and v.get("symbol") == symbol:
+                        pos = v
+                        break
+        except Exception:
+            pass
+
+        # DB fallback — altijd betrouwbaar
         if not pos:
-            for k, v in positions.items():
-                if isinstance(v, dict) and v.get("symbol") == symbol:
-                    pos = v
-                    break
+            try:
+                conn = db_connect()
+                with conn.cursor() as _sc:
+                    _sc.execute("""
+                        SELECT symbol, bitvavo_market, entry, qty, amount_eur, prebuy_id, trade_key
+                        FROM experience_trades
+                        WHERE symbol=%s AND source='LIVE' AND status='OPEN'
+                        LIMIT 1
+                    """, (symbol,))
+                    row = _sc.fetchone()
+                    if row:
+                        pos = {
+                            "symbol": row[0], "market": row[1],
+                            "entry": float(row[2] or 0), "qty": float(row[3] or 0),
+                            "amount_eur": float(row[4] or 0), "prebuy_id": row[5],
+                            "trade_key": row[6],
+                        }
+                        log(f"SELL: trade info uit DB voor {symbol}")
+            except Exception as _de:
+                log(f"SELL DB lookup fout: {_de}")
 
         if not pos:
-            log_naar_bot_state(f"SELL fout: {symbol} niet in state", busy=False)
-            return {"ok": False, "reason": f"{symbol} niet gevonden in state"}
+            log_naar_bot_state(f"SELL fout: {symbol} niet in state/DB", busy=False)
+            return {"ok": False, "reason": f"{symbol} niet gevonden in state of DB"}
 
         market     = safe_str(pos.get("market"))
         entry      = safe_float(pos.get("entry"))
