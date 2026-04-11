@@ -300,6 +300,12 @@ def report_error(
     """
     log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
 
+    # Ghost trades: geen WhatsApp (technisch probleem, niet kritiek)
+    err_str = str(error).lower()
+    if "ghost" in err_str or "212" in err_str or "216" in err_str:
+        log(f"Ghost error — skip WhatsApp alert")
+        return
+
     if severity not in ("KRITIEK", "HOOG"):
         return
 
@@ -325,23 +331,22 @@ Geef in 3 zinnen Nederlands:
 
     # Rate limited per severity+function combinatie Ã¢ÂÂ geen spam
     wa_key = f"error_{severity}_{function.replace('.', '_')}"
-    send_whatsapp_rate_limited(
-        f"Ã°ÂÂÂ¨ LIVE TRADER FOUT Ã¢ÂÂ {severity}\n"
-        f"{'Ã¢ÂÂ' * 30}\n\n"
-        f"Ã°ÂÂÂ Functie:     {function}\n"
-        f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-        f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-        f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-        f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-        f"Ã°ÂÂÂ WAT TE DOEN:\n"
-        f"1. Check Render logs voor details\n"
-        f"2. Stuur TRADES voor open posities\n"
-        f"3. Check Bitvavo account direct\n"
-        f"4. Stuur STOP als je wil pauzeren\n\n"
-        f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
-        f"Commands: STATUS | TRADES | STOP",
-        key=wa_key,
-    )
+    sep = "=" * 30
+    msg = (f"[FOUT] LIVE TRADER - {severity}\n"
+           f"{sep}\n\n"
+           f"Functie:     {function}\n"
+           f"Coin:        {symbol or '?'}\n"
+           f"Open trades: {open_trades}\n"
+           f"Fout:        {type(error).__name__}\n\n"
+           f"Claude:\n{uitleg}\n\n"
+           f"WAT TE DOEN:\n"
+           f"1. Check Render logs\n"
+           f"2. Stuur TRADES voor posities\n"
+           f"3. Check Bitvavo account\n\n"
+           f"BOT PROBEERT DOOR TE GAAN\n"
+           f"Commands: STATUS | TRADES | STOP")
+    send_whatsapp_rate_limited(msg, key=wa_key)
+
 
 
 def claude_analyseer_trade(

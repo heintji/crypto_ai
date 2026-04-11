@@ -333,6 +333,12 @@ def report_error(
     log(f"[{severity}] {function} ({symbol}): {type(error).__name__}: {error}")
     _RUN_STATS["fouten"] = _RUN_STATS.get("fouten", 0) + 1
 
+    # Ghost trades: geen WhatsApp alert (technisch probleem, niet kritiek)
+    err_str = str(error).lower()
+    if "ghost" in err_str or "212" in err_str or "216" in err_str:
+        log(f"Ghost error — skip WhatsApp alert")
+        return
+
     if severity not in ("KRITIEK", "HOOG"):
         return
 
@@ -356,26 +362,19 @@ def report_error(
     uitleg = _claude_analyse(prompt, max_tokens=200) or \
              f"{type(error).__name__}: {str(error)[:100]}"
 
-    send_whatsapp(
-    rate_key=rate_key,
-    message=(
-    f"Ã°ÂÂÂ¨ TRADE MONITOR FOUT Ã¢ÂÂ {severity}\n"
-    f"{'Ã¢ÂÂ' * 30}\n\n"
-    f"Ã°ÂÂÂ Functie:     {function}\n"
-    f"Ã°ÂÂªÂ Coin:        {symbol or 'Ã¢ÂÂ'}\n"
-    f"Ã°ÂÂÂ Open trades: {open_trades}\n"
-    f"Ã¢ÂÂ Ã¯Â¸Â Fout:       {type(error).__name__}\n\n"
-    f"Ã°ÂÂ§Â  Claude:\n{uitleg}\n\n"
-    f"Ã°ÂÂÂ WAT TE DOEN:\n"
-    f"1. Check Render logs voor details\n"
-    f"2. Stuur TRADES voor open posities\n"
-    f"3. Check Bitvavo account direct\n"
-    f"4. Stuur STOP als je wil pauzeren\n\n"
-    f"Ã°ÂÂ¤Â BOT PROBEERT DOOR TE GAAN\n"
-    f"Open trades worden bewaakt.\n\n"
-    f"Commands: STATUS | TRADES | STOP"
-    ),
-    )
+    msg = (f"[FOUT] TRADE MONITOR - {severity}\n"
+           f"{'=' * 30}\n\n"
+           f"Functie:     {function}\n"
+           f"Coin:        {symbol or '?'}\n"
+           f"Open trades: {open_trades}\n"
+           f"Fout:        {type(error).__name__}\n\n"
+           f"Claude:\n{uitleg}\n\n"
+           f"WAT TE DOEN:\n"
+           f"1. Check Render logs\n"
+           f"2. Stuur TRADES voor posities\n"
+           f"3. Check Bitvavo account\n\n"
+           f"Commands: STATUS | TRADES | STOP")
+    send_whatsapp(message=msg, rate_key=rate_key)
 
 
 def log_coach_event(conn, categorie: str, event_type: str,
