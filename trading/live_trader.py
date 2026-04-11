@@ -2081,8 +2081,10 @@ def sell(
                 log(f"SELL DB lookup fout: {_de}")
 
         if not pos:
-            log_naar_bot_state(f"SELL fout: {symbol} niet in state/DB", busy=False)
+            log_naar_bot_state(f"SELL fout: {symbol} niet in state/DB", busy=False, error=f"{symbol} niet gevonden")
             return {"ok": False, "reason": f"{symbol} niet gevonden in state of DB"}
+
+        log(f"SELL: trade gevonden voor {symbol} — market={pos.get('market')} qty={pos.get('qty')}")
 
         market     = safe_str(pos.get("market"))
         entry      = safe_float(pos.get("entry"))
@@ -2101,9 +2103,11 @@ def sell(
             order_data = {"errorCode": 0, "filledAmount": 0, "error": order_data}
 
         if not ok:
-            err = str(order_data.get("error", "SELL mislukt"))
+            err = str(order_data.get("error", "onbekend"))
+            err_code = order_data.get("errorCode", "?")
+            log(f"SELL MISLUKT: {symbol} market={market} qty={qty} error={err} code={err_code}")
             report_error(
-                Exception(err), "sell.place_market_sell",
+                Exception(f"SELL {symbol}: {err} (code={err_code})"), "sell.place_market_sell",
                 symbol, "KRITIEK",
             )
             log_naar_bot_state(f"SELL fout: {err[:80]}", busy=False, error=err)
