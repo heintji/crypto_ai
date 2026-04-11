@@ -121,6 +121,7 @@ def main():
 
     conn = db_connect()
     coins = get_coins_needing_candles(conn)
+    conn.close()
     log(f"Coins met ontbrekende replay data: {len(coins)}")
 
     total_coins = 0
@@ -128,10 +129,16 @@ def main():
     errors = 0
 
     for i, symbol in enumerate(coins):
+        # Verse connectie per coin — voorkomt timeout bij lange runs
         try:
-            # Fetch 1h candles
+            conn = db_connect()
+        except Exception as e:
+            log(f"  [{i+1}/{len(coins)}] DB reconnect fout: {e}")
+            time.sleep(5)
+            continue
+
+        try:
             saved_1h = fetch_coin(conn, symbol, "1h")
-            # Fetch 4h candles
             saved_4h = fetch_coin(conn, symbol, "4h")
             total = saved_1h + saved_4h
 
@@ -142,10 +149,15 @@ def main():
             elif (i + 1) % 20 == 0:
                 log(f"  [{i+1}/{len(coins)}] {symbol}: up to date")
 
-            time.sleep(0.3)  # Binance rate limit
+            time.sleep(0.3)
         except Exception as e:
             errors += 1
             log(f"  [{i+1}/{len(coins)}] {symbol}: FOUT — {e}")
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     log(f"\n{'=' * 60}")
     log(f"Klaar: {total_coins} coins bijgewerkt, {total_candles} nieuwe candles, {errors} fouten")
