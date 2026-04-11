@@ -1946,11 +1946,17 @@ def run_monitor_once(target_symbol: Optional[str] = None) -> None:
             f"{len(symbols)} live open | {open_shadow} shadow open"
         )
 
-        # Heartbeat: trade_monitor is actief
+        # Heartbeat: trade_monitor is actief — direct via conn
         try:
-            health_update("trade_monitor", "OK", "monitor actief")
+            with conn.cursor() as _hc:
+                _hc.execute("""
+                    UPDATE bot_health SET status='OK', laatste_run=NOW(),
+                    details=%s WHERE service='trade_monitor'
+                """, (f"{len(symbols)} live, {open_shadow} shadow",))
+                conn.commit()
         except Exception:
-            pass
+            try: conn.rollback()
+            except Exception: pass
 
         # Sla run status op in bot_state voor dashboard
         try:
