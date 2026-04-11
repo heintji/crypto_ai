@@ -1289,6 +1289,29 @@ def _finalize_trade(
     DB update, Claude analyse, consecutive loss check, profit factor.
     """
     if not sell_result.get("ok"):
+        # Ghost trade (errorCode 212/216) — te klein om te verkopen, sluit in DB
+        if sell_result.get("ghost"):
+            log(f"GHOST: {symbol} te klein om te verkopen — sluiten als GHOST")
+            trade_key = trade.get("trade_key") or trade.get("id", "")
+            err_code = sell_result.get("errorCode", "?")
+            try:
+                with conn.cursor() as _gc:
+                    _gc.execute("""
+                        UPDATE experience_trades SET
+                            status='CLOSED', outcome='LOSS', exit_reden=%s,
+                            exit_time=NOW(), closed_at=NOW(), pnl_eur=-%s,
+                            sell_fout=%s
+                        WHERE trade_key=%s OR (symbol=%s AND source='LIVE' AND status='OPEN')
+                    """, (f"GHOST_{err_code}", float(trade.get("amount_eur", 0)),
+                          f"Bitvavo min order size (code {err_code})", trade_key, symbol))
+                    conn.commit()
+                log(f"GHOST {symbol} gesloten in DB")
+            except Exception as _ge:
+                log(f"GHOST DB update fout: {_ge}")
+                try: conn.rollback()
+                except: pass
+            return
+
         report_error(
             Exception(f"SELL mislukt: {sell_result.get('reason')}"),
             "_finalize_trade",
