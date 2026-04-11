@@ -76,8 +76,13 @@ from flask import Flask, request, jsonify
 try:
     from bot_health_helper import health_update, health_fout
 except ImportError:
-    def health_update(*a, **k): pass
-    def health_fout(*a, **k): pass
+    try:
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+        from bot_health_helper import health_update, health_fout
+    except ImportError:
+        def health_update(*a, **k): pass
+        def health_fout(*a, **k): pass
 
 
 # Twilio optioneel — voor signature verificatie
@@ -1816,6 +1821,12 @@ def health():
             "daily_stop_eur": DAILY_STOP_LOSS_EUR,
         },
     }
+
+    # Heartbeat naar bot_health bij elke health check
+    try:
+        health_update("webhook", "OK", f"uptime={uptime_str} trades={open_trades}")
+    except Exception:
+        pass
 
     # 503 als DB niet bereikbaar — Render markeert service als Unhealthy
     http_status = 200 if db_ok else 503
