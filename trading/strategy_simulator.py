@@ -278,12 +278,20 @@ def s5_regime(c1h, c4h, regime):
 
 # --- Resultaat + opslaan ---
 def sim_result(sig, c1h):
-    """Simuleert resultaat op volgende candle. WIN>=target, LOSS<=stop, anders open."""
+    """Simuleert resultaat op volgende candle. WIN>=target, LOSS<=stop, anders check close."""
     if len(c1h)<2: return None
-    nx=c1h[-1]["close"]; e=sig["e"]; st=sig["s"]; tg=sig["t"]
+    nx_candle = c1h[-1]
+    high = nx_candle.get("high", nx_candle["close"])
+    low = nx_candle.get("low", nx_candle["close"])
+    close = nx_candle["close"]
+    e=sig["e"]; st=sig["s"]; tg=sig["t"]
+    risk = abs(e - st) if e != st else 1
     if tg>e:
-        if nx>=tg: return "WIN", round((tg-e)/(e-st),3)
-        if nx<=st: return "LOSS", -1.0
+        if low <= st: return "LOSS", -1.0
+        if high >= tg: return "WIN", round((tg-e)/risk, 3)
+        # Geen stop/target geraakt: gebruik close
+        r = round((close - e) / risk, 3)
+        return ("WIN" if close > e else "LOSS"), r
     return None
 
 def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None,
@@ -296,21 +304,29 @@ def save_trade(conn, sym, sig, regime, oc, pr, flags, label, tk=None,
     """
     try:
         if tk is None: tk=f"SIM_{sig['id']}_{sym}_{int(time.time()*1000)}"
+        entry = sig["e"]
+        stop = sig["s"]
+        target = sig["t"]
+        # Bereken exit_price op basis van outcome
+        exit_price = target if oc == "WIN" else stop
+        pnl_eur = pr * SIM_POSITION_EUR
         with conn.cursor() as cur:
             cur.execute("""INSERT INTO public.experience_trades(
                 trade_key,source,coin,timestamp,entry_time,exit_time,
-                setup_type,market_regime,entry,stop,target,
-                outcome,pnl_eur,markt_advies,markt_score,
+                setup_type,market_regime,entry,stop,target,exit_price,
+                outcome,status,pnl_eur,amount_eur,is_shadow,
+                markt_advies,markt_score,
                 fng_waarde,fng_label,funding_richting,funding_waarde,
                 nieuws_richting,oi_richting,btc_dom_richting,cross_ref_score,
                 coin_cluster,pnl_r,result_r,bot_confidence,
                 strategy_id,strategy_name,filter_flags,filter_label,
                 created_at,updated_at)
-                VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,NOW(),NOW())
+                VALUES(%s,'SIM',%s,NOW(),NOW(),NOW(),%s,%s,%s,%s,%s,%s,
+                %s,'CLOSED',%s,%s,FALSE,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                %s,%s,%s,NOW(),NOW())
                 ON CONFLICT(trade_key) DO NOTHING""",
-                (tk,sym,sig["nm"],regime,sig["e"],sig["s"],sig["t"],
-                 oc,pr*SIM_POSITION_EUR,markt_advies,markt_score_val,
+                (tk,sym,sig["nm"],regime,entry,stop,target,exit_price,
+                 oc,pnl_eur,SIM_POSITION_EUR,markt_advies,markt_score_val,
                  fng_waarde,fng_label,funding_r,funding_v,
                  nieuws_r,oi_r,btc_dom_r,cross_score,_cluster,pr,pr,sig["sc"],
                  sig["id"],sig["nm"],flags,label))
