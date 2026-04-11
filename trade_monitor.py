@@ -88,8 +88,13 @@ import requests
 try:
     from bot_health_helper import health_update, health_fout
 except ImportError:
-    def health_update(*a, **k): pass
-    def health_fout(*a, **k): pass
+    try:
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+        from bot_health_helper import health_update, health_fout
+    except ImportError:
+        def health_update(*a, **k): pass
+        def health_fout(*a, **k): pass
 
 
 
