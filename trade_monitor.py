@@ -975,8 +975,8 @@ def _execute_sell(
             log(f"Ã¢ÂÂ live_trader import fout ({symbol}): {e}")
             return {"ok": False, "reason": f"Import fout: {e}"}
     except Exception as e:
-        log(f"Ã¢ÂÂ Sell call fout ({symbol}): {type(e).__name__}: {e}")
-        pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
+        log(f"Sell call fout ({symbol}): {type(e).__name__}: {e}")
+        return {"ok": False, "reason": str(e)}
         return {"ok": False, "reason": str(e)}
 
 
@@ -1077,6 +1077,7 @@ def process_live_trade(
     if FORCE_TEST_EXIT and FORCE_TEST_EXIT == symbol.upper():
         log(f"Ã¢ÂÂ¡ FORCE_TEST_EXIT: {symbol}")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "FORCE_TEST"})
+        if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
         return True, result.get("ok", False)
 
     # Ã¢ÂÂÃ¢ÂÂ 1. Max houdtijd Ã¢ÂÂ regime-afhankelijk Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
@@ -1095,6 +1096,7 @@ def process_live_trade(
     if hold_min >= max_hold * 60:
         log(f"Ã¢ÂÂ° {symbol}: max houdtijd ({hold_min:.0f}min, BTC={btc_regime}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "MAX_HOLD_TIME"})
+        if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
         _finalize_trade(symbol, trade, current, result, conn, "MAX_HOLD_TIME")
         return True, result.get("ok", False)
 
@@ -1119,6 +1121,7 @@ def process_live_trade(
     if current <= stop:
         log(f"Ã°ÂÂÂ {symbol}: stop geraakt ({current:.6f} Ã¢ÂÂ¤ {stop:.6f}) Ã¢ÂÂ SELL 100%")
         result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STOP_LOSS"})
+        if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
         _finalize_trade(symbol, trade, current, result, conn, "STOP_LOSS")
         return True, result.get("ok", False)
 
@@ -1146,6 +1149,7 @@ def process_live_trade(
                 log(f"Ã°ÂÂÂ {symbol}: structuur gebroken @ {current:.6f} "
                     f"(min winst prijs={min_winst_prijs:.6f}) Ã¢ÂÂ SELL 100%")
                 result = _execute_sell(symbol, 1.0, meta={"exit_reden": "STRUCTUUR_BREAK"})
+                if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
                 _finalize_trade(symbol, trade, current, result, conn, "STRUCTUUR_BREAK")
                 return True, result.get("ok", False)
             else:
@@ -1200,6 +1204,7 @@ def process_live_trade(
     if trade.get("had_over_1r") and not trade.get("partial_sold_40") and r < 1.0:
         log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: terug <1R na >1R (R={r:.2f}) Ã¢ÂÂ SELL 40%")
         result = _execute_sell(symbol, 0.40, meta={"exit_reden": "PARTIAL_40"})
+        if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
         if result.get("ok"):
             trade["partial_sold_40"]      = True
             trade["below_1r_count"]       = 0
@@ -1233,6 +1238,7 @@ def process_live_trade(
             if trade["below_1r_count"] >= 3:
                 log(f"Ã¢ÂÂ Ã¯Â¸Â {symbol}: 3 candles <1R Ã¢ÂÂ SELL rest")
                 result = _execute_sell(symbol, 1.0, meta={"exit_reden": "BELOW_1R_3X"})
+                if not isinstance(result, dict): result = {"ok": False, "reason": str(result)}
                 _finalize_trade(symbol, trade, current, result, conn, "BELOW_1R_3X")
                 return True, result.get("ok", False)
     else:
@@ -1289,6 +1295,10 @@ def _finalize_trade(
     Verwerkt een volledig gesloten trade.
     DB update, Claude analyse, consecutive loss check, profit factor.
     """
+    # Bescherm tegen non-dict result
+    if not isinstance(sell_result, dict):
+        log(f"_finalize_trade: sell_result is {type(sell_result).__name__}, niet dict")
+        sell_result = {"ok": False, "reason": str(sell_result)}
     if not sell_result.get("ok"):
         # Ghost trade (errorCode 212/216) — te klein om te verkopen, sluit in DB
         if sell_result.get("ghost"):
