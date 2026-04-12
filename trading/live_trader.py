@@ -999,15 +999,17 @@ def shadow_buy(
             _db2 = db_connect()
             _c2  = _db2.cursor()
             _tk2 = f"SHADOW|{symbol}|{int(time.time())}"
+            _coin = symbol.replace("USDT","").replace("BUSD","")
+            _market = f"{_coin}-EUR"
             _c2.execute("""
                 INSERT INTO experience_trades
-                (trade_key, source, coin, symbol, timestamp,
+                (trade_key, source, coin, symbol, bitvavo_market, timestamp,
                  entry_time, setup_type, market_regime,
                  entry, stop, target, qty, amount_eur, score,
-                 outcome, created_at)
-                VALUES (%s,'SHADOW',%s,%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,%s,%s,'OPEN',NOW())
+                 outcome, status, is_shadow, created_at)
+                VALUES (%s,'SHADOW',%s,%s,%s,NOW(),NOW(),%s,%s,%s,%s,%s,%s,%s,%s,'OPEN','OPEN',TRUE,NOW())
                 ON CONFLICT (trade_key) DO NOTHING
-            """, (_tk2, symbol, symbol,
+            """, (_tk2, _coin, symbol, _market,
                   meta.get('setup_type', 'TREND_PULLBACK'),
                   meta.get('regime', 'UNKNOWN'),
                   float(entry or 0),
