@@ -860,13 +860,11 @@ def get_open_symbols(state: Dict[str, Any]) -> List[str]:
 
 
 def load_shadow_state(conn=None) -> Dict[str, Any]:
-    """Laadt open shadow posities uit experience_trades DB."""
-    own_conn = False
+    """Laadt open shadow posities uit experience_trades DB — eigen connectie."""
+    shadow_conn = None
     try:
-        if conn is None:
-            conn = db_connect()
-            own_conn = True
-        with conn.cursor() as cur2:
+        shadow_conn = db_connect()
+        with shadow_conn.cursor() as cur2:
             cur2.execute("""
                 SELECT trade_key, symbol, bitvavo_market, entry, stop, target,
                        qty, amount_eur, setup_type, score, entry_time
@@ -896,9 +894,9 @@ def load_shadow_state(conn=None) -> Dict[str, Any]:
         log(f"load_shadow_state DB fout: {e}")
         return {"positions": {}, "open_trades": []}
     finally:
-        if own_conn and conn:
+        if shadow_conn:
             try:
-                conn.close()
+                shadow_conn.close()
             except Exception:
                 pass
 
