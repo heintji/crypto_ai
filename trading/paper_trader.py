@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import requests
 
 HTTP_TIMEOUT = 15
-BINANCE_TICKER_URL = "https://api.binance.com/api/v3/ticker/price"
+BITVAVO_TICKER_URL = "https://api.bitvavo.com/v2/ticker/price"
 
 # =========================
 # DATA DIR (disk-safe fallback)
@@ -106,8 +106,10 @@ def _log_row(symbol: str, side: str, price: float, qty: float, pnl: float = 0.0,
         f.write(f"{datetime.utcnow().isoformat()},{symbol},{side},{price},{qty},{pnl},{meta}\n")
 
 
-def _binance_price(symbol: str) -> float:
-    r = requests.get(BINANCE_TICKER_URL, params={"symbol": symbol}, timeout=HTTP_TIMEOUT)
+def _bitvavo_price(symbol: str) -> float:
+    # Convert BTCUSDT-style symbols to BTC-EUR format for Bitvavo
+    market = symbol.replace("USDT", "-EUR").replace("BUSD", "-EUR")
+    r = requests.get(BITVAVO_TICKER_URL, params={"market": market}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return float(r.json()["price"])
 
@@ -120,7 +122,7 @@ def _remove_existing_open_trade(state: Dict[str, Any], symbol: str) -> None:
 def buy_eur(symbol: str, amount_eur: float, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     PAPER BUY:
-    - koopt tegen Binance prijs
+    - koopt tegen Bitvavo prijs
     - schrijft positie + open_trade in paper_state.json
     - neemt uitgebreide leer-context mee uit meta
 
@@ -161,7 +163,7 @@ def buy_eur(symbol: str, amount_eur: float, meta: Optional[Dict[str, Any]] = Non
     if bal < amount_eur:
         return {"ok": False, "reason": "INSUFFICIENT_PAPER_BALANCE", "balance_eur": bal}
 
-    price = _binance_price(symbol)
+    price = _bitvavo_price(symbol)
     qty = amount_eur / price
     opened_at = int(time.time())
 
@@ -271,7 +273,7 @@ def buy_eur(symbol: str, amount_eur: float, meta: Optional[Dict[str, Any]] = Non
 def sell(symbol: str, fraction: float = 1.0, meta: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     PAPER SELL:
-    - verkoopt fraction van qty tegen Binance prijs
+    - verkoopt fraction van qty tegen Bitvavo prijs
     - update balance
     """
     meta = meta or {}
@@ -290,7 +292,7 @@ def sell(symbol: str, fraction: float = 1.0, meta: Optional[Dict[str, Any]] = No
         return {"ok": False, "reason": "QTY_INVALID"}
 
     qty = qty_total if fraction >= 1.0 else qty_total * fraction
-    price = _binance_price(symbol)
+    price = _bitvavo_price(symbol)
 
     entry = _safe_float(pos.get("entry"), 0.0)
     pnl = (price - entry) * qty

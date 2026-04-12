@@ -549,7 +549,7 @@ def create_candles_table(conn) -> None:
     """
     _exec_ddl(conn, """
     CREATE TABLE IF NOT EXISTS public.candles (
-        exchange         TEXT        NOT NULL DEFAULT 'binance',
+        exchange         TEXT        NOT NULL DEFAULT 'bitvavo',
         symbol           TEXT        NOT NULL,
         timeframe        TEXT        NOT NULL,
         open_time        BIGINT      NOT NULL,

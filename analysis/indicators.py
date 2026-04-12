@@ -1,10 +1,11 @@
 import requests
 
-BASE_URL = "https://api.binance.com/api/v3/klines"
+BITVAVO_BASE = "https://api.bitvavo.com/v2"
 
-def get_candles(symbol="BTCUSDT", interval="1h", limit=120):
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
-    r = requests.get(BASE_URL, params=params, timeout=15)
+def get_candles(market="BTC-EUR", interval="1h", limit=120):
+    url = f"{BITVAVO_BASE}/{market}/candles"
+    params = {"interval": interval, "limit": limit}
+    r = requests.get(url, params=params, timeout=15)
     r.raise_for_status()
     return r.json()
 
@@ -42,11 +43,12 @@ def rsi_wilder(values, period=14):
     return 100 - (100 / (1 + rs))
 
 def main():
-    symbol = "BTCUSDT"
+    market = "BTC-EUR"
     interval = "1h"
     limit = 120
 
-    candles = get_candles(symbol, interval, limit)
+    candles = get_candles(market, interval, limit)
+    # Bitvavo candle format: [timestamp, open, high, low, close, volume]
     closes = [float(c[4]) for c in candles]
 
     last_price = closes[-1]
@@ -54,8 +56,8 @@ def main():
     sma50 = sma(closes, 50)
     rsi14 = rsi_wilder(closes, 14)
 
-    print("=== INDICATORS (BINANCE) ===")
-    print(f"Symbol: {symbol}")
+    print("=== INDICATORS (BITVAVO) ===")
+    print(f"Market: {market}")
     print(f"Last price: {last_price:.2f}")
     print(f"SMA20: {sma20:.2f}" if sma20 is not None else "SMA20: n/a")
     print(f"SMA50: {sma50:.2f}" if sma50 is not None else "SMA50: n/a")

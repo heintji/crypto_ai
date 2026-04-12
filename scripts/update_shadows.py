@@ -11,11 +11,13 @@ if PROJECT_ROOT not in sys.path:
 
 from trading.shadow_trades import load_shadows, save_shadows  # noqa: E402
 
-BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
+BITVAVO_TICKER = "https://api.bitvavo.com/v2/ticker/price"
 
 
 def get_price(symbol: str) -> float:
-    r = requests.get(BINANCE_TICKER, params={"symbol": symbol}, timeout=15)
+    # Convert BTCUSDT-style symbols to BTC-EUR format for Bitvavo
+    market = symbol.replace("USDT", "-EUR").replace("BUSD", "-EUR")
+    r = requests.get(BITVAVO_TICKER, params={"market": market}, timeout=15)
     r.raise_for_status()
     return float(r.json()["price"])
 

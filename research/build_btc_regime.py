@@ -81,7 +81,7 @@ TWILIO_WHATSAPP_TO   = (os.getenv("TWILIO_WHATSAPP_TO")   or "").strip()
 
 # Configuratie — aanpasbaar via Render ENV
 TAIL_ONLY            = os.getenv("TAIL_ONLY",          "0").strip() == "1"
-SYMBOL               = os.getenv("BTC_SYMBOL",         "BTCUSDT").strip()
+SYMBOL               = os.getenv("BTC_SYMBOL",         "BTC-EUR").strip()
 TIMEFRAME            = os.getenv("BTC_TIMEFRAME",      "4h").strip()
 EMA_PERIOD           = int(os.getenv("EMA_PERIOD",     "200"))
 LIMIT                = int(os.getenv("BTC_CANDLE_LIMIT","500"))
@@ -92,7 +92,7 @@ DB_CONNECT_RETRIES   = int(os.getenv("DB_CONNECT_RETRIES", "3"))
 RANGE_PCT_THRESHOLD   = float(os.getenv("RANGE_PCT_THRESHOLD",   "0.02"))
 RANGE_SLOPE_THRESHOLD = float(os.getenv("RANGE_SLOPE_THRESHOLD", "0.001"))
 
-BINANCE_BASE = "https://api.binance.com/api/v3"
+BITVAVO_BASE = "https://api.bitvavo.com/v2"
 
 
 # ============================================================
@@ -374,20 +374,19 @@ def ensure_tables(conn) -> None:
 
 
 # ============================================================
-# BINANCE DATA OPHALEN
+# BITVAVO DATA OPHALEN
 # ============================================================
-def fetch_btc_candles_binance(limit: int = 500) -> List[Dict[str, Any]]:
+def fetch_btc_candles_bitvavo(limit: int = 500) -> List[Dict[str, Any]]:
     """
-    Haalt BTC 4H candles op van Binance REST API.
+    Haalt BTC 4H candles op van Bitvavo REST API.
     Retry bij netwerk errors met exponential backoff.
     Geeft lege lijst terug bij alle pogingen mislukt.
     """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             resp = requests.get(
-                f"{BINANCE_BASE}/klines",
+                f"{BITVAVO_BASE}/{SYMBOL}/candles",
                 params={
-                    "symbol":   SYMBOL,
                     "interval": TIMEFRAME,
                     "limit":    limit,
                 },
@@ -396,6 +395,7 @@ def fetch_btc_candles_binance(limit: int = 500) -> List[Dict[str, Any]]:
             resp.raise_for_status()
             candles = []
             for c in resp.json():
+                # Bitvavo candle format: [timestamp, open, high, low, close, volume]
                 candles.append({
                     "open_time": safe_int(c[0]),   # milliseconden
                     "open":      safe_float(c[1]),
@@ -404,14 +404,14 @@ def fetch_btc_candles_binance(limit: int = 500) -> List[Dict[str, Any]]:
                     "close":     safe_float(c[4]),
                     "volume":    safe_float(c[5]),
                 })
-            log(f"✅ {len(candles)} BTC candles opgehaald van Binance")
+            log(f"✅ {len(candles)} BTC candles opgehaald van Bitvavo")
             return candles
         except Exception as e:
-            log(f"⚠️ Binance poging {attempt}/{MAX_RETRIES}: {e}")
+            log(f"⚠️ Bitvavo poging {attempt}/{MAX_RETRIES}: {e}")
             if attempt < MAX_RETRIES:
                 time.sleep(2 ** attempt)
 
-    log("❌ Binance niet bereikbaar na alle pogingen")
+    log("❌ Bitvavo niet bereikbaar na alle pogingen")
     return []
 
 
@@ -725,9 +725,9 @@ def build_regime(conn) -> Tuple[int, str]:
     (aantal_opgeslagen_rijen, huidig_regime)
     """
     # ── Stap 1: candles ophalen ───────────────────────────────
-    candles = fetch_btc_candles_binance(LIMIT)
+    candles = fetch_btc_candles_bitvavo(LIMIT)
     if len(candles) < EMA_PERIOD + 2:
-        log(f"⚠️ Binance: {len(candles)} candles — probeer DB fallback...")
+        log(f"⚠️ Bitvavo: {len(candles)} candles — probeer DB fallback...")
         candles = fetch_btc_candles_db(conn, LIMIT)
 
     if len(candles) < EMA_PERIOD + 2:
