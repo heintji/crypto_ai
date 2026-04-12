@@ -2368,7 +2368,8 @@ def main_loop():
                     try:
                         sid, ssymbol, smarket, sscore, sentry, sstop, starget, skelly = srow
                         smeta = {"score": sscore, "setup_type": "TREND_PULLBACK",
-                                 "regime": "SHADOW_ONLY", "shadow_only": True}
+                                 "regime": "SHADOW_ONLY", "shadow_only": True,
+                                 "stop": float(sstop or 0), "target": float(starget or 0)}
                         sqty  = round(float(skelly or 7) / max(float(sentry or 1), 0.0001), 6)
                         shadow_buy(ssymbol, float(sentry or 0), sqty, float(skelly or 7), smeta)
                         cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
