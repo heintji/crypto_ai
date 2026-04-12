@@ -870,14 +870,8 @@ def get_price_bitvavo(market: str) -> Optional[float]:
 
 
 def get_current_price(symbol_usdt: str, market: str) -> Optional[float]:
-    """Bitvavo EUR prijs eerst, Binance USDT als fallback."""
-    price = get_price_bitvavo(market)
-    if price and price > 0:
-        return price
-    price = get_price_binance(symbol_usdt)
-    if price and price > 0:
-        return price
-    return None
+    """Bitvavo EUR prijs — geen Binance fallback."""
+    return get_price_bitvavo(market)
 
 
 def get_eur_balance(coin: str = "EUR") -> float:
@@ -1899,7 +1893,7 @@ def buy_eur(
 
         if entry <= 0 or qty <= 0:
             log(f"Ã¢ÂÂ Ã¯Â¸Â Prijs/qty ongeldig na BUY Ã¢ÂÂ fallback ticker")
-            entry = get_price_bitvavo(market) or get_price_binance(symbol) or 0.0
+            entry = get_price_bitvavo(market) or 0.0
             qty   = amount_eur / entry if entry > 0 else 0.0
 
         # ATR stop validatie (v3.0)

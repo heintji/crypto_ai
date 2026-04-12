@@ -945,11 +945,8 @@ def get_current_price_binance(symbol_usdt: str) -> Optional[float]:
 
 
 def get_price(symbol_usdt: str, market: str) -> Optional[float]:
-    """Haalt prijs op Ã¢ÂÂ Bitvavo eerst, Binance als fallback."""
-    price = get_current_price_bitvavo(market)
-    if price and price > 0:
-        return price
-    return get_current_price_binance(symbol_usdt)
+    """Haalt prijs op via Bitvavo — geen Binance."""
+    return get_current_price_bitvavo(market)
 
 
 # ============================================================
@@ -2067,12 +2064,12 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
 
     # Ã¢ÂÂÃ¢ÂÂ Binance API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     try:
-        resp = requests.get("https://api.binance.com/api/v3/ping", timeout=5)
+        resp = requests.get("https://api.bitvavo.com/v2/time", timeout=5)
         health["binance_api"] = resp.ok
         if not resp.ok:
-            health["problemen"].append(f"Binance status {resp.status_code}")
+            health["problemen"].append(f"Bitvavo (time) status {resp.status_code}")
     except Exception as e:
-        health["problemen"].append(f"Binance onbereikbaar: {e}")
+        health["problemen"].append(f"Bitvavo (time) onbereikbaar: {e}")
 
     # Ã¢ÂÂÃ¢ÂÂ Claude API Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if ANTHROPIC_API_KEY:
