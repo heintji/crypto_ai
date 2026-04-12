@@ -408,13 +408,11 @@ def main():
                 c4_ctx = c4_ctx[-55:] if c4_ctx else []
 
                 strats = [
-                    # s1_mean_reversion: UIT - WR=15% op 20 trades, te slecht
-                    # (s1_mean_reversion, False),
-                    (s2_breakout,       False),
+                    # s1_mean_reversion: UIT - WR=15% op 20 trades
+                    # s2_breakout: UIT - WR=26.9% op 119 trades
+                    # s5_regime: UIT - WR=14.1% op 92 trades
                     (s3_trend,          True),
                     (s4_vwap,           False),
-                    # s5_regime: UIT - WR=14% op 92 trades, te slecht
-                    # (s5_regime,         True),
                 ]
                 for fn, needs4h in strats:
                     try:

@@ -1087,12 +1087,13 @@ def process_live_trade(
     # RANGE: normaal (24u)
     # BEAR: snel sluiten (12u), verhoogd risico
     btc_regime = safe_str(get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")).upper()
+    base_hold = safe_float(get_bot_state(conn, "max_hold_hours", str(MAX_HOLD_HOURS)))
     if btc_regime == "BULL":
-        max_hold = MAX_HOLD_HOURS * 1.5    # 36u
+        max_hold = base_hold * 1.5
     elif btc_regime == "BEAR":
-        max_hold = MAX_HOLD_HOURS * 0.5    # 12u
+        max_hold = base_hold * 0.5
     else:
-        max_hold = MAX_HOLD_HOURS          # 24u
+        max_hold = base_hold
 
     if hold_min >= max_hold * 60:
         log(f"Ã¢ÂÂ° {symbol}: max houdtijd ({hold_min:.0f}min, BTC={btc_regime}) Ã¢ÂÂ SELL 100%")
@@ -1165,6 +1166,15 @@ def process_live_trade(
             trade["stop_loss"] = entry_price
             trade["stop"]      = entry_price
             log(f"Ã°ÂÂÂ {symbol}: 1R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar break-even {entry_price:.6f}")
+            send_whatsapp(
+                rate_key=f"1r_{symbol}",
+                message=(f"[1R BEREIKT] {symbol}\n"
+                         f"{'=' * 28}\n\n"
+                         f"R: {r:.2f}\n"
+                         f"Entry: {entry_price:.6f}\n"
+                         f"Nu: {current:.6f}\n\n"
+                         f"Stop naar break-even.\n"
+                         f"Winst beschermd."))
 
     # Ã¢ÂÂÃ¢ÂÂ 6. Trailing stop na 2R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if r >= 2.0 and not trade.get("had_over_2r"):
@@ -1179,6 +1189,15 @@ def process_live_trade(
             trade["stop_loss"] = new_stop
             trade["stop"]      = new_stop
             log(f"Ã°ÂÂÂ {symbol}: 2R bereikt (R={r:.2f}) Ã¢ÂÂ stop naar +1R {new_stop:.6f}")
+            send_whatsapp(
+                rate_key=f"2r_{symbol}",
+                message=(f"[2R BEREIKT] {symbol}\n"
+                         f"{'=' * 28}\n\n"
+                         f"R: {r:.2f}\n"
+                         f"Entry: {entry_price:.6f}\n"
+                         f"Nu: {current:.6f}\n\n"
+                         f"Stop naar +1R ({new_stop:.6f}).\n"
+                         f"Minimaal 1R winst gegarandeerd."))
 
     # Ã¢ÂÂÃ¢ÂÂ 7. Partial sell Ã¢ÂÂ terug <1R na >1R Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
     if trade.get("had_over_1r") and not trade.get("partial_sold_40") and r < 1.0:
@@ -1195,23 +1214,9 @@ def process_live_trade(
             # 60% positie blijft open met stop op break-even.
             entry_p  = safe_float(trade.get("entry"))
             pct_move = (current - entry_p) / entry_p * 100 if entry_p > 0 else 0.0
-            pass  # WA uitgeschakeld — alleen dagrapport en 100% sell
-            # rate_key=f"partial_{symbol}",
-            # message=(
-            # f"Ã¢ÂÂ Ã¯Â¸Â PARTIAL SELL Ã¢ÂÂ {symbol}\n"
-            # f"{'Ã¢ÂÂ' * 28}\n\n"
-            # f"40% verkocht Ã¢ÂÂ prijs terug <1R\n\n"
-            # f"Entry:   {entry_p:.6f}\n"
-            # f"Nu:      {current:.6f} ({pct_move:+.1f}%)\n"
-            # f"R:       {r:.2f}\n\n"
-            # f"60% positie nog open.\n"
-            # f"Stop staat op break-even.\n"
-            # f"Als prijs 3 candles <1R blijft Ã¢ÂÂ rest verkopen.\n\n"
-            # f"Commands: TRADES | STATUS"
-            # ),
-            # )
-
-    # Ã¢ÂÂÃ¢ÂÂ 8. Candle counter <1R na partial sell Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+            sep = "=" * 28
+            partial_msg = f"[PARTIAL SELL 40%] {symbol}\n{sep}\n\n40% verkocht - prijs terug <1R\n\nEntry: {entry_p:.6f}\nNu:    {current:.6f} ({pct_move:+.1f}%)\nR:     {r:.2f}\n\n60% nog open, stop op break-even.\n3 candles <1R = rest verkopen."
+            send_whatsapp(rate_key=f"partial_{symbol}", message=partial_msg)
     if trade.get("partial_sold_40") and r < 1.0:
         timeframe = safe_str(trade.get("timeframe"), "4h")
         if "1h" in timeframe.lower():

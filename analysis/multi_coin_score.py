@@ -2620,9 +2620,10 @@ def scan_universe(conn, drempels: Dict) -> int:
     btc_trend   = get_btc_trend_richting(conn)
     _SESSIE["btc_regime"] = btc_regime
 
-    if btc_regime == "BEAR" and BTC_SKIP_BEAR and live_ok:
-        log("BTC BEAR — geen LIVE trades, shadow gaat door")
+    if btc_regime == "BEAR" and BTC_SKIP_BEAR:
+        log("BTC BEAR — geen trades (live + shadow geblokkeerd)")
         live_ok = False
+        return  # Stop hele scan in BEAR
 
     score_drempel = get_score_drempel_voor_regime(btc_regime, drempels)
     _SESSIE["score_drempel"] = score_drempel
