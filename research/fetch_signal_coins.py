@@ -11,7 +11,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-BINANCE_BASE = "https://api.binance.com/api/v3"
+BITVAVO_BASE = "https://api.bitvavo.com/v2"
 
 def log(msg):
     print(f"[FETCH {datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
@@ -43,19 +43,39 @@ def get_last_candle_time(conn, symbol, timeframe="1h"):
     r = cur.fetchone()
     return r[0] if r and r[0] else None
 
-def fetch_binance_candles(symbol, timeframe="1h", start_ms=None, limit=1000):
-    """Haal candles op van Binance."""
-    params = {"symbol": symbol, "interval": timeframe, "limit": limit}
+def fetch_bitvavo_candles(symbol_usdt, timeframe="1h", start_ms=None, limit=1000):
+    """Haal candles op van Bitvavo."""
+    coin = symbol_usdt.replace("USDT", "").replace("BUSD", "")
+    market = f"{coin}-EUR"
+    params = {"interval": timeframe, "limit": limit}
     if start_ms:
-        params["startTime"] = start_ms
+        params["start"] = start_ms
     try:
-        resp = requests.get(f"{BINANCE_BASE}/klines", params=params, timeout=15)
-        if resp.status_code == 400:
-            return []  # symbol bestaat niet op Binance
+        resp = requests.get(f"{BITVAVO_BASE}/{market}/candles", params=params, timeout=15)
+        if resp.status_code in (400, 404):
+            return []  # market doesn't exist
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+        # Bitvavo returns: [[timestamp, open, high, low, close, volume], ...]
+        # Convert to Binance-like format for save_candles compatibility
+        result = []
+        for c in data:
+            result.append([
+                c[0],           # open time ms
+                c[1],           # open
+                c[2],           # high
+                c[3],           # low
+                c[4],           # close
+                c[5],           # volume
+                c[0] + 3600000, # close time (approx)
+                0,              # quote volume
+                0,              # trades
+                0,              # taker buy base
+                0,              # taker buy quote
+            ])
+        return result
     except Exception as e:
-        log(f"  Binance fout {symbol}: {e}")
+        log(f"  Bitvavo fout {market}: {e}")
         return []
 
 def save_candles(conn, symbol, timeframe, candles):
@@ -69,7 +89,7 @@ def save_candles(conn, symbol, timeframe, candles):
             cur.execute("""
                 INSERT INTO candles (exchange, symbol, timeframe, open_time, open, high, low, close,
                                     volume, close_time, trades, quote_volume, taker_buy_base, taker_buy_quote)
-                VALUES ('binance', %s, %s, to_timestamp(%s/1000.0), %s, %s, %s, %s,
+                VALUES ('bitvavo', %s, %s, to_timestamp(%s/1000.0), %s, %s, %s, %s,
                         %s, to_timestamp(%s/1000.0), %s, %s, %s, %s)
                 ON CONFLICT DO NOTHING
             """, (symbol, timeframe,
@@ -99,7 +119,7 @@ def fetch_coin(conn, symbol, timeframe="1h"):
 
     total_saved = 0
     while True:
-        candles = fetch_binance_candles(symbol, timeframe, start_ms)
+        candles = fetch_bitvavo_candles(symbol, timeframe, start_ms)
         if not candles:
             break
         saved = save_candles(conn, symbol, timeframe, candles)

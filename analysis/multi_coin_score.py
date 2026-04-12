@@ -109,15 +109,15 @@ def _schrijf_heartbeat(status='OK', details=''):
     except Exception as _e2: print(f'[HEALTH] multi_coin_score: {_e2}')
 
 
-def get_btc_funding_rate() -> float:
-    """Haal BTC funding rate op van Binance. Gratis API."""
-    try:
-        import urllib.request
-        url = "https://fapi.binance.com/fapi/v1/premiumIndex?symbol=BTCUSDT"
-        data = json.loads(urllib.request.urlopen(url, timeout=5).read())
-        return float(data.get("lastFundingRate", 0))
-    except Exception:
-        return 0.0  # Bij fout: geen filter toepassen
+def usdt_to_bitvavo_market(symbol_usdt: str) -> str:
+    """BTCUSDT -> BTC-EUR"""
+    coin = symbol_usdt.replace("USDT", "").replace("BUSD", "")
+    return f"{coin}-EUR"
+
+
+def get_btc_funding_rate() -> dict:
+    """Bitvavo heeft geen futures/funding rates. Retourneer standaard neutraal."""
+    return {"richting": "NEUTRAAL", "waarde": 0.0}
 
 def funding_rate_ok(funding_rate: float) -> bool:
     """
@@ -866,36 +866,46 @@ def symbol_to_bitvavo_market(symbol_usdt: str) -> Optional[str]:
 
 
 # ============================================================
-# BINANCE DATA
+# BITVAVO DATA (was: Binance)
 # ============================================================
-def binance_get(endpoint: str, params: dict,
-                base: str = BINANCE_BASE,
+def bitvavo_get(endpoint: str, params: dict = None,
                 retries: int = MAX_RETRIES) -> Optional[Any]:
-    """Binance public API met retry en exponential backoff."""
+    """Bitvavo public API met retry en exponential backoff."""
     for attempt in range(1, retries + 1):
         try:
-            resp = requests.get(f"{base}{endpoint}", params=params, timeout=BINANCE_TIMEOUT)
+            url = f"{BITVAVO_BASE}/v2{endpoint}"
+            resp = requests.get(url, params=params or {}, timeout=BINANCE_TIMEOUT)
             if resp.ok:
                 return resp.json()
             if 400 <= resp.status_code < 500:
                 return None
-            log(f"Binance {resp.status_code} ({endpoint}) poging {attempt}/{retries}")
+            log(f"Bitvavo {resp.status_code} ({endpoint}) poging {attempt}/{retries}")
         except requests.exceptions.Timeout:
-            log(f"Binance timeout poging {attempt}/{retries}")
+            log(f"Bitvavo timeout poging {attempt}/{retries}")
         except Exception as e:
-            log(f"Binance fout poging {attempt}/{retries}: {e}")
+            log(f"Bitvavo fout poging {attempt}/{retries}: {e}")
         if attempt < retries:
             time.sleep(2 ** attempt)
     return None
 
 
+# Behoud binance_get als alias voor eventuele andere aanroepen
+def binance_get(endpoint: str, params: dict,
+                base: str = BINANCE_BASE,
+                retries: int = MAX_RETRIES) -> Optional[Any]:
+    """Legacy wrapper — stuurt nu door naar bitvavo_get."""
+    return bitvavo_get(endpoint, params, retries)
+
+
 def fetch_candles(symbol: str, interval: str = "4h", limit: int = 120) -> List[Dict]:
     """
-    Haalt OHLCV candles op van Binance.
-    v4.0: ook taker_buy_base en taker_buy_quote meegenomen.
+    Haalt OHLCV candles op van Bitvavo.
+    Bitvavo response: [[timestamp, open, high, low, close, volume], ...]
+    Timestamps zijn in milliseconden.
     """
+    market = usdt_to_bitvavo_market(symbol)
     time.sleep(BINANCE_SLEEP)
-    data = binance_get("/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+    data = bitvavo_get(f"/{market}/candles", {"interval": interval, "limit": limit})
     if not data: return []
     candles = []
     for c in data:
@@ -907,28 +917,33 @@ def fetch_candles(symbol: str, interval: str = "4h", limit: int = 120) -> List[D
                 "close":           safe_float(c[4]),
                 "volume":          safe_float(c[5]),
                 "ts":              safe_int(c[0]),
-                "quote_volume":    safe_float(c[7]),
-                "trades":          safe_int(c[8]),
-                "taker_buy_base":  safe_float(c[9]),
-                "taker_buy_quote": safe_float(c[10]),
+                "quote_volume":    0.0,
+                "trades":          0,
+                "taker_buy_base":  0.0,
+                "taker_buy_quote": 0.0,
             })
         except Exception: continue
+    # Bitvavo retourneert nieuwste eerst, sorteer op timestamp oplopend
+    candles.sort(key=lambda x: x["ts"])
     return candles
 
 
 def fetch_ticker_24h(symbol: str) -> Optional[Dict]:
+    """Haalt 24h ticker op van Bitvavo."""
+    market = usdt_to_bitvavo_market(symbol)
     time.sleep(BINANCE_SLEEP)
-    return binance_get("/ticker/24hr", {"symbol": symbol})
+    return bitvavo_get("/ticker/24h", {"market": market})
 
 
 def fetch_order_book_spread(symbol: str) -> float:
-    """Bid/ask spread als proxy voor liquiditeit."""
+    """Bid/ask spread als proxy voor liquiditeit via Bitvavo."""
+    market = usdt_to_bitvavo_market(symbol)
     time.sleep(BINANCE_SLEEP)
-    data = binance_get("/ticker/bookTicker", {"symbol": symbol})
+    data = bitvavo_get("/ticker/book", {"market": market})
     if not data: return 0.0
     try:
-        bid = safe_float(data.get("bidPrice", 0))
-        ask = safe_float(data.get("askPrice", 0))
+        bid = safe_float(data.get("bid", 0))
+        ask = safe_float(data.get("ask", 0))
         mid = (bid + ask) / 2
         if mid > 0:
             return round((ask - bid) / mid * 100, 4)
@@ -937,22 +952,7 @@ def fetch_order_book_spread(symbol: str) -> float:
 
 
 def fetch_funding_rate(symbol: str) -> float:
-    """Haalt huidige funding rate op van Binance Futures. Cache: 1 uur."""
-    now_ts = time.time()
-    cached = _FUNDING_CACHE.get(symbol)
-    if cached and (now_ts - cached[1]) < _FUNDING_TTL:
-        return cached[0]
-    try:
-        time.sleep(BINANCE_SLEEP)
-        data = binance_get("/fundingRate", {"symbol": symbol, "limit": 1},
-                           base=BINANCE_FAPI)
-        if data and isinstance(data, list) and len(data) > 0:
-            rate = safe_float(data[0].get("fundingRate", 0.0))
-            _FUNDING_CACHE[symbol] = (rate, now_ts)
-            return rate
-    except Exception as e:
-        log(f"Funding rate fout ({symbol}): {e}")
-    _FUNDING_CACHE[symbol] = (0.0, now_ts)
+    """Bitvavo heeft geen futures/funding rates. Retourneer altijd 0.0."""
     return 0.0
 
 
@@ -2495,12 +2495,12 @@ def voer_health_check_uit(conn) -> Dict[str, Any]:
     except Exception as e:
         health["problemen"].append(f"Bitvavo onbereikbaar: {e}")
     try:
-        resp = requests.get(f"{BINANCE_BASE}/ping", timeout=5)
-        health["binance_api"] = resp.ok
+        resp = requests.get(f"{BITVAVO_BASE}/v2/time", timeout=5)
+        health["bitvavo_data_api"] = resp.ok
         if not resp.ok:
-            health["problemen"].append(f"Binance status {resp.status_code}")
+            health["problemen"].append(f"Bitvavo data API status {resp.status_code}")
     except Exception as e:
-        health["problemen"].append(f"Binance onbereikbaar: {e}")
+        health["problemen"].append(f"Bitvavo data API onbereikbaar: {e}")
     if ANTHROPIC_API_KEY:
         test = _claude_analyse("Zeg alleen OK.", 10)
         health["claude_api"] = bool(test)

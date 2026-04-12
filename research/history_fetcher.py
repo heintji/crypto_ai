@@ -390,43 +390,40 @@ def get_bitvavo_tradable_symbols() -> Set[str]:
         return set()
 
 
-def get_all_usdt_symbols_with_volume() -> List[Tuple[str, float]]:
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            resp = requests.get(
-                f"{BINANCE_BASE}/ticker/24hr",
-                timeout=30,
-            )
-            resp.raise_for_status()
-            result = []
-            for t in resp.json():
-                sym = safe_str(t.get("symbol"))
-                vol = safe_float(t.get("quoteVolume", 0))
-                if sym.endswith("USDT") and vol >= MIN_QUOTE_VOLUME_24H:
-                    result.append((sym, vol))
-            result.sort(key=lambda x: x[1], reverse=True)
-            log(f"✅ Binance: {len(result)} USDT symbols met volume ≥ {MIN_QUOTE_VOLUME_24H:,.0f}")
-            return result
-        except Exception as e:
-            log(f"⚠️ Binance ticker poging {attempt}/{MAX_RETRIES}: {e}")
-            if attempt < MAX_RETRIES:
-                time.sleep(2 ** attempt)
-    return []
+def get_bitvavo_markets_with_volume() -> List[Tuple[str, float]]:
+    """Get all EUR markets from Bitvavo with volume."""
+    try:
+        resp = requests.get("https://api.bitvavo.com/v2/ticker/24h", timeout=15)
+        resp.raise_for_status()
+        result = []
+        for item in resp.json():
+            market = item.get("market", "")
+            if market.endswith("-EUR"):
+                volume = float(item.get("volumeQuote", 0))
+                # Convert market to USDT symbol format for compatibility
+                coin = market.replace("-EUR", "")
+                symbol = f"{coin}USDT"
+                result.append((symbol, volume))
+        result.sort(key=lambda x: x[1], reverse=True)
+        return result
+    except Exception as e:
+        log(f"Bitvavo markets fout: {e}")
+        return []
 
 
 def get_universe(conn) -> List[str]:
-    binance_symbols = get_all_usdt_symbols_with_volume()
-    if not binance_symbols:
-        log("❌ Geen Binance symbols — universe is leeg")
+    bitvavo_markets = get_bitvavo_markets_with_volume()
+    if not bitvavo_markets:
+        log("❌ Geen Bitvavo markets — universe is leeg")
         return []
 
-    all_symbols = [s for s, _ in binance_symbols]
+    all_symbols = [s for s, _ in bitvavo_markets]
 
     if AUTO_UNIVERSE:
-        bitvavo = get_bitvavo_tradable_symbols()
-        if bitvavo:
-            filtered = [s for s in all_symbols if s in bitvavo]
-            log(f"✅ Universe na Bitvavo filter: {len(filtered)} symbols")
+        bitvavo_tradable = get_bitvavo_tradable_symbols()
+        if bitvavo_tradable:
+            filtered = [s for s in all_symbols if s in bitvavo_tradable]
+            log(f"✅ Universe na Bitvavo tradable filter: {len(filtered)} symbols")
             if len(filtered) < 10:
                 send_whatsapp(
                     f"⚠️ UNIVERSE KLEIN\n\n"
@@ -436,7 +433,7 @@ def get_universe(conn) -> List[str]:
                 )
             return filtered
         else:
-            log("⚠️ Bitvavo filter mislukt — gebruik alle Binance symbols")
+            log("⚠️ Bitvavo tradable filter mislukt — gebruik alle Bitvavo markets")
 
     return all_symbols
 
@@ -449,23 +446,23 @@ def fetch_klines(
     interval: str,
     limit:    int = 500,
 ) -> List[Dict[str, Any]]:
+    market = symbol.replace("USDT", "") + "-EUR"
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             time.sleep(BINANCE_SLEEP)
+            params = {"interval": interval, "limit": min(limit, 1000)}
             resp = requests.get(
-                f"{BINANCE_BASE}/klines",
-                params={
-                    "symbol":   symbol,
-                    "interval": interval,
-                    "limit":    min(limit, 1000),
-                },
+                f"https://api.bitvavo.com/v2/{market}/candles",
+                params=params,
                 timeout=15,
             )
+            if resp.status_code in (400, 404):
+                return []  # market doesn't exist
             if resp.ok:
                 candles = []
                 for c in resp.json():
                     candles.append({
-                        "open_time": safe_int(c[0]),  # milliseconden van Binance
+                        "open_time": safe_int(c[0]),  # milliseconden van Bitvavo
                         "open":      safe_float(c[1]),
                         "high":      safe_float(c[2]),
                         "low":       safe_float(c[3]),
@@ -473,11 +470,11 @@ def fetch_klines(
                         "volume":    safe_float(c[5]),
                     })
                 return candles
-            log(f"⚠️ Binance {resp.status_code} ({symbol}/{interval}) — poging {attempt}")
+            log(f"⚠️ Bitvavo {resp.status_code} ({market}/{interval}) — poging {attempt}")
         except requests.Timeout:
-            log(f"⏰ Timeout ({symbol}/{interval}) — poging {attempt}/{MAX_RETRIES}")
+            log(f"⏰ Timeout ({market}/{interval}) — poging {attempt}/{MAX_RETRIES}")
         except Exception as e:
-            log(f"⚠️ Fout ({symbol}/{interval}) poging {attempt}/{MAX_RETRIES}: {e}")
+            log(f"⚠️ Fout ({market}/{interval}) poging {attempt}/{MAX_RETRIES}: {e}")
 
         if attempt < MAX_RETRIES:
             time.sleep(2 ** attempt)
@@ -505,10 +502,10 @@ def upsert_candles(
     if not candles:
         return 0
 
-    # Rows met open_time als float seconden (Binance ms / 1000)
+    # Rows met open_time als float seconden (Bitvavo ms / 1000)
     rows = [
         (
-            "binance",
+            "bitvavo",
             symbol,
             interval,
             c["open_time"] / 1000.0,   # ms → seconden voor to_timestamp()
@@ -1100,7 +1097,7 @@ def main() -> None:
 
             # Universe bepalen
             log("Universe bepalen...")
-            binance_met_volume = get_all_usdt_symbols_with_volume()
+            bitvavo_met_volume = get_bitvavo_markets_with_volume()
             universe = get_universe(conn)
 
             if not universe:
@@ -1111,9 +1108,9 @@ def main() -> None:
             log(f"Universe: {len(universe)} symbols")
 
             # v2.2: Volume anomalie check op top-50
-            if binance_met_volume:
+            if bitvavo_met_volume:
                 log("Volume anomalie check...")
-                anomalieen = detecteer_volume_anomalieen(binance_met_volume, conn)
+                anomalieen = detecteer_volume_anomalieen(bitvavo_met_volume, conn)
                 if anomalieen:
                     log(f"  📉 {len(anomalieen)} symbols met volume anomalie: {anomalieen[:5]}")
                 else:
