@@ -2349,16 +2349,17 @@ def main_loop():
                         log(f"Live BUY fout {row[1] if len(row) > 1 else '?'}: {_be}")
                         safe_rollback(conn)
 
-                # ── Shadow-only: score 80-89, geen live geld ──
+                # ── Shadow-only: score vanaf shadow drempel (80), geen live geld ──
+                _shadow_drempel = int(get_bot_state(conn, "score_drempel_shadow", "80"))
                 cur.execute("""
                     SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
                     FROM pending_approvals
                     WHERE status = 'PENDING'
-                    AND score >= 80  -- alle signalen 80+ krijgen shadow trade
+                    AND score >= %s
                     AND expires_at > NOW()
                     ORDER BY score DESC
                     LIMIT 10
-                """)
+                """, (_shadow_drempel,))
                 shadow_only_query = True  # marker
                 shadow_rows = cur.fetchall()
                 for srow in shadow_rows:

@@ -2821,7 +2821,7 @@ def scan_universe(conn, drempels: Dict) -> int:
             )
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
-            live_toegestaan = (score >= 90)  # score 90+ mag live traden
+            live_toegestaan = (score >= score_drempel)  # live: score >= 85 (uit bot_state)
 
             prebuy = {
                 "id":               str(uuid.uuid4()),
