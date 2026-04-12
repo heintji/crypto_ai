@@ -2111,13 +2111,20 @@ def sell(
             market = symbol_to_market(symbol) or f"{symbol[:-4]}-EUR"
 
         # SELL order plaatsen
-        ok, order_data = place_market_sell(market, qty, fraction)
-        # Bescherm tegen string response van Bitvavo
-        if isinstance(order_data, str):
-            order_data = {"errorCode": 0, "filledAmount": 0, "error": order_data}
+        try:
+            ok, order_data = place_market_sell(market, qty, fraction)
+        except Exception as _sell_ex:
+            log(f"SELL place_market_sell crash: {_sell_ex}")
+            ok = False
+            order_data = {"error": str(_sell_ex), "ghost": False}
+
+        # Bescherm tegen ELKE non-dict response
+        if not isinstance(order_data, dict):
+            log(f"SELL order_data is {type(order_data).__name__}: {str(order_data)[:200]}")
+            order_data = {"errorCode": 0, "error": str(order_data)[:200]}
 
         if not ok:
-            err = str(order_data.get("error", str(order_data)[:200]))
+            err = str(order_data.get("error", "onbekend"))
             err_code = order_data.get("errorCode", "?")
             is_ghost = order_data.get("ghost", False) or err_code in (212, 216, "212", "216")
             log(f"SELL MISLUKT: {symbol} market={market} qty={qty} error={err} code={err_code} ghost={is_ghost}")
