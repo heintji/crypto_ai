@@ -1703,7 +1703,11 @@ def place_market_sell(
     try:
         sdk = BitvavoSDK({"APIKEY": BITVAVO_API_KEY.strip(), "APISECRET": BITVAVO_API_SECRET.strip()})
         data = sdk.placeOrder(market, "sell", "market", {"amount": str(sell_qty), "operatorId": BITVAVO_OPERATOR_ID})
-        _err_code = data.get("errorCode", 0) if isinstance(data, dict) else 0
+        # Bescherm tegen string response
+        if not isinstance(data, dict):
+            log(f"Bitvavo SELL response is geen dict: {str(data)[:200]}")
+            return False, {"error": str(data), "ghost": False}
+        _err_code = data.get("errorCode", 0)
         if _err_code in (212, 216):
             log("Ghost close error " + str(_err_code) + " (" + market + "): sell gefaald")
             return False, {"ghost": True, "ok": False, "errorCode": _err_code, "reason": "error_" + str(_err_code)}
