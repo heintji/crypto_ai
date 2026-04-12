@@ -2758,8 +2758,9 @@ def scan_universe(conn, drempels: Dict) -> int:
 
             update_sessie(symbol_usdt, score)
 
-            # ── Regime-afhankelijke drempel check ─────────
-            if score < score_drempel:
+            # ── Score check: shadow drempel (80) laat meer door, live drempel (85) is strenger
+            _shadow_min = safe_int(drempels.get("score_drempel_shadow", get_bot_state_value(conn, "score_drempel_shadow", "80")))
+            if score < _shadow_min:
                 tel_filter("score_laag"); continue
             if chance < min_chance:
                 tel_filter("chance_laag"); continue
