@@ -874,6 +874,8 @@ def load_shadow_state(conn=None) -> Dict[str, Any]:
             rows = cur2.fetchall()
         positions = {}
         for r in rows:
+            if not r[1]:  # symbol is NULL — skip
+                continue
             key = r[0] or f"SHADOW|{r[1]}|0"
             positions[r[1]] = {
                 "symbol":     r[1],
