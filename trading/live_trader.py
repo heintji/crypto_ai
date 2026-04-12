@@ -2093,6 +2093,11 @@ def sell(
             log_naar_bot_state(f"SELL fout: {symbol} niet in state/DB", busy=False, error=f"{symbol} niet gevonden")
             return {"ok": False, "reason": f"{symbol} niet gevonden in state of DB"}
 
+        # Bescherm tegen pos als string (corrupt state)
+        if not isinstance(pos, dict):
+            log(f"SELL: pos is geen dict maar {type(pos).__name__}: {str(pos)[:100]}")
+            return {"ok": False, "reason": f"pos is {type(pos).__name__}, niet dict"}
+
         log(f"SELL: trade gevonden voor {symbol} — market={pos.get('market')} qty={pos.get('qty')}")
 
         market     = safe_str(pos.get("market"))
