@@ -1443,18 +1443,8 @@ def bereken_kelly_grootte(win_rate: float, avg_win_r: float = 2.5,
                            max_eur: float = MAX_KELLY_EUR,
                            min_eur: float = MIN_KELLY_EUR,
                            kelly_fractie: float = KELLY_FRACTIE) -> float:
-    """v4.0: Kelly Criterion voor optimale positiegrootte."""
-    if win_rate <= 0 or avg_win_r <= 0:
-        return min_eur
-    b       = avg_win_r / avg_loss_r if avg_loss_r > 0 else avg_win_r
-    kelly_f = (win_rate * b - (1 - win_rate)) / b
-    kelly_f = max(0.0, kelly_f)
-    kelly_f = kelly_f * kelly_fractie
-    bankroll = DAILY_STOP_LOSS_EUR * 2
-    kelly_eur = bankroll * kelly_f
-    kelly_eur = max(min_eur, min(max_eur, kelly_eur))
-    kelly_eur = min(kelly_eur, MAX_PER_TRADE_EUR * 2)
-    return round(kelly_eur, 2)
+    """Positiegrootte = MAX_PER_TRADE_EUR (vast bedrag)."""
+    return MAX_PER_TRADE_EUR
 
 
 def bepaal_coin_cluster(exp_n: int, win_rate: float,
