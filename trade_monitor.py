@@ -1634,11 +1634,29 @@ def _log_shadow_outcome(
     hold_min  = round(_holding_minutes(trade), 1)
 
     try:
-        trade_key = f"SHADOW|{symbol}|{prebuy_id or int(time.time())}"
+        trade_key = trade.get("trade_key") or f"SHADOW|{symbol}|{prebuy_id or int(time.time())}"
+        _coin = symbol.replace("USDT","").replace("BUSD","") if symbol else ""
+        _market = f"{_coin}-EUR" if _coin else ""
         with conn.cursor() as cur:
+            # UPDATE bestaande trade ipv INSERT nieuwe
+            cur.execute("""
+            UPDATE experience_trades SET
+                outcome=%s, pnl_eur=%s, result_r=%s, exit_price=%s,
+                status='CLOSED', closed_at=NOW(), exit_time=NOW(),
+                mfe_r=%s, mae_r=%s, exit_reden=%s
+            WHERE trade_key=%s AND status='OPEN'
+            """, (outcome, round(pnl_eur,4), exit_r, exit_price,
+                  mfe_r, mae_r, exit_reden, trade_key))
+
+            if cur.rowcount > 0:
+                conn.commit()
+                log(f"Shadow {symbol}: {outcome} PnL={pnl_eur:.4f} R={exit_r:.2f} ({exit_reden})")
+                return
+
+            # Fallback: INSERT als UPDATE niets vindt
             cur.execute("""
             INSERT INTO public.experience_trades (
-                trade_key, source, is_shadow, coin,
+                trade_key, source, is_shadow, coin, symbol, bitvavo_market,
                 timestamp, entry_time,
                 setup_type, market_regime, entry,
                 outcome, pnl_eur, pnl_r, result_r,
@@ -1647,7 +1665,7 @@ def _log_shadow_outcome(
                 exit_price, status, closed_at,
                 exit_time, created_at, updated_at
             ) VALUES (
-                %s,'SHADOW',TRUE,%s,NOW(),NOW(),
+                %s,'SHADOW',TRUE,%s,%s,%s,NOW(),NOW(),
                 %s,%s,%s,
                 %s,%s,%s,%s,
                 %s,%s,%s,
@@ -1669,7 +1687,7 @@ def _log_shadow_outcome(
                 exit_time    = NOW(),
                 updated_at   = NOW()
             """, (
-                trade_key, symbol,
+                trade_key, _coin, symbol, _market,
                 setup_type, regime, entry,
                 outcome, round(pnl_eur, 4), exit_r, exit_r,
                 mfe_r, mae_r, hold_min,
