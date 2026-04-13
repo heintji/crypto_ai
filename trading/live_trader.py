@@ -2012,7 +2012,22 @@ def sell(
     meta:     Optional[Dict] = None,
 ) -> Dict[str, Any]:
     """
-    Voert een live SELL uit op Bitvavo Ã¢ÂÂ v3.0.
+    Voert een live SELL uit op Bitvavo
+    RETOURNEERT ALTIJD EEN DICT — nooit string, nooit None."""
+    try:
+        return _sell_inner(symbol, fraction, meta)
+    except Exception as _outer_e:
+        log(f"SELL outer crash ({symbol}): {type(_outer_e).__name__}: {_outer_e}")
+        return {"ok": False, "reason": f"{type(_outer_e).__name__}: {str(_outer_e)[:150]}"}
+
+
+def _sell_inner(
+    symbol:   str,
+    fraction: float          = 1.0,
+    meta:     Optional[Dict] = None,
+) -> Dict[str, Any]:
+    """
+    Interne sell functie — kan crashen, wordt opgevangen door sell(). Ã¢ÂÂ v3.0.
 
     fraction=1.0  Ã¢ÂÂ verkoop alles (stop loss, structuur break, max hold)
     fraction=0.40 Ã¢ÂÂ partial sell (40% na eerste keer >1R)
