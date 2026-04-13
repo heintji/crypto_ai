@@ -136,29 +136,20 @@ def detect_trend_pullback(candles_1h: List[Dict], candles_4h: List[Dict],
     high = candles_1h[-1]["high"]
     low = candles_1h[-1]["low"]
 
-    # Trend check: EMA9 > EMA21 > EMA55 op 4h
+    # Trend check: EMA9 > EMA21 op 4h (versoepeld van EMA55)
     ema9 = calc_ema(candles_4h, 9)
     ema21 = calc_ema(candles_4h, 21)
-    ema55 = calc_ema(candles_4h, 55)
-    uptrend = ema9 > ema21 > ema55
+    uptrend = ema9 > ema21
 
-    if not uptrend:
-        return None
-
-    # Pullback check: RSI op 1h tussen 35-55 (oversold maar niet crashed)
+    # RSI
     rsi = calc_rsi(candles_1h)
-    if not (30 <= rsi <= 55):
-        return None
 
-    # Prijs bij SMA20 of lager (pullback)
+    # SMA20 positie
     sma20 = calc_sma(candles_1h, 20)
-    if close > sma20 * 1.02:  # meer dan 2% boven SMA = geen pullback
-        return None
+    near_sma = close <= sma20 * 1.05  # binnen 5% van SMA
 
     # Bollinger positie
     bb_pos = calc_bollinger_position(candles_1h)
-    if bb_pos > 0.6:  # te hoog in de band
-        return None
 
     # ATR voor stop/target
     atr = calc_atr(candles_1h)
@@ -166,15 +157,21 @@ def detect_trend_pullback(candles_1h: List[Dict], candles_4h: List[Dict],
         return None
 
     stop = close - atr * ATR_MULTIPLIER
-    target = close + atr * ATR_MULTIPLIER * 2  # 2:1 R:R
+    target = close + atr * ATR_MULTIPLIER * 2
 
-    # Score berekenen (simpele versie)
-    score = 70
+    # Score berekenen — ruimer dan live maar realistisch
+    score = 60
     if uptrend: score += 10
-    if 35 <= rsi <= 50: score += 5
-    if bb_pos < 0.3: score += 5
+    if rsi < 55: score += 5
+    if rsi < 45: score += 3
+    if near_sma: score += 5
+    if bb_pos < 0.5: score += 5
+    if bb_pos < 0.3: score += 3
     if btc_regime == "BULL": score += 5
     if btc_regime == "RANGE": score += 3
+    # Volume check
+    if len(candles_1h) >= 2 and candles_1h[-1]["volume"] > candles_1h[-2]["volume"]:
+        score += 2
 
     if score < SCORE_DREMPEL:
         return None
