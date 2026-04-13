@@ -35,6 +35,134 @@ def db_connect():
     return psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=10)
 
 
+TWILIO_SID = os.environ.get("TWILIO_ACCOUNT_SID", "")
+TWILIO_AUTH = os.environ.get("TWILIO_AUTH_TOKEN", "")
+TWILIO_FROM = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+TWILIO_TO = os.environ.get("TWILIO_WHATSAPP_TO", "")
+
+
+def send_whatsapp(msg: str) -> bool:
+    """Stuur WhatsApp via Twilio."""
+    if not all([TWILIO_SID, TWILIO_AUTH, TWILIO_FROM, TWILIO_TO]):
+        log("WhatsApp: geen Twilio config")
+        return False
+    try:
+        import urllib.request, urllib.parse, base64
+        data = urllib.parse.urlencode({
+            "Body": msg[:1500], "From": TWILIO_FROM, "To": TWILIO_TO
+        }).encode()
+        url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_SID}/Messages.json"
+        creds = base64.b64encode(f"{TWILIO_SID}:{TWILIO_AUTH}".encode()).decode()
+        req = urllib.request.Request(url, data=data, headers={
+            "Authorization": f"Basic {creds}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        })
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        log(f"WhatsApp fout: {e}")
+        return False
+
+
+def build_daily_report(conn) -> str:
+    """Bouw dagelijkse WhatsApp samenvatting."""
+    cur = conn.cursor()
+
+    # Shadow trades vandaag
+    cur.execute("""
+        SELECT COUNT(*) FILTER(WHERE status='OPEN') as open,
+               COUNT(*) FILTER(WHERE status='CLOSED') as closed,
+               COUNT(*) FILTER(WHERE outcome='WIN') as wins,
+               COUNT(*) FILTER(WHERE outcome='LOSS') as losses,
+               COALESCE(SUM(pnl_eur) FILTER(WHERE outcome IN ('WIN','LOSS')), 0) as pnl
+        FROM experience_trades
+        WHERE source='SHADOW' AND entry_time::date = CURRENT_DATE AND symbol IS NOT NULL
+    """)
+    s = cur.fetchone()
+    s_open, s_closed, s_wins, s_losses, s_pnl = s
+    s_total = s_wins + s_losses
+    s_wr = round(s_wins / s_total * 100, 1) if s_total > 0 else 0
+
+    # Shadow loss redenen
+    cur.execute("""
+        SELECT symbol, pnl_eur, exit_reden, mfe_r,
+               EXTRACT(EPOCH FROM (exit_time-entry_time))/3600 as hold_h
+        FROM experience_trades
+        WHERE source='SHADOW' AND status='CLOSED' AND outcome='LOSS'
+        AND entry_time::date = CURRENT_DATE AND symbol IS NOT NULL
+        ORDER BY pnl_eur ASC LIMIT 5
+    """)
+    losses_detail = cur.fetchall()
+
+    # Shadow wins
+    cur.execute("""
+        SELECT symbol, pnl_eur, exit_reden, mfe_r
+        FROM experience_trades
+        WHERE source='SHADOW' AND status='CLOSED' AND outcome='WIN'
+        AND entry_time::date = CURRENT_DATE AND symbol IS NOT NULL
+        ORDER BY pnl_eur DESC LIMIT 3
+    """)
+    wins_detail = cur.fetchall()
+
+    # Live trades
+    cur.execute("""
+        SELECT COUNT(*) FILTER(WHERE status='OPEN') as open,
+               COUNT(*) FILTER(WHERE outcome='WIN') as wins,
+               COUNT(*) FILTER(WHERE outcome='LOSS') as losses,
+               COALESCE(SUM(pnl_eur) FILTER(WHERE outcome IN ('WIN','LOSS')), 0) as pnl
+        FROM experience_trades
+        WHERE source='LIVE' AND entry_time >= CURRENT_DATE - INTERVAL '2 days'
+    """)
+    l = cur.fetchone()
+
+    # Totaal shadow stats (alle tijd)
+    cur.execute("""
+        SELECT COUNT(*) FILTER(WHERE outcome='WIN'),
+               COUNT(*) FILTER(WHERE outcome='LOSS')
+        FROM experience_trades WHERE source='SHADOW' AND outcome IN ('WIN','LOSS') AND symbol IS NOT NULL
+    """)
+    t = cur.fetchone()
+    t_total = (t[0] or 0) + (t[1] or 0)
+    t_wr = round(t[0] / t_total * 100, 1) if t_total > 0 else 0
+
+    sep = "=" * 28
+    msg = f"[DAGRAPPORT] Bot Brain\n{sep}\n\n"
+    msg += f"SHADOW VANDAAG:\n"
+    msg += f"  Open: {s_open} | Gesloten: {s_closed}\n"
+    msg += f"  Win: {s_wins} | Loss: {s_losses}\n"
+    msg += f"  Win rate: {s_wr}%\n"
+    msg += f"  PnL: {float(s_pnl):+.2f}\n\n"
+
+    if wins_detail:
+        msg += "WINS:\n"
+        for w in wins_detail:
+            msg += f"  {w[0]} +{float(w[1] or 0):.2f} ({w[2]})\n"
+        msg += "\n"
+
+    if losses_detail:
+        msg += "LOSSES (waarom?):\n"
+        for lo in losses_detail:
+            hold = float(lo[4] or 0)
+            mfe = float(lo[3] or 0)
+            if hold < 1:
+                reden = "zwak signaal"
+            elif mfe > 0.5:
+                reden = "was in winst, zakte terug"
+            else:
+                reden = "trend te zwak"
+            msg += f"  {lo[0]} {float(lo[1] or 0):.2f} ({reden})\n"
+        msg += "\n"
+
+    msg += f"LIVE TRADES:\n"
+    msg += f"  Open: {l[0]} | W:{l[1]} L:{l[2]}\n"
+    msg += f"  PnL: {float(l[3] or 0):+.2f}\n\n"
+
+    msg += f"SHADOW TOTAAL:\n"
+    msg += f"  {t[0]}W/{t[1]}L = {t_wr}% WR"
+
+    return msg
+
+
 # ============================================================
 # HELPER: save knowledge topic
 # ============================================================
@@ -446,6 +574,14 @@ def run():
         for c in summary["changes"]:
             log(f"  > {c}")
         log("=" * 60)
+
+        # Step 7: Dagelijks WhatsApp rapport
+        log("STEP 7: WhatsApp dagrapport...")
+        report = build_daily_report(conn)
+        if send_whatsapp(report):
+            log("  WhatsApp rapport verstuurd")
+        else:
+            log("  WhatsApp rapport niet verstuurd")
 
         health_update("bot_brain", "OK",
                       f"{summary['topics']} topics, {len(summary['changes'])} changes, "
