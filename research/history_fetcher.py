@@ -399,8 +399,8 @@ def get_bitvavo_markets_with_volume() -> List[Tuple[str, float]]:
         for item in resp.json():
             market = item.get("market", "")
             if market.endswith("-EUR"):
-                volume = float(item.get("volumeQuote", 0))
-                # Convert market to USDT symbol format for compatibility
+                vol_raw = item.get("volumeQuote")
+                volume = float(vol_raw) if vol_raw is not None else 0.0
                 coin = market.replace("-EUR", "")
                 symbol = f"{coin}USDT"
                 result.append((symbol, volume))
