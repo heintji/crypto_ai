@@ -1331,6 +1331,25 @@ def validate_atr_stop(
 # ============================================================
 # MIN ORDER SIZE CHECK Ã¢ÂÂ v3.0 nieuw
 # ============================================================
+def check_bitvavo_min_order(market: str, amount_eur: float, price: float) -> Tuple[bool, str]:
+    """Check of order voldoet aan Bitvavo's minimale order size per market."""
+    try:
+        resp = requests.get("https://api.bitvavo.com/v2/markets", timeout=10)
+        for m in resp.json():
+            if m.get("market") == market:
+                min_base = float(m.get("minOrderInBaseAsset", 0))
+                min_quote = float(m.get("minOrderInQuoteAsset", 5))
+                qty = amount_eur / price if price > 0 else 0
+                if qty < min_base:
+                    return False, f"{market}: qty {qty:.2f} < min {min_base:.2f} (need EUR {min_base * price:.2f})"
+                if amount_eur < min_quote:
+                    return False, f"{market}: EUR {amount_eur:.2f} < min EUR {min_quote:.2f}"
+                return True, "OK"
+    except Exception:
+        pass
+    return True, "OK"  # bij fout: laat door
+
+
 def check_min_order_size(amount_eur: float) -> Tuple[bool, str]:
     """
     Controleert of order boven Bitvavo minimum zit Ã¢ÂÂ v3.0 nieuw.
@@ -1798,8 +1817,13 @@ def buy_eur(
     if not market:
         return False, f"{symbol} niet tradable op Bitvavo"
 
-    # 2. Min order check (waarschuwing, geen blokkade)
+    # 2. Min order check — BLOKKADE als Bitvavo minimum niet gehaald wordt
     check_min_order_size(amount_eur)
+    price_est = get_price_bitvavo(market) or 0.0001
+    min_ok, min_msg = check_bitvavo_min_order(market, amount_eur, price_est)
+    if not min_ok:
+        log(f"BUY GEBLOKKEERD: {min_msg}")
+        return False, min_msg
 
     log_naar_bot_state(f"BUY start: {symbol}", busy=True)
 
