@@ -190,7 +190,5 @@ def main():
     except Exception:
         pass
 
-    conn.close()
-
 if __name__ == "__main__":
     main()

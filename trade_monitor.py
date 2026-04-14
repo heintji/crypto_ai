@@ -977,7 +977,6 @@ def _execute_sell(
     except Exception as e:
         log(f"Sell call fout ({symbol}): {type(e).__name__}: {e}")
         return {"ok": False, "reason": str(e)}
-        return {"ok": False, "reason": str(e)}
 
 
 # ============================================================
