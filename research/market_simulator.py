@@ -302,75 +302,75 @@ def _run_simulation(conn):
         blacklist = set()
     log(f"Blacklist: {len(blacklist)} coins")
 
-    # Pre-load candles per symbol
-    symbols_needed = set(s["symbol"] for s in signals if s["symbol"] not in blacklist)
-    log(f"Candles laden voor {len(symbols_needed)} coins...")
-    candle_cache = {}
-    no_candles = []
-    for sym in symbols_needed:
-        try:
-            candles = get_candles_for_symbol(conn, sym)
-            if len(candles) >= 10:
-                candle_cache[sym] = candles
-            else:
-                no_candles.append(f"{sym}({len(candles)})")
-        except Exception as e:
-            log(f"  Candle fout voor {sym}: {e}")
-    log(f"  {len(candle_cache)} coins met candle data")
-    if no_candles and len(no_candles) <= 10:
-        log(f"  Geen/weinig candles: {', '.join(no_candles)}")
-    elif no_candles:
-        log(f"  {len(no_candles)} coins zonder voldoende candle data")
+    # Groepeer signalen per symbol (zodat we coin-voor-coin laden)
+    signals_by_sym = {}
+    for sig in signals:
+        sym = sig["symbol"]
+        if sym not in blacklist:
+            signals_by_sym.setdefault(sym, []).append(sig)
+    log(f"Unieke coins: {len(signals_by_sym)} (na blacklist filter)")
 
-    # Simulatie
-    log("Simulatie starten...")
+    # Simulatie — coin voor coin, candles laden en weer vrijgeven
+    log("Simulatie starten (coin-voor-coin, memory-safe)...")
     capital = START_CAPITAL
     equity = []
     closed = []
-    open_symbols = set()
     cooldown = {}
     skipped = 0
+    coins_ok = 0
+    coins_no_data = 0
 
-    for i, sig in enumerate(signals):
-        sym = sig["symbol"]
-        ts = float(sig["ts_ms"])
-
-        # Filters
-        if sym in blacklist:
-            skipped += 1; continue
-        if sym not in candle_cache:
-            skipped += 1; continue
-        if sym in open_symbols:
-            skipped += 1; continue
-        if len(open_symbols) >= MAX_OPEN:
-            skipped += 1; continue
-        if sym in cooldown and ts < cooldown[sym]:
-            skipped += 1; continue
-
-        # Simuleer
+    for sym_idx, (sym, sym_signals) in enumerate(signals_by_sym.items()):
+        # Laad candles voor deze coin
         try:
-            result = simulate_trade(sig, candle_cache[sym])
+            candles = get_candles_for_symbol(conn, sym)
         except Exception as e:
-            log(f"  Sim fout {sym}: {e}")
-            skipped += 1; continue
+            log(f"  Candle fout {sym}: {e}")
+            skipped += len(sym_signals)
+            continue
 
-        if not result:
-            skipped += 1; continue
+        if len(candles) < 10:
+            skipped += len(sym_signals)
+            coins_no_data += 1
+            continue
 
-        closed.append(result)
-        capital += result["pnl_eur"]
+        coins_ok += 1
 
-        if result["outcome"] == "LOSS":
-            cooldown[sym] = ts + COOLDOWN_H * 3600 * 1000
+        # Simuleer alle signalen voor deze coin
+        for sig in sym_signals:
+            ts = float(sig["ts_ms"])
 
-        equity.append({"ts": ts, "capital": round(capital, 2)})
+            if sym in cooldown and ts < cooldown[sym]:
+                skipped += 1; continue
 
-        # Progress
-        if (i + 1) % 500 == 0:
+            try:
+                result = simulate_trade(sig, candles)
+            except Exception as e:
+                log(f"  Sim fout {sym}: {e}")
+                skipped += 1; continue
+
+            if not result:
+                skipped += 1; continue
+
+            closed.append(result)
+            capital += result["pnl_eur"]
+
+            if result["outcome"] == "LOSS":
+                cooldown[sym] = ts + COOLDOWN_H * 3600 * 1000
+
+            equity.append({"ts": ts, "capital": round(capital, 2)})
+
+        # Candles vrijgeven uit memory
+        del candles
+
+        # Progress per 20 coins
+        if (sym_idx + 1) % 20 == 0:
             wins = len([t for t in closed if t["outcome"] == "WIN"])
             total = len(closed)
             wr = round(wins / total * 100, 1) if total > 0 else 0
-            log(f"  [{i+1}/{len(signals)}] {total} trades, {wr}% WR, capital={capital:.2f}")
+            log(f"  [{sym_idx+1}/{len(signals_by_sym)} coins] {total} trades, {wr}% WR, capital={capital:.2f}")
+
+    log(f"  Coins met data: {coins_ok}, zonder data: {coins_no_data}")
 
     # Resultaten
     wins = len([t for t in closed if t["outcome"] == "WIN"])
