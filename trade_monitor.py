@@ -830,12 +830,12 @@ def load_state() -> Dict[str, Any]:
     try:
         conn2 = db_connect()
         cur2 = conn2.cursor()
-        cur2.execute("SELECT trade_key, symbol, bitvavo_market, entry, stop, stop_loss, target, qty, amount_eur, setup_type, score, entry_time, prebuy_id, max_price_seen FROM experience_trades WHERE status = 'OPEN' AND is_shadow = FALSE AND source = 'LIVE'")
+        cur2.execute("SELECT trade_key, symbol, bitvavo_market, entry, stop, stop_loss, target, qty, amount_eur, setup_type, score, entry_time, prebuy_id, max_price_seen, had_over_1r, had_over_2r FROM experience_trades WHERE status = 'OPEN' AND is_shadow = FALSE AND source = 'LIVE'")
         rows = cur2.fetchall()
         positions = {}
         for r in rows:
             key = r[0] or f"LIVE|{r[1]}|0"
-            positions[r[1]] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "max_price_seen": float(r[13] or r[3] or 0), "trade_key": key}
+            positions[r[1]] = {"symbol": r[1], "market": r[2], "entry": float(r[3] or 0), "stop": float(r[4] or r[5] or 0), "target": float(r[6] or 0), "qty": float(r[7] or 0), "amount_eur": float(r[8] or 0), "setup_type": r[9], "score": r[10], "entry_time": str(r[11]), "prebuy_id": r[12], "max_price_seen": float(r[13] or r[3] or 0), "trade_key": key, "had_over_1r": bool(r[14]), "had_over_2r": bool(r[15])}
         return {"positions": positions, "open_trades": list(positions.keys())}
     except Exception as e:
         log(f"Ã¢ÂÂ Ã¯Â¸Â load_state DB fout: {e}")
@@ -1266,6 +1266,8 @@ def process_live_trade(
                         min_price_seen = %s,
                         mfe_r = %s,
                         mae_r = %s,
+                        had_over_1r = %s,
+                        had_over_2r = %s,
                         monitor_updated_at = NOW()
                     WHERE trade_key = %s
                 """, (
@@ -1273,6 +1275,8 @@ def process_live_trade(
                     trade.get("min_price_seen"),
                     trade.get("mfe_r", 0),
                     trade.get("mae_r", 0),
+                    bool(trade.get("had_over_1r", False)),
+                    bool(trade.get("had_over_2r", False)),
                     _tk,
                 ))
                 conn.commit()
