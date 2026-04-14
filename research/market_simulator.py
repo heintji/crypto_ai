@@ -9,7 +9,7 @@ Resultaat: hoe had de bot gepresteerd over de hele signaal historie.
 source='MARKETSIM' in experience_trades.
 """
 from __future__ import annotations
-import os, sys, json, time
+import os, sys, json, time, traceback
 import psycopg2
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -41,22 +41,61 @@ def log(msg):
     print(f"[MARKETSIM {datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 def db_connect():
-    return psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=10)
+    for attempt in range(3):
+        try:
+            conn = psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=10)
+            return conn
+        except Exception as e:
+            log(f"DB connect poging {attempt+1}/3 mislukt: {e}")
+            if attempt < 2:
+                time.sleep(3)
+            else:
+                raise
 
 
 def get_signals(conn) -> List[Dict]:
     """Haal alle echte signalen op uit pending_approvals."""
     cur = conn.cursor()
-    cur.execute("""
-        SELECT id, symbol, score, entry, stop, target, setup_type,
-               btc_regime, created_at,
-               EXTRACT(EPOCH FROM created_at) * 1000 AS ts_ms
-        FROM pending_approvals
-        WHERE score >= %s AND entry > 0 AND stop > 0 AND target > 0
-        ORDER BY created_at ASC
-    """, (SCORE_DREMPEL,))
-    cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    try:
+        cur.execute("""
+            SELECT id, symbol, score, entry, stop, target, setup_type,
+                   COALESCE(regime, '') AS btc_regime, created_at,
+                   EXTRACT(EPOCH FROM created_at) * 1000 AS ts_ms
+            FROM pending_approvals
+            WHERE score >= %s
+            AND entry IS NOT NULL AND entry > 0
+            AND stop IS NOT NULL AND stop > 0
+            AND target IS NOT NULL AND target > 0
+            ORDER BY created_at ASC
+        """, (SCORE_DREMPEL,))
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        log(f"  Query returned {len(rows)} signalen (score >= {SCORE_DREMPEL})")
+        return [dict(zip(cols, r)) for r in rows]
+    except Exception as e:
+        log(f"FOUT in get_signals: {e}")
+        traceback.print_exc()
+        # Probeer met minimale kolommen als fallback
+        try:
+            conn.rollback()
+            cur.execute("""
+                SELECT id, symbol, score, entry, stop, target, setup_type,
+                       '' AS btc_regime, created_at,
+                       EXTRACT(EPOCH FROM created_at) * 1000 AS ts_ms
+                FROM pending_approvals
+                WHERE score >= %s
+                AND entry IS NOT NULL AND entry > 0
+                AND stop IS NOT NULL AND stop > 0
+                AND target IS NOT NULL AND target > 0
+                ORDER BY created_at ASC
+            """, (SCORE_DREMPEL,))
+            cols = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+            log(f"  Fallback query returned {len(rows)} signalen")
+            return [dict(zip(cols, r)) for r in rows]
+        except Exception as e2:
+            log(f"FOUT in fallback query: {e2}")
+            return []
 
 
 def get_candles_for_symbol(conn, symbol: str) -> List[Dict]:
@@ -192,35 +231,96 @@ def _build_result(signal, exit_price, open_ts, close_ts, entry, original_stop,
 
 def run():
     log("=" * 60)
-    log("Market Simulator v2.0 — Echte Signalen + Candle Data")
+    log("Market Simulator v2.1 — Echte Signalen + Candle Data")
     log(f"Score: {SCORE_DREMPEL} | Hold: {MAX_HOLD_H}h | EUR: {POSITION_EUR}")
+    log(f"Trailing: {TRAILING_PCT*100}% | Cooldown: {COOLDOWN_H}h | Capital: {START_CAPITAL}")
     log("=" * 60)
 
     if not DATABASE_URL:
-        log("FOUT: DATABASE_URL"); return
+        log("FOUT: DATABASE_URL niet ingesteld!")
+        health_update("market_simulator", "ERROR", "DATABASE_URL niet ingesteld")
+        return
 
-    conn = db_connect()
+    try:
+        conn = db_connect()
+        log("DB verbinding OK")
+    except Exception as e:
+        log(f"FOUT: kan niet verbinden met DB: {e}")
+        health_update("market_simulator", "ERROR", f"DB connect: {e}")
+        return
+
+    try:
+        _run_simulation(conn)
+    except Exception as e:
+        log(f"FATALE FOUT: {e}")
+        traceback.print_exc()
+        health_update("market_simulator", "ERROR", str(e)[:200])
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _run_simulation(conn):
+    """Hoofdlogica van de simulatie — apart zodat run() altijd opruimt."""
 
     # Haal echte signalen
     signals = get_signals(conn)
-    log(f"Signalen: {len(signals)}")
+    log(f"Signalen totaal: {len(signals)}")
+
+    if not signals:
+        log("WAARSCHUWING: Geen signalen gevonden! Controleer pending_approvals tabel.")
+        # Debug: check wat er in de tabel zit
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM pending_approvals")
+            total_pa = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM pending_approvals WHERE score >= %s", (SCORE_DREMPEL,))
+            scored_pa = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM pending_approvals WHERE entry > 0 AND stop > 0 AND target > 0")
+            valid_pa = cur.fetchone()[0]
+            log(f"  pending_approvals totaal: {total_pa}")
+            log(f"  score >= {SCORE_DREMPEL}: {scored_pa}")
+            log(f"  entry/stop/target > 0: {valid_pa}")
+            # Sample een paar rijen
+            cur.execute("SELECT id, symbol, score, entry, stop, target FROM pending_approvals ORDER BY created_at DESC LIMIT 3")
+            for row in cur.fetchall():
+                log(f"  voorbeeld: id={row[0]} sym={row[1]} score={row[2]} entry={row[3]} stop={row[4]} target={row[5]}")
+        except Exception as e:
+            log(f"  Debug query fout: {e}")
+        health_update("market_simulator", "ERROR", "0 signalen gevonden")
+        return
 
     # Blacklist
-    cur = conn.cursor()
-    cur.execute("SELECT value FROM bot_state WHERE key='coin_blacklist'")
-    r = cur.fetchone()
-    blacklist = set(json.loads(r[0])) if r and r[0] else set()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM bot_state WHERE key='coin_blacklist'")
+        r = cur.fetchone()
+        blacklist = set(json.loads(r[0])) if r and r[0] else set()
+    except Exception:
+        blacklist = set()
     log(f"Blacklist: {len(blacklist)} coins")
 
     # Pre-load candles per symbol
     symbols_needed = set(s["symbol"] for s in signals if s["symbol"] not in blacklist)
     log(f"Candles laden voor {len(symbols_needed)} coins...")
     candle_cache = {}
+    no_candles = []
     for sym in symbols_needed:
-        candles = get_candles_for_symbol(conn, sym)
-        if len(candles) >= 10:
-            candle_cache[sym] = candles
+        try:
+            candles = get_candles_for_symbol(conn, sym)
+            if len(candles) >= 10:
+                candle_cache[sym] = candles
+            else:
+                no_candles.append(f"{sym}({len(candles)})")
+        except Exception as e:
+            log(f"  Candle fout voor {sym}: {e}")
     log(f"  {len(candle_cache)} coins met candle data")
+    if no_candles and len(no_candles) <= 10:
+        log(f"  Geen/weinig candles: {', '.join(no_candles)}")
+    elif no_candles:
+        log(f"  {len(no_candles)} coins zonder voldoende candle data")
 
     # Simulatie
     log("Simulatie starten...")
@@ -248,7 +348,12 @@ def run():
             skipped += 1; continue
 
         # Simuleer
-        result = simulate_trade(sig, candle_cache[sym])
+        try:
+            result = simulate_trade(sig, candle_cache[sym])
+        except Exception as e:
+            log(f"  Sim fout {sym}: {e}")
+            skipped += 1; continue
+
         if not result:
             skipped += 1; continue
 
@@ -317,6 +422,11 @@ def run():
         log(f"    {reden:<20} {stats['n']:>4} trades  {rwr}% WR")
     log("=" * 60)
 
+    if total == 0:
+        log("WAARSCHUWING: 0 trades gesimuleerd ondanks signalen!")
+        health_update("market_simulator", "ERROR", f"{len(signals)} signalen maar 0 trades")
+        return
+
     # Opslaan in DB
     log("Opslaan in DB...")
     try:
@@ -349,7 +459,8 @@ def run():
                       t["open_ts"], t["close_ts"], t["exit_reden"]))
                 saved += 1
             except Exception as e:
-                pass  # skip duplicates silently
+                if saved < 5:
+                    log(f"  Insert fout: {e}")
 
         # Equity + results in bot_state
         eq_short = equity[::max(1, len(equity) // 200)]
@@ -368,11 +479,11 @@ def run():
         log(f"  {saved} trades opgeslagen")
     except Exception as e:
         log(f"DB fout: {e}")
+        traceback.print_exc()
         try: conn.rollback()
         except: pass
 
     health_update("market_simulator", "OK", f"{total} trades, {wr}% WR, PnL={total_pnl:+.2f}")
-    conn.close()
     log("Klaar!")
 
 
