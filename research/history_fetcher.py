@@ -173,7 +173,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 150) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -230,7 +230,7 @@ def _claude_check_fetch_health(symbols_done: int, candles_saved: int, errors: in
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": 150,
                 "messages": [{
                     "role": "user",

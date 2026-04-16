@@ -304,7 +304,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",  # FIX v3.1: was claude-sonnet-4-20250514
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -1394,12 +1394,15 @@ def _finalize_trade(
         f"{exit_reden}"
     )
 
-    # Claude trade analyse
-    claude_tekst = claude_analyseer_gesloten_trade(
-        symbol, setup_type, regime, entry, exit_price,
-        pnl_eur, hold_min, outcome, score, exit_reden,
-        mfe_r, mae_r,
-    )
+    # [COST OPT] Claude alleen voor LOSS trades (post-mortem op Haiku).
+    # WIN trades krijgen geen per-trade analyse meer — wekelijkse batch via ai_coach dekt die.
+    claude_tekst = ""
+    if outcome == "LOSS":
+        claude_tekst = claude_analyseer_gesloten_trade(
+            symbol, setup_type, regime, entry, exit_price,
+            pnl_eur, hold_min, outcome, score, exit_reden,
+            mfe_r, mae_r,
+        )
 
     # DB update
     update_trade_in_db(
@@ -2725,7 +2728,7 @@ Geef in 3 punten:
 Antwoord in het Nederlands, max 200 woorden."""
 
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",  # [COST OPT]
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -2762,7 +2765,7 @@ Geef in 2 punten:
 Antwoord in het Nederlands, max 150 woorden."""
 
         msg = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",  # [COST OPT]
             max_tokens=250,
             messages=[{"role": "user", "content": prompt}]
         )

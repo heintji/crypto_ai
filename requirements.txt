@@ -5,3 +5,6 @@ plotly
 requests
 anthropic
 python-bitvavo-api
+gunicorn
+flask
+twilio

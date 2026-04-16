@@ -144,7 +144,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 200) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -288,6 +288,9 @@ EXPERIENCE_TRADES_COLUMNS: List[Tuple[str, str, Optional[str]]] = [
     ("why_full",            "TEXT",             None),
     ("notes",               "TEXT",             None),
     ("order_id",            "TEXT",             None),
+
+    # [COST OPT] LOSS post-mortem — Claude-analyse per verliezende trade
+    ("loss_reason",         "TEXT",             None),
 ]
 
 # pending_approvals — multi_coin_score -> webhook -> live_trader

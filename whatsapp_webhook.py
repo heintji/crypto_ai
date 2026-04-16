@@ -270,7 +270,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 400) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },

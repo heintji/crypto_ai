@@ -355,7 +355,7 @@ Per punt: concrete actie + verwachte impact. Kort en bondig, max 3 zinnen per pu
         import anthropic
         client = anthropic.Anthropic()
         resp = client.messages.create(
-            model="claude-sonnet-4-6",
+            model="claude-haiku-4-5-20251001",  # [COST OPT]
             max_tokens=400,
             messages=[{"role": "user", "content": prompt}]
         )

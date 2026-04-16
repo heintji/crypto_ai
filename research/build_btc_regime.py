@@ -187,7 +187,7 @@ def claude_analyse(prompt: str, max_tokens: int = 200) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-20250514",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -242,6 +242,23 @@ Geef in 2 zinnen Nederlands:
         f"Stuur STOP om live trading te pauzeren.\n\n"
         f"Commands: STOP | STATUS | HEALTH"
     )
+
+    # [COST OPT / NEW] Trigger position reassessment voor open LIVE posities.
+    # Gebruikt Sonnet voor kwaliteit (kritieke beslissing bij regime-shift).
+    try:
+        import subprocess, sys, os as _os
+        _script = _os.path.join(_os.path.dirname(__file__), "regime_position_reassess.py")
+        if _os.path.exists(_script):
+            subprocess.Popen(
+                [sys.executable, _script],
+                env={**_os.environ,
+                     "OLD_REGIME": old_regime,
+                     "NEW_REGIME": new_regime},
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            print(f"🔄 Position-reassess gestart voor {old_regime}→{new_regime}", flush=True)
+    except Exception as e:
+        print(f"⚠ regime_position_reassess trigger faalde: {e}", flush=True)
 
 
 # ============================================================

@@ -37,17 +37,19 @@ def _schrijf_heartbeat(status='OK', details=''):
     except Exception as _e2: print(f'[HEALTH] ai_coach: {_e2}')
 
 
-CLAUDE_MODEL   = "claude-sonnet-4-6"
+CLAUDE_MODEL   = "claude-haiku-4-5-20251001"  # [COST OPT]
 MAX_TOKENS     = 1200
 WHATSAPP_URL   = os.getenv("WEBHOOK_BASE_URL", "")
 # Auto-detect mode op basis van dag (tenzij COACH_MODE handmatig ingesteld)
 def _auto_mode() -> str:
+    """[COST OPT] Daily mode skippen — alleen weekly (maandag) + monthly (1e vd maand).
+    Handmatig overridable via COACH_MODE env var."""
     m = os.getenv("COACH_MODE", "")
     if m: return m.lower()
     now = datetime.now(timezone.utc)
     if now.day == 1:             return "maand"   # 1e vd maand = maandanalyse
     if now.weekday() == 0:       return "week"    # Maandag = weekrapport
-    return "dag"                                   # Rest = dagrapport
+    return "skip"                                  # Andere dagen: niks doen
 
 REPORT_MODE = _auto_mode()
 
@@ -423,8 +425,10 @@ def main():
     log(f"AI Coach gestart  mode: {mode}")
     conn = db_connect()
     try:
-        if mode == "dag":
-            dagrapport(conn)
+        if mode == "skip":
+            log("[COST OPT] Geen week/maand vandaag — niks te doen.")
+        elif mode == "dag":
+            dagrapport(conn)  # alleen via handmatige COACH_MODE=dag
         elif mode == "week":
             weekrapport(conn)
         elif mode == "maand":

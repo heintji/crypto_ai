@@ -363,7 +363,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",  # FIX v4.1: was claude-sonnet-4-20250514
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -1547,9 +1547,8 @@ def bouw_uitgebreide_scan_samenvatting(conn, sessie: Dict,
     top_txt = ""
     for i, c in enumerate(top5, 1):
         top_txt += f"  #{i} {c.get('symbol','?')} score={c.get('score',0)}\n"
+    # [COST OPT] per-scan sessie-analyse uit — wekelijkse batch via ai_coach
     claude_txt = ""
-    if ANTHROPIC_API_KEY:
-        claude_txt = claude_analyseer_sessie(sessie)
     bericht = (
         f"SCAN RAPPORT — {now_utc().strftime('%H:%M UTC')}\n"
         f"{'='*32}\n"
@@ -2814,12 +2813,8 @@ def scan_universe(conn, drempels: Dict) -> int:
             )
             _SESSIE["kelly_grootte"].append(kelly_eur)
 
-            claude_txt = claude_beoordeel_signaal(
-                symbol_usdt, setup_type, coin_regime, btc_regime,
-                score, chance, confidence, rsi_4h, vol_ratio,
-                exp_win_rate, exp_n, why_tag, funding_rate,
-                markt_structuur, taker_ratio, coin_cluster,
-            )
+            # [COST OPT] per-signaal Claude uit — wekelijkse batch via ai_coach dekt patronen
+            claude_txt = ""
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
             live_toegestaan = (score >= score_drempel)  # live: score >= 85 (uit bot_state)
@@ -3033,20 +3028,9 @@ if __name__ == "__main__":
                     log(f"Claude gradient: {claude_gradient}")
                     set_bot_state_value(conn, "score_gradient_analyse", claude_gradient)
 
-        if ANTHROPIC_API_KEY and _SESSIE["gescand"] > 10:
-            analyse = claude_analyseer_sessie(_SESSIE)
-            if analyse:
-                log(f"Claude sessie: {analyse}")
-                set_bot_state_value(conn, "laatste_scan_claude", analyse)
-
-        if ANTHROPIC_API_KEY:
-            markt = claude_beoordeel_marktomstandigheden(
-                btc, n, _SESSIE["gescand"], now_utc().hour, btc_sterkte,
-                _SESSIE["sessie_timing"]
-            )
-            if markt:
-                log(f"Claude markt: {markt}")
-                set_bot_state_value(conn, "markt_beoordeling", markt)
+        # [COST OPT] per-scan Claude sessie- en markt-beoordeling uit
+        # Wekelijkse batch-review via ai_coach (maandag) dekt deze patronen
+        pass
 
         if n >= 2 or _SESSIE["gescand"] > 100:
             samenvatting = bouw_uitgebreide_scan_samenvatting(

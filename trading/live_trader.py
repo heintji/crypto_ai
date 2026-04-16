@@ -272,7 +272,7 @@ def _claude_analyse(prompt: str, max_tokens: int = 300) -> str:
                 "content-type":      "application/json",
             },
             json={
-                "model":      "claude-sonnet-4-6",
+                "model":      "claude-haiku-4-5-20251001",  # [COST OPT]
                 "max_tokens": max_tokens,
                 "messages":   [{"role": "user", "content": prompt}],
             },
@@ -1996,7 +1996,7 @@ def buy_eur(
             import anthropic as _ant
             _cl = _ant.Anthropic()
             _audit = _cl.messages.create(
-                model="claude-sonnet-4-6",
+                model="claude-haiku-4-5-20251001",  # [COST OPT]
                 max_tokens=150,
                 messages=[{"role":"user","content":
                     f"Crypto bot koop audit:\nCoin: {symbol}\nScore: {meta.get('score',0)}\n"
