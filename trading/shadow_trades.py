@@ -1012,8 +1012,8 @@ def evaluate_shadow_exit(
 
     # ── EXIT 2: Stop loss ─────────────────────────────────
     # Prijs is gedaald tot of onder de stop loss.
-    # Of R is negatief (prijs onder entry minus risico).
-    if current_price <= stop or r < 0:
+    # FIX: `or r < 0` verwijderd — die sloot trades bij elke dip onder entry (zelfs 0.01%).
+    if current_price <= stop:
         log(
             f"🛑 {symbol} shadow: stop geraakt "
             f"({current_price:.6f} ≤ {stop:.6f}, R={r:.2f}) → exit"

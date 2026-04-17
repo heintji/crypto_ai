@@ -1122,6 +1122,45 @@ def detecteer_momentum(closes: List[float], periode: int = 10) -> float:
     return round((huidig - oud) / oud * 100, 3)
 
 
+def keltner_bands(candles: List[Dict], ema_period: int = 20,
+                   atr_mult: float = 2.0) -> Tuple[float, float, float]:
+    """Keltner Channel: EMA ± mult * ATR. Returns (mid, lower, upper)."""
+    closes = [c["close"] for c in candles]
+    ema_val = ema(closes, ema_period)
+    atr_val = atr_calc(candles, 14)
+    if not ema_val or not atr_val:
+        return 0.0, 0.0, 0.0
+    return ema_val, ema_val - atr_mult * atr_val, ema_val + atr_mult * atr_val
+
+
+def recent_gain_pct(closes: List[float], lookback: int = 5) -> float:
+    """Hoeveel % is de prijs gestegen in de laatste `lookback` candles."""
+    if len(closes) < lookback + 1:
+        return 0.0
+    oud = closes[-(lookback + 1)]
+    if oud <= 0:
+        return 0.0
+    return round((closes[-1] - oud) / oud * 100, 2)
+
+
+def is_bounce_confirmed(candles: List[Dict]) -> bool:
+    """Detecteert of de laatste candle een bounce toont (groene candle na dip).
+    Leading signaal: verkoopdruk neemt af, kopers komen terug."""
+    if len(candles) < 3:
+        return False
+    last = candles[-1]
+    prev = candles[-2]
+    # Groene candle (close > open)
+    green = last["close"] > last["open"]
+    # Prijs sluit hoger dan vorige close
+    higher_close = last["close"] > prev["close"]
+    # Lower wick langer dan body (kopers verdedigen)
+    body = abs(last["close"] - last["open"])
+    lower_wick = min(last["close"], last["open"]) - last["low"]
+    wick_support = lower_wick > body * 0.5 if body > 0 else False
+    return green and (higher_close or wick_support)
+
+
 def detecteer_squeeze(closes: List[float], candles: List[Dict]) -> bool:
     """Bollinger Band Squeeze = lage volatiliteit voor uitbraak."""
     if len(closes) < 20 or len(candles) < 20: return False
@@ -1661,10 +1700,24 @@ def detect_setup_type(candles_4h: List[Dict],
     div = detecteer_divergentie(closes_4h, candles_4h, 10)
     if div == "BULLISH" and current > vorige:
         return "BULLISH_DIVERGENCE", f"bull_div|RSI={rsi_4h:.0f}"
+    # ── TREND_PULLBACK v4.2: Keltner Channel + bounce-bevestiging ──
+    # Verbeterd: detecteert echte pullback naar support + bounce,
+    # i.p.v. alleen "dicht bij SMA20".
     if sma20_4h > sma50_4h and current > sma50_4h:
+        kc_mid, kc_lower, kc_upper = keltner_bands(candles_4h, 20, 2.0)
         dist_sma20 = abs(current - sma20_4h) / max(sma20_4h, 1e-10)
-        if dist_sma20 < 0.025 and RSI_MIN <= rsi_4h <= 58:
-            return "TREND_PULLBACK", f"sma20_pb({dist_sma20*100:.1f}%)|RSI={rsi_4h:.0f}"
+        # Keltner pullback: prijs in onderste zone (onder EMA of bij lower band)
+        in_keltner_zone = (kc_lower > 0 and current <= kc_mid * 1.005)
+        bounce = is_bounce_confirmed(candles_4h)
+        gain = recent_gain_pct(closes_4h, 5)
+        if in_keltner_zone and bounce and gain < 5.0 and RSI_MIN <= rsi_4h <= 58:
+            return "TREND_PULLBACK", (
+                f"keltner_pb|dist_sma20={dist_sma20*100:.1f}%"
+                f"|bounce=OK|gain5={gain:.1f}%|RSI={rsi_4h:.0f}"
+            )
+        # Fallback: oude detectie (bredere filter voor meer shadow data)
+        elif dist_sma20 < 0.025 and RSI_MIN <= rsi_4h <= 58:
+            return "TREND_PULLBACK", f"sma20_pb({dist_sma20*100:.1f}%)|RSI={rsi_4h:.0f}|NO_BOUNCE"
     vwap_val = vwap(candles_4h, 20)
     if vwap_val and current > vwap_val and vorige < vwap_val and rsi_4h < 55:
         return "VWAP_BOUNCE", f"vwap_cross({vwap_val:.4f})|RSI={rsi_4h:.0f}"
@@ -1703,10 +1756,11 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
                     markt_structuur: str = "ONBEKEND",
                     taker_ratio: float = 0.5,
                     sessie_timing: str = "ONBEKEND",
-                    coin_cluster: str = "STABLE") -> Tuple[int, int, int, str, float, float]:
+                    coin_cluster: str = "STABLE",
+                    setup_detail: str = "") -> Tuple[int, int, int, str, float, float]:
     """
-    v4.1: Berekent score (0-100), chance, confidence.
-    Bevat TREND_PULLBACK bonus +5 op basis van shadow data (67% win rate).
+    v4.2: Berekent score (0-100), chance, confidence.
+    Verbeteringen: Keltner pullback bonus, "Move Already Made" penalty, momentum-flip.
     """
     if not candles_4h or len(candles_4h) < 20:
         return 0, 0, 0, "te_weinig_data", 0.0, 0.0
@@ -1822,10 +1876,22 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
         score = min(score + 3, 110); why_tags.append("SQUEEZE")
 
     mom = detecteer_momentum(closes_4h, 10)
+    # v4.2: momentum >5% = move is al gemaakt → PENALTY ipv bonus
     if mom > 5:
-        score = min(score + 4, 110); why_tags.append(f"MOM=+{mom:.1f}%")
+        score = max(score - 5, 0);   why_tags.append(f"MOM_LATE=-5({mom:.1f}%)")
+    elif mom > 3:
+        pass  # neutraal — niet bestraffen, niet belonen
     elif mom < -5:
         score = max(score - 2, 0);   why_tags.append(f"MOM={mom:.1f}%")
+
+    # v4.2: "Move Already Made" penalty
+    gain_5 = recent_gain_pct(closes_4h, 5)  # stijging laatste 20u (5×4h)
+    if gain_5 > 8.0:
+        score = max(score - 15, 0);  why_tags.append(f"LATE_ENTRY=-15(+{gain_5:.1f}%)")
+    elif gain_5 > 5.0:
+        score = max(score - 8, 0);   why_tags.append(f"LATE_ENTRY=-8(+{gain_5:.1f}%)")
+    elif gain_5 > 3.0:
+        score = max(score - 3, 0);   why_tags.append(f"LATE=-3(+{gain_5:.1f}%)")
 
     if vwap_positie == "BOVEN":
         score = min(score + 3, 110); why_tags.append("VWAP=boven")
@@ -1875,12 +1941,19 @@ def calculate_score(candles_4h: List[Dict], candles_1h: List[Dict],
     elif coin_cluster == "WEAK":
         why_tags.append("cluster=WEAK")
 
-    # ── BONUS v4.1: TREND_PULLBACK ────────────────────────
-    # Basis: shadow data toont 67% win rate in RANGE, 53.6% in BULL.
-    # Dit is de bewezen beste setup — bonus geeft hem voorrang.
+    # ── BONUS v4.2: TREND_PULLBACK met Keltner-kwaliteit ──
+    # Keltner-bevestigde pullbacks krijgen meer bonus (betere entry).
+    # Fallback-pullbacks (NO_BOUNCE) krijgen minder.
     if setup_type == "TREND_PULLBACK":
-        score = min(score + 5, 110)
-        why_tags.append("TP_BONUS+5")
+        if "keltner_pb" in setup_detail:
+            score = min(score + 8, 110)
+            why_tags.append("TP_KELTNER+8")
+        elif "NO_BOUNCE" in setup_detail:
+            score = min(score + 2, 110)
+            why_tags.append("TP_WEAK+2")
+        else:
+            score = min(score + 5, 110)
+            why_tags.append("TP_BONUS+5")
 
     # ── MALUSSEN ─────────────────────────────────────────
     fee_impact = TOTAL_COST_PCT * 100
@@ -2748,6 +2821,7 @@ def scan_universe(conn, drempels: Dict) -> int:
                 btc_sterkte, setup_type, exp_win_rate, exp_n, drempels,
                 vwap_pos, stoch_rsi, divergentie, funding_rate,
                 markt_structuur, taker_ratio, sessie_timing, coin_cluster,
+                setup_detail=why_base,
             )
 
             # Whitelist bonus

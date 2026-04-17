@@ -1570,8 +1570,8 @@ def evaluate_shadow_for_symbol(
         _log_shadow_outcome(symbol, shadow_trade, current, "LOSS", "MAX_HOLD_TIME", conn)
         return True, True
 
-    # Stop geraakt
-    if current <= stop or r < 0:
+    # Stop geraakt — FIX: `or r < 0` verwijderd, die sloot trades bij elke micro-dip
+    if current <= stop:
         _log_shadow_outcome(symbol, shadow_trade, current, "LOSS", "STOP_LOSS", conn)
         return True, True
 
