@@ -29,6 +29,30 @@ import requests
 
 
 # ============================================================
+# HEARTBEAT (voor watchdog)
+# ============================================================
+def _schrijf_heartbeat(status: str = 'OK', details: str = '') -> None:
+    """Update bot_health rij voor ai_coach. Fouten worden alleen gelogd, niet geraised."""
+    try:
+        import psycopg2 as _psy, os as _os
+        _db = _psy.connect(_os.environ['DATABASE_URL'], sslmode='require')
+        _cur = _db.cursor()
+        _cur.execute(
+            "UPDATE bot_health SET status=%s, laatste_run=NOW(), details=%s WHERE service=%s",
+            (status, str(details)[:200], 'ai_coach'),
+        )
+        if _cur.rowcount == 0:
+            _cur.execute(
+                "INSERT INTO bot_health (service, status, laatste_run, details) VALUES (%s, %s, NOW(), %s)",
+                ('ai_coach', status, str(details)[:200]),
+            )
+        _db.commit()
+        _db.close()
+    except Exception as _e:
+        print(f"[HEALTH] ai_coach heartbeat fout: {_e}", flush=True)
+
+
+# ============================================================
 # ENV
 # ============================================================
 DATABASE_URL      = (os.getenv("DATABASE_URL") or "").strip()
@@ -5129,3 +5153,5 @@ if __name__ == "__main__":
     print("RAPPORT:")
     print("=" * 60)
     print(rapport)
+
+    _schrijf_heartbeat("OK", "ai_coach klaar")

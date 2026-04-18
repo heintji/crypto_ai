@@ -30,6 +30,13 @@ import os, sys, time, math, requests, psycopg2
 from datetime import datetime, timezone
 from typing import Optional, List, Tuple, Dict, Any
 
+# Script draait als `python trading/strategy_simulator.py` vanuit repo root;
+# sys.path krijgt dan `trading/` i.p.v. repo root. Forceer repo root zodat
+# `bot_health_helper` (in repo root) importeerbaar is op Render.
+_REPO_ROOT = "/opt/render/project/src"
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 try:
     from bot_health_helper import health_update
 except ImportError:

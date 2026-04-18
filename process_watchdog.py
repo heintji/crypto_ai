@@ -20,6 +20,10 @@ TWILIO_AUTH_TOKEN    = os.getenv('TWILIO_AUTH_TOKEN', '')
 TWILIO_WHATSAPP_FROM = os.getenv('TWILIO_WHATSAPP_FROM', '')
 TWILIO_WHATSAPP_TO   = os.getenv('TWILIO_WHATSAPP_TO', '')
 
+# Services die in bot_health staan maar geen eigen Render-cron (meer) hebben.
+# Het script schrijft dan nooit een heartbeat; overslaan voorkomt false-positives.
+IGNORED_SERVICES = {'monte_carlo'}
+
 def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [WATCHDOG] {msg}", flush=True)
 
@@ -72,6 +76,9 @@ def run():
         log(f"{len(services)} services gevonden")
 
         for svc, status, laatste_run, hb_sec, details, fout, render_url, live, shadow, sim, sec_oud in services:
+            if svc in IGNORED_SERVICES:
+                log(f"SKIP [{svc}]: in IGNORED_SERVICES")
+                continue
             sec_oud = int(sec_oud or 0)
             min_oud = sec_oud // 60
             uur_oud = min_oud // 60
