@@ -1612,7 +1612,14 @@ def _log_shadow_outcome(
     exit_reden: str,
     conn,
 ) -> None:
-    """Logt shadow trade uitkomst naar experience_trades."""
+    """Logt shadow trade uitkomst naar experience_trades.
+
+    NB: de meegegeven `outcome` parameter wordt GENEGEERD — outcome wordt
+    altijd herberekend op basis van pnl_eur. Dit voorkomt dat trades met
+    positieve PnL ten onrechte als LOSS gelogd worden bij MAX_HOLD_TIME of
+    STRUCTUUR_FAIL exit-redenen. Zie ook de WIN/LOSS-bepaling in
+    shadow_trades.close_shadow_trade.
+    """
     entry      = safe_float(trade.get("entry"))
     stop       = safe_float(trade.get("stop_loss") or trade.get("stop"))
     amount_eur = safe_float(trade.get("amount_eur"), 0.50)
@@ -1629,6 +1636,18 @@ def _log_shadow_outcome(
     fee_exit  = exit_price * qty * (BITVAVO_FEE_PCT + SLIPPAGE_PCT) if qty > 0 else 0.0
     gross_pnl = (exit_price - entry) * qty if entry > 0 and qty > 0 else 0.0
     pnl_eur   = gross_pnl - fee_entry - fee_exit
+    pnl_pct   = round(((exit_price - entry) / entry) * 100, 4) if entry > 0 else 0.0
+
+    # WIN/LOSS bepalen op basis van pnl_eur, niet op basis van exit-reden.
+    outcome = "WIN" if pnl_eur > 0 else "LOSS"
+
+    # Vervang hardcoded "SHADOW_ONLY" door werkelijke BTC-regime indien
+    # nog niet gezet (oude shadows hadden de placeholder).
+    if not regime or regime.upper() == "SHADOW_ONLY":
+        try:
+            regime = safe_str(get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")).upper()
+        except Exception:
+            regime = "UNKNOWN"
 
     risk   = abs(entry - stop) if stop > 0 and entry > 0 else 0.0
     exit_r = round((exit_price - entry) / risk, 3) if risk > 0 else 0.0
@@ -1647,12 +1666,16 @@ def _log_shadow_outcome(
             # UPDATE bestaande trade ipv INSERT nieuwe
             cur.execute("""
             UPDATE experience_trades SET
-                outcome=%s, pnl_eur=%s, result_r=%s, exit_price=%s,
+                outcome=%s, pnl_eur=%s, pnl_pct=%s, result_r=%s, exit_price=%s,
                 status='CLOSED', closed_at=NOW(), exit_time=NOW(),
-                mfe_r=%s, mae_r=%s, exit_reden=%s
+                mfe_r=%s, mae_r=%s,
+                max_price_seen=%s, min_price_seen=%s,
+                market_regime=%s, exit_reden=%s
             WHERE trade_key=%s AND status='OPEN'
-            """, (outcome, round(pnl_eur,4), exit_r, exit_price,
-                  mfe_r, mae_r, exit_reden, trade_key))
+            """, (outcome, round(pnl_eur, 4), pnl_pct, exit_r, exit_price,
+                  mfe_r, mae_r,
+                  max_price, min_price,
+                  regime, exit_reden, trade_key))
 
             if cur.rowcount > 0:
                 conn.commit()
@@ -1665,40 +1688,51 @@ def _log_shadow_outcome(
                 trade_key, source, is_shadow, coin, symbol, bitvavo_market,
                 timestamp, entry_time,
                 setup_type, market_regime, entry,
-                outcome, pnl_eur, pnl_r, result_r,
-                mfe_r, mae_r, time_minutes,
+                outcome, pnl_eur, pnl_pct, pnl_r, result_r,
+                mfe_r, mae_r,
+                max_price_seen, min_price_seen,
+                time_minutes,
                 bot_confidence,
-                exit_price, status, closed_at,
+                exit_price, exit_reden, status, closed_at,
                 exit_time, created_at, updated_at
             ) VALUES (
                 %s,'SHADOW',TRUE,%s,%s,%s,NOW(),NOW(),
                 %s,%s,%s,
-                %s,%s,%s,%s,
-                %s,%s,%s,
+                %s,%s,%s,%s,%s,
+                %s,%s,
+                %s,%s,
                 %s,
-                %s,'CLOSED',NOW(),
+                %s,
+                %s,%s,'CLOSED',NOW(),
                 NOW(),NOW(),NOW()
             )
             ON CONFLICT (trade_key) DO UPDATE SET
-                outcome      = EXCLUDED.outcome,
-                pnl_eur      = EXCLUDED.pnl_eur,
-                pnl_r        = EXCLUDED.pnl_r,
-                result_r     = EXCLUDED.result_r,
-                mfe_r        = EXCLUDED.mfe_r,
-                mae_r        = EXCLUDED.mae_r,
-                time_minutes = EXCLUDED.time_minutes,
-                exit_price   = EXCLUDED.exit_price,
-                status       = 'CLOSED',
-                closed_at    = NOW(),
-                exit_time    = NOW(),
-                updated_at   = NOW()
+                outcome        = EXCLUDED.outcome,
+                pnl_eur        = EXCLUDED.pnl_eur,
+                pnl_pct        = EXCLUDED.pnl_pct,
+                pnl_r          = EXCLUDED.pnl_r,
+                result_r       = EXCLUDED.result_r,
+                mfe_r          = EXCLUDED.mfe_r,
+                mae_r          = EXCLUDED.mae_r,
+                max_price_seen = EXCLUDED.max_price_seen,
+                min_price_seen = EXCLUDED.min_price_seen,
+                time_minutes   = EXCLUDED.time_minutes,
+                exit_price     = EXCLUDED.exit_price,
+                exit_reden     = EXCLUDED.exit_reden,
+                market_regime  = EXCLUDED.market_regime,
+                status         = 'CLOSED',
+                closed_at      = NOW(),
+                exit_time      = NOW(),
+                updated_at     = NOW()
             """, (
                 trade_key, _coin, symbol, _market,
                 setup_type, regime, entry,
-                outcome, round(pnl_eur, 4), exit_r, exit_r,
-                mfe_r, mae_r, hold_min,
+                outcome, round(pnl_eur, 4), pnl_pct, exit_r, exit_r,
+                mfe_r, mae_r,
+                max_price, min_price,
+                hold_min,
                 score,
-                exit_price,
+                exit_price, exit_reden,
             ))
         conn.commit()
         log(

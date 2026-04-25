@@ -2392,27 +2392,40 @@ def main_loop():
 
                 # ── Shadow-only: score vanaf shadow drempel (80), geen live geld ──
                 _shadow_drempel = int(get_bot_state(conn, "score_drempel_shadow", "80"))
+                _btc_regime_now = safe_str(
+                    get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")
+                ).upper()
                 cur.execute("""
-                    SELECT id, symbol, bitvavo_market, score, entry, stop, target, kelly_grootte_eur
+                    SELECT id, symbol, bitvavo_market, score, entry, stop, target,
+                           kelly_grootte_eur,
+                           setup_type,
+                           COALESCE(NULLIF(btc_regime_4h,''), NULLIF(market_regime,''),
+                                    NULLIF(regime,''), %s) AS regime_real
                     FROM pending_approvals
                     WHERE status = 'PENDING'
                     AND score >= %s
                     AND expires_at > NOW()
                     ORDER BY score DESC
                     LIMIT 10
-                """, (_shadow_drempel,))
+                """, (_btc_regime_now, _shadow_drempel,))
                 shadow_only_query = True  # marker
                 shadow_rows = cur.fetchall()
                 for srow in shadow_rows:
                     try:
-                        sid, ssymbol, smarket, sscore, sentry, sstop, starget, skelly = srow
-                        smeta = {"score": sscore, "setup_type": "TREND_PULLBACK",
-                                 "regime": "SHADOW_ONLY", "shadow_only": True,
-                                 "stop": float(sstop or 0), "target": float(starget or 0)}
+                        (sid, ssymbol, smarket, sscore, sentry, sstop, starget,
+                         skelly, ssetup, sregime) = srow
+                        smeta = {
+                            "score":      sscore,
+                            "setup_type": safe_str(ssetup, "UNKNOWN"),
+                            "regime":     safe_str(sregime, _btc_regime_now or "UNKNOWN"),
+                            "shadow_only": True,
+                            "stop":   float(sstop or 0),
+                            "target": float(starget or 0),
+                        }
                         sqty  = round(float(skelly or 7) / max(float(sentry or 1), 0.0001), 6)
                         shadow_buy(ssymbol, float(sentry or 0), sqty, float(skelly or 7), smeta)
                         cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
-                        log(f"Shadow-only: {ssymbol} score={sscore}")
+                        log(f"Shadow-only: {ssymbol} score={sscore} setup={smeta['setup_type']} regime={smeta['regime']}")
                     except Exception as _se:
                         log(f"Shadow-only fout: {_se}")
                 conn.commit()
