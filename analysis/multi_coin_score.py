@@ -2971,27 +2971,13 @@ def scan_universe(conn, drempels: Dict) -> int:
                     _SESSIE["live_trades"] += 1
                 else:
                     _SESSIE["shadow_trades"] += 1
-                # Shadow trade aanmaken bij elk signaal
-                try:
-                    with conn.cursor() as _sc:
-                        _sc.execute(
-                            "INSERT INTO experience_trades "
-                            "(trade_key,source,coin,timestamp,setup_type,market_regime,"
-                            "entry,stop,target,outcome,markt_advies,markt_score,created_at,updated_at) "
-                            "VALUES (%s,'SHADOW',%s,to_timestamp(%s),%s,%s,%s,%s,%s,'OPEN','',0,NOW(),NOW()) "
-                            "ON CONFLICT (trade_key) DO NOTHING",
-                            (f"SHD_{prebuy_id}",
-                             prebuy.get('symbol','').replace('USDT',''),
-                             prebuy.get('timestamp', __import__('time').time()),
-                             prebuy.get('setup_type','UNKNOWN'),
-                             prebuy.get('regime','UNKNOWN'),
-                             prebuy.get('entry', 0),
-                             prebuy.get('stop', 0),
-                             prebuy.get('target', 0)))
-                        conn.commit()
-                        log(f"Shadow trade: {prebuy.get('symbol')}")
-                except Exception as _se:
-                    log(f"Shadow insert fout: {_se}")
+                # Shadow-trades worden NIET hier aangemaakt — dat doet
+                # live_trader.shadow_buy() in een aparte loop op basis van
+                # pending_approvals. Een tweede INSERT vanuit multi_coin_score
+                # zorgde voor zombie-rijen (trade_key 'SHD_<id>') die nooit
+                # gesloten werden door trade_monitor (state.json mismatch),
+                # waardoor de DB volliep met phantom-OPEN rows. Verwijderd
+                # 2026-04-25.
 
             if False:  # prebuy daglimiet verwijderd
                 log(f"Pre-buy daglimiet bereikt: {prebuy_today}")

@@ -427,14 +427,36 @@ def main():
                     except Exception: continue
                     if not sig: continue
 
-                    # Outcome direct bepalen op basis van volgende candle
-                    e,s,t = sig["e"],sig["s"],sig["t"]
-                    nx = c1_nx["close"]
-                    if t > e:
-                        if nx >= t:  oc,pr = "WIN",  round((t-e)/(e-s),3)
-                        elif nx <= s: oc,pr = "LOSS", -1.0
-                        else: continue  # trade nog open
-                    else: continue
+                    # Outcome bepalen door tot 48 toekomstige candles vooruit te
+                    # kijken (was: 1 candle, waardoor alle trades waarbij de
+                    # volgende candle noch target noch stop raakte werden
+                    # weggegooid -> 0 trades in DB sinds 5 april).
+                    e, s, t = sig["e"], sig["s"], sig["t"]
+                    if t <= e or s >= e:
+                        continue  # ongeldige setup — target moet boven entry, stop eronder
+                    oc, pr = None, None
+                    LOOKAHEAD = 48  # max 48u op 1h candles
+                    for j in range(i, min(i + LOOKAHEAD, len(c1_all))):
+                        cj = c1_all[j]
+                        hi = cj.get("high", cj.get("close"))
+                        lo = cj.get("low", cj.get("close"))
+                        # Stop heeft voorrang bij intra-candle ambiguïteit (conservatief)
+                        if lo <= s:
+                            oc, pr = "LOSS", -1.0
+                            break
+                        if hi >= t:
+                            oc, pr = "WIN", round((t - e) / (e - s), 3)
+                            break
+                    if oc is None:
+                        # Tijd-out na LOOKAHEAD candles -> tel als TIMEOUT op basis
+                        # van slot-prijs (vergelijkbaar met max-hold in productie)
+                        end_close = c1_all[min(i + LOOKAHEAD - 1, len(c1_all) - 1)]["close"]
+                        if end_close > e:
+                            oc = "WIN"
+                            pr = round((end_close - e) / (e - s), 3)
+                        else:
+                            oc = "LOSS"
+                            pr = round((end_close - e) / (e - s), 3)
 
                     # Unieke key op basis van candle-tijd zodat backtesting niet dubbelt
                     tk = f"SIM_{sig['id']}_{sym}_{candle_ts}"
