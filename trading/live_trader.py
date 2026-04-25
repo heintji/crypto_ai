@@ -2390,45 +2390,101 @@ def main_loop():
                         log(f"Live BUY fout {row[1] if len(row) > 1 else '?'}: {_be}")
                         safe_rollback(conn)
 
-                # ── Shadow-only: score vanaf shadow drempel (80), geen live geld ──
-                _shadow_drempel = int(get_bot_state(conn, "score_drempel_shadow", "80"))
+                # ────────────────────────────────────────────────────────────
+                # Shadow-only block met 3 quality-gates (zie docs/shadow_gates).
+                # Drempels staan in bot_state zodat aanpassen geen redeploy vergt:
+                #   score_drempel_shadow         (default 85)  - Gate 2
+                #   shadow_skip_non_trending     (default true) - Gate 1
+                #   shadow_stop_target_mult      (default 1.5)  - Gate 3
+                # ────────────────────────────────────────────────────────────
+                _shadow_drempel = int(get_bot_state(conn, "score_drempel_shadow", "85"))
                 _btc_regime_now = safe_str(
                     get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")
                 ).upper()
-                cur.execute("""
-                    SELECT id, symbol, bitvavo_market, score, entry, stop, target,
-                           kelly_grootte_eur,
-                           setup_type,
-                           COALESCE(NULLIF(btc_regime_4h,''), NULLIF(market_regime,''),
-                                    NULLIF(regime,''), %s) AS regime_real
-                    FROM pending_approvals
-                    WHERE status = 'PENDING'
-                    AND score >= %s
-                    AND expires_at > NOW()
-                    ORDER BY score DESC
-                    LIMIT 10
-                """, (_btc_regime_now, _shadow_drempel,))
-                shadow_only_query = True  # marker
-                shadow_rows = cur.fetchall()
-                for srow in shadow_rows:
-                    try:
-                        (sid, ssymbol, smarket, sscore, sentry, sstop, starget,
-                         skelly, ssetup, sregime) = srow
-                        smeta = {
-                            "score":      sscore,
-                            "setup_type": safe_str(ssetup, "UNKNOWN"),
-                            "regime":     safe_str(sregime, _btc_regime_now or "UNKNOWN"),
-                            "shadow_only": True,
-                            "stop":   float(sstop or 0),
-                            "target": float(starget or 0),
-                        }
-                        sqty  = round(float(skelly or 7) / max(float(sentry or 1), 0.0001), 6)
-                        shadow_buy(ssymbol, float(sentry or 0), sqty, float(skelly or 7), smeta)
-                        cur.execute("UPDATE pending_approvals SET status='SHADOW' WHERE id=%s", (sid,))
-                        log(f"Shadow-only: {ssymbol} score={sscore} setup={smeta['setup_type']} regime={smeta['regime']}")
-                    except Exception as _se:
-                        log(f"Shadow-only fout: {_se}")
-                conn.commit()
+                _skip_non_trending = safe_str(
+                    get_bot_state(conn, "shadow_skip_non_trending", "true")
+                ).lower() in ("true", "1", "yes")
+                try:
+                    _shadow_mult = float(
+                        get_bot_state(conn, "shadow_stop_target_mult", "1.5")
+                    )
+                except Exception:
+                    _shadow_mult = 1.5
+
+                # Gate 1: alleen shadow openen wanneer BTC trending (BULL).
+                # In RANGE/BEAR werkt TREND_PULLBACK setup niet (data: 86%
+                # van trades hit stop direct zonder eerst in plus te bewegen).
+                _gate1_open = (not _skip_non_trending) or _btc_regime_now == "BULL"
+                if not _gate1_open:
+                    log(f"Shadow gate1 dicht — BTC regime={_btc_regime_now} "
+                        f"(skip_non_trending=ON, drempel={_shadow_drempel})")
+                    conn.commit()
+                else:
+                    cur.execute("""
+                        SELECT id, symbol, bitvavo_market, score, entry, stop, target,
+                               kelly_grootte_eur,
+                               setup_type,
+                               COALESCE(NULLIF(btc_regime_4h,''), NULLIF(market_regime,''),
+                                        NULLIF(regime,''), %s) AS regime_real
+                        FROM pending_approvals
+                        WHERE status = 'PENDING'
+                        AND score >= %s
+                        AND expires_at > NOW()
+                        ORDER BY score DESC
+                        LIMIT 10
+                    """, (_btc_regime_now, _shadow_drempel,))
+                    shadow_only_query = True  # marker
+                    shadow_rows = cur.fetchall()
+                    for srow in shadow_rows:
+                        try:
+                            (sid, ssymbol, smarket, sscore, sentry, sstop, starget,
+                             skelly, ssetup, sregime) = srow
+                            sentry_f  = float(sentry or 0)
+                            sstop_f   = float(sstop or 0)
+                            starget_f = float(starget or 0)
+
+                            # Gate 3: verbreed stop + target met multiplier zodat
+                            # micro-ruis niet meteen stop_loss triggert. Entry
+                            # blijft gelijk; stop verder weg, target verder weg.
+                            # Risk-reward ratio blijft daardoor hetzelfde.
+                            if (_shadow_mult and _shadow_mult != 1.0
+                                    and sentry_f > 0 and sstop_f > 0
+                                    and sstop_f < sentry_f):
+                                _risk = sentry_f - sstop_f
+                                sstop_adj = round(sentry_f - _risk * _shadow_mult, 8)
+                                if starget_f > sentry_f:
+                                    _reward = starget_f - sentry_f
+                                    starget_adj = round(sentry_f + _reward * _shadow_mult, 8)
+                                else:
+                                    starget_adj = starget_f
+                            else:
+                                sstop_adj = sstop_f
+                                starget_adj = starget_f
+
+                            smeta = {
+                                "score":      sscore,
+                                "setup_type": safe_str(ssetup, "UNKNOWN"),
+                                "regime":     safe_str(sregime, _btc_regime_now or "UNKNOWN"),
+                                "shadow_only": True,
+                                "stop":   sstop_adj,
+                                "target": starget_adj,
+                                "stop_mult": _shadow_mult,
+                                "prebuy_id": str(sid or ""),
+                            }
+                            sqty  = round(float(skelly or 7) / max(sentry_f, 0.0001), 6)
+                            shadow_buy(ssymbol, sentry_f, sqty,
+                                       float(skelly or 7), smeta)
+                            cur.execute(
+                                "UPDATE pending_approvals SET status='SHADOW' WHERE id=%s",
+                                (sid,),
+                            )
+                            log(f"Shadow-only: {ssymbol} score={sscore} "
+                                f"setup={smeta['setup_type']} "
+                                f"regime={smeta['regime']} "
+                                f"stop_mult={_shadow_mult}")
+                        except Exception as _se:
+                            log(f"Shadow-only fout: {_se}")
+                    conn.commit()
 
 
         except Exception as e:
