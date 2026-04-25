@@ -434,24 +434,34 @@ def fetch_btc_candles_bitvavo(limit: int = 500) -> List[Dict[str, Any]]:
 
 def fetch_btc_candles_db(conn, limit: int = 500) -> List[Dict[str, Any]]:
     """
-    Haalt BTC candles op uit public.candles als Binance fallback.
-    Recentste eerst ophalen, dan omkeren voor chronologische volgorde.
+    Haalt BTC candles op uit public.candles als Bitvavo fallback.
+    Probeert meerdere symbol-aliases (BTC-EUR / BTCUSDT / BTCEUR) zodat
+    het werkt of we nu Bitvavo-style of Binance-style symbols hebben.
     """
+    aliases = [SYMBOL]
+    if SYMBOL.upper() == "BTC-EUR":
+        aliases += ["BTCUSDT", "BTCEUR", "BTC-USDT"]
+    elif SYMBOL.upper() == "BTCUSDT":
+        aliases += ["BTC-EUR", "BTCEUR"]
+
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("""
-            SELECT open_time, open, high, low, close, volume
-            FROM public.candles
-            WHERE symbol    = %s
-              AND timeframe = %s
-            ORDER BY open_time DESC
-            LIMIT %s
-            """, (SYMBOL, TIMEFRAME, limit))
-            rows = cur.fetchall()
-            # Omdraaien voor EMA berekening: oudste candle eerst
-            result = list(reversed([dict(r) for r in rows]))
-            log(f"✅ {len(result)} BTC candles opgehaald uit DB als fallback")
-            return result
+            for alias in aliases:
+                cur.execute("""
+                SELECT open_time, open, high, low, close, volume
+                FROM public.candles
+                WHERE symbol    = %s
+                  AND timeframe = %s
+                ORDER BY open_time DESC
+                LIMIT %s
+                """, (alias, TIMEFRAME, limit))
+                rows = cur.fetchall()
+                if rows:
+                    result = list(reversed([dict(r) for r in rows]))
+                    log(f"✅ {len(result)} BTC candles uit DB-fallback (symbol={alias})")
+                    return result
+            log(f"❌ Geen DB candles gevonden voor aliases {aliases} tf={TIMEFRAME}")
+            return []
     except Exception as e:
         safe_rollback(conn)
         log(f"⚠️ DB candles fout: {e}")
@@ -924,7 +934,11 @@ def print_regime_summary(conn) -> None:
 # ============================================================
 # MAIN
 # ============================================================
-_schrijf_heartbeat('OK', 'btc_regime bijgewerkt')
+# Heartbeat NIET hier op module-load schrijven — dat triggert ook bij imports
+# vanuit andere scripts (multi_coin_score, app.py) waardoor bot_health een
+# 'OK' status laat zien terwijl de cron al dagen niet succesvol heeft
+# gedraaid (bug die de echte mismatch met Bitvavo verborg). Heartbeat wordt
+# nu geschreven aan het eind van een succesvolle run (zie if __name__).
 
 if __name__ == "__main__":
 
@@ -969,8 +983,16 @@ if __name__ == "__main__":
             f"Huidig regime: {regime} | "
             f"Tijd: {elapsed:.1f}s")
 
+        # Heartbeat ALLEEN bij echt succes (n>0). Bij 0 rijen rapporteren we
+        # ERROR zodat watchdog/dashboard alarm slaan in plaats van valse OK.
+        if n > 0:
+            _schrijf_heartbeat('OK', f'{n} rijen verwerkt | regime={regime}')
+        else:
+            _schrijf_heartbeat('ERROR', '0 rijen geschreven (Bitvavo+DB-fallback faalden)')
+
     except Exception as e:
         log(f"❌ Fatale fout: {type(e).__name__}: {e}")
+        _schrijf_heartbeat('ERROR', f'{type(e).__name__}: {str(e)[:140]}')
         if conn:
             safe_rollback(conn)
         send_whatsapp(
