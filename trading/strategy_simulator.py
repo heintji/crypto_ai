@@ -118,13 +118,15 @@ def vwap(highs, lows, closes, vols):
 
 # --- DB helpers ---
 def get_candles(conn, sym, tf="1h", lim=260):
-    """Haalt OHLCV candles op uit DB (binance+bitvavo), chronologisch (oud->nieuw).
-    Standaard 260 candles voor backtesting over meerdere periodes."""
+    """Haalt OHLCV candles op uit DB (Bitvavo only), chronologisch (oud->nieuw).
+    Standaard 260 candles voor backtesting over meerdere periodes.
+    Binance is uitgesloten omdat Render Frankfurt sinds 2026-04-12
+    geen Binance API meer kan bereiken (geo-block)."""
     try:
         with conn.cursor() as cur:
             cur.execute("""SELECT open,high,low,close,volume,taker_buy_base,quote_volume,
                 EXTRACT(EPOCH FROM open_time)*1000 AS ts_ms
-                FROM public.candles WHERE symbol=%s AND timeframe=%s AND exchange IN ('binance','bitvavo')
+                FROM public.candles WHERE symbol=%s AND timeframe=%s AND exchange='bitvavo'
                 ORDER BY open_time DESC LIMIT %s""", (sym,tf,lim))
             rows=cur.fetchall()
         return [{"open":sf(r[0]),"high":sf(r[1]),"low":sf(r[2]),"close":sf(r[3]),
@@ -156,7 +158,7 @@ def get_coins(conn, markt_score_val=0):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT DISTINCT symbol FROM public.candles
-                WHERE exchange IN ('binance','bitvavo') AND timeframe='1h'
+                WHERE exchange='bitvavo' AND timeframe='1h'
                 GROUP BY symbol HAVING COUNT(*) >= 25
                 ORDER BY symbol
             """)
