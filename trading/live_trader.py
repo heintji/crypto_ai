@@ -2391,33 +2391,59 @@ def main_loop():
                         safe_rollback(conn)
 
                 # ────────────────────────────────────────────────────────────
-                # Shadow-only block met 3 quality-gates (zie docs/shadow_gates).
-                # Drempels staan in bot_state zodat aanpassen geen redeploy vergt:
-                #   score_drempel_shadow         (default 85)  - Gate 2
-                #   shadow_skip_non_trending     (default true) - Gate 1
-                #   shadow_stop_target_mult      (default 1.5)  - Gate 3
+                # Shadow-only block — Pakket C quality-gates. Alle drempels
+                # via bot_state zodat tunen geen redeploy vergt. Op basis
+                # van data-analyse die liet zien dat baseline shadow 12.5% WR
+                # had en filters tot 40-50% kunnen tillen.
                 # ────────────────────────────────────────────────────────────
-                _shadow_drempel = int(get_bot_state(conn, "score_drempel_shadow", "85"))
-                _btc_regime_now = safe_str(
-                    get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")
-                ).upper()
-                _skip_non_trending = safe_str(
-                    get_bot_state(conn, "shadow_skip_non_trending", "true")
-                ).lower() in ("true", "1", "yes")
-                try:
-                    _shadow_mult = float(
-                        get_bot_state(conn, "shadow_stop_target_mult", "1.5")
-                    )
-                except Exception:
-                    _shadow_mult = 1.5
+                from datetime import datetime as _dt
+                _now_utc = _dt.utcnow()
 
-                # Gate 1: alleen shadow openen wanneer BTC trending (BULL).
-                # In RANGE/BEAR werkt TREND_PULLBACK setup niet (data: 86%
-                # van trades hit stop direct zonder eerst in plus te bewegen).
+                # Helpers
+                def _bs_bool(k, default="true"):
+                    return safe_str(get_bot_state(conn, k, default)).lower() in ("true","1","yes","ja")
+                def _bs_int(k, default):
+                    try: return int(get_bot_state(conn, k, str(default)))
+                    except Exception: return default
+                def _bs_float(k, default):
+                    try: return float(get_bot_state(conn, k, str(default)))
+                    except Exception: return default
+
+                _shadow_drempel    = _bs_int("score_drempel_shadow", 80)
+                _shadow_score_max  = _bs_int("shadow_score_max", 100)
+                _shadow_mult       = _bs_float("shadow_stop_target_mult", 1.5)
+                _shadow_min_rr     = _bs_float("shadow_min_rr", 0.0)
+                _shadow_min_vol    = _bs_float("shadow_min_volume_24h_eur", 0.0)
+                _btc_regime_now    = safe_str(get_bot_state(conn, "btc_regime_huidig", "UNKNOWN")).upper()
+                _skip_non_trending = _bs_bool("shadow_skip_non_trending", "true")
+                _skip_weekend      = _bs_bool("shadow_skip_weekend", "true")
+                _skip_lunch        = _bs_bool("shadow_skip_lunch", "true")
+                _hour_min          = _bs_int("shadow_active_hours_min", 0)
+                _hour_max          = _bs_int("shadow_active_hours_max", 24)
+                _blocked_csv       = safe_str(get_bot_state(conn, "shadow_blocked_coins", ""))
+                _blocked_set = {s.strip().upper() for s in _blocked_csv.split(",") if s.strip()}
+
+                # Gate 1: BTC moet trending (BULL) zijn — anders alle filters skippen
                 _gate1_open = (not _skip_non_trending) or _btc_regime_now == "BULL"
+                # Gate 2: dag-van-de-week (skip weekend di-vr alleen)
+                _dow = _now_utc.isoweekday()  # 1=Ma .. 7=Zo
+                _gate_dow = (not _skip_weekend) or _dow in (2, 3, 4, 5)  # Di-Vr (Mo+Wo zijn slecht maar laten we niet wegfilteren — n>=185)
+                # ↑ correctie: data toont Ma 22.2% / Wo 22.1% slecht; we filteren op weekend (Za,Zo)
+                _gate_dow = (not _skip_weekend) or _dow not in (6, 7)  # alleen Za,Zo blocken
+                # Gate 3: uur-van-de-dag (active_hours + skip lunch)
+                _hour = _now_utc.hour
+                _gate_hour = (_hour_min <= _hour < _hour_max)
+                if _skip_lunch and _hour in (12, 13, 22):
+                    _gate_hour = False
+
                 if not _gate1_open:
-                    log(f"Shadow gate1 dicht — BTC regime={_btc_regime_now} "
-                        f"(skip_non_trending=ON, drempel={_shadow_drempel})")
+                    log(f"Shadow dicht — BTC regime={_btc_regime_now} (gate1)")
+                    conn.commit()
+                elif not _gate_dow:
+                    log(f"Shadow dicht — weekend dow={_dow} (gate dow)")
+                    conn.commit()
+                elif not _gate_hour:
+                    log(f"Shadow dicht — uur {_hour} buiten {_hour_min}-{_hour_max} (gate hour)")
                     conn.commit()
                 else:
                     cur.execute("""
@@ -2428,13 +2454,15 @@ def main_loop():
                                         NULLIF(regime,''), %s) AS regime_real
                         FROM pending_approvals
                         WHERE status = 'PENDING'
-                        AND score >= %s
-                        AND expires_at > NOW()
+                          AND score >= %s
+                          AND score <= %s
+                          AND expires_at > NOW()
                         ORDER BY score DESC
                         LIMIT 10
-                    """, (_btc_regime_now, _shadow_drempel,))
+                    """, (_btc_regime_now, _shadow_drempel, _shadow_score_max,))
                     shadow_only_query = True  # marker
                     shadow_rows = cur.fetchall()
+                    _opened = 0
                     for srow in shadow_rows:
                         try:
                             (sid, ssymbol, smarket, sscore, sentry, sstop, starget,
@@ -2442,11 +2470,38 @@ def main_loop():
                             sentry_f  = float(sentry or 0)
                             sstop_f   = float(sstop or 0)
                             starget_f = float(starget or 0)
+                            ssym_up   = (ssymbol or "").upper()
 
-                            # Gate 3: verbreed stop + target met multiplier zodat
-                            # micro-ruis niet meteen stop_loss triggert. Entry
-                            # blijft gelijk; stop verder weg, target verder weg.
-                            # Risk-reward ratio blijft daardoor hetzelfde.
+                            # Gate 4: coin-blocklist (10 coins met 0% WR)
+                            if ssym_up in _blocked_set:
+                                log(f"Shadow skip — {ssym_up} op blocklist")
+                                cur.execute("UPDATE pending_approvals SET status='SHADOW_BLOCKED' WHERE id=%s", (sid,))
+                                continue
+
+                            # Gate 5: min-RR check (target/stop ratio voor multiplier-aanpassing)
+                            if _shadow_min_rr > 0 and sentry_f > 0 and sstop_f > 0 and sstop_f < sentry_f:
+                                _rr = (starget_f - sentry_f) / max(sentry_f - sstop_f, 1e-9)
+                                if _rr < _shadow_min_rr:
+                                    log(f"Shadow skip — {ssym_up} RR={_rr:.2f} < {_shadow_min_rr}")
+                                    cur.execute("UPDATE pending_approvals SET status='SHADOW_LOW_RR' WHERE id=%s", (sid,))
+                                    continue
+
+                            # Gate 6: min-volume (24h) — vraag uit pending_approvals.payload of bitvavo
+                            if _shadow_min_vol > 0:
+                                try:
+                                    _vc = conn.cursor()
+                                    _vc.execute("SELECT COALESCE((payload->>'volume_24h_eur')::float, 0) FROM pending_approvals WHERE id=%s", (sid,))
+                                    _v = _vc.fetchone()
+                                    _vol = float(_v[0]) if _v and _v[0] else 0.0
+                                    _vc.close()
+                                    if _vol > 0 and _vol < _shadow_min_vol:
+                                        log(f"Shadow skip — {ssym_up} vol={_vol:.0f} < {_shadow_min_vol:.0f}")
+                                        cur.execute("UPDATE pending_approvals SET status='SHADOW_LOW_VOL' WHERE id=%s", (sid,))
+                                        continue
+                                except Exception:
+                                    pass  # volume veld optioneel — als ontbreekt, niet blokkeren
+
+                            # Gate 3: stop/target multiplier (verbreed tegen ruis-stops)
                             if (_shadow_mult and _shadow_mult != 1.0
                                     and sentry_f > 0 and sstop_f > 0
                                     and sstop_f < sentry_f):
@@ -2466,10 +2521,10 @@ def main_loop():
                                 "setup_type": safe_str(ssetup, "UNKNOWN"),
                                 "regime":     safe_str(sregime, _btc_regime_now or "UNKNOWN"),
                                 "shadow_only": True,
-                                "stop":   sstop_adj,
-                                "target": starget_adj,
-                                "stop_mult": _shadow_mult,
-                                "prebuy_id": str(sid or ""),
+                                "stop":       sstop_adj,
+                                "target":     starget_adj,
+                                "stop_mult":  _shadow_mult,
+                                "prebuy_id":  str(sid or ""),
                             }
                             sqty  = round(float(skelly or 7) / max(sentry_f, 0.0001), 6)
                             shadow_buy(ssymbol, sentry_f, sqty,
@@ -2478,12 +2533,14 @@ def main_loop():
                                 "UPDATE pending_approvals SET status='SHADOW' WHERE id=%s",
                                 (sid,),
                             )
-                            log(f"Shadow-only: {ssymbol} score={sscore} "
-                                f"setup={smeta['setup_type']} "
-                                f"regime={smeta['regime']} "
+                            _opened += 1
+                            log(f"Shadow open: {ssym_up} score={sscore} "
+                                f"setup={smeta['setup_type']} regime={smeta['regime']} "
                                 f"stop_mult={_shadow_mult}")
                         except Exception as _se:
                             log(f"Shadow-only fout: {_se}")
+                    if shadow_rows:
+                        log(f"Shadow scan: {_opened}/{len(shadow_rows)} opened (gates: blocklist, RR, vol, mult)")
                     conn.commit()
 
 
