@@ -986,6 +986,27 @@ if __name__ == "__main__":
         # Heartbeat ALLEEN bij echt succes (n>0). Bij 0 rijen rapporteren we
         # ERROR zodat watchdog/dashboard alarm slaan in plaats van valse OK.
         if n > 0:
+            # Sync bot_state.btc_regime_huidig zodat Gate 1 (live_trader
+            # shadow-only block) op de actuele regime baseert. Zonder deze
+            # sync bleef bot_state hangen op oude waarde, waardoor shadow
+            # trades onterecht geblokkeerd werden in BULL-markt.
+            try:
+                with conn.cursor() as _bs:
+                    _bs.execute("""
+                        INSERT INTO bot_state (key, value)
+                        VALUES ('btc_regime_huidig', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """, (regime,))
+                    _bs.execute("""
+                        INSERT INTO bot_state (key, value)
+                        VALUES ('monitor_btc_regime', %s)
+                        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """, (regime,))
+                conn.commit()
+                log(f"✅ bot_state.btc_regime_huidig gesynced naar '{regime}'")
+            except Exception as _be:
+                log(f"⚠️ bot_state sync fout: {_be}")
+                safe_rollback(conn)
             _schrijf_heartbeat('OK', f'{n} rijen verwerkt | regime={regime}')
         else:
             _schrijf_heartbeat('ERROR', '0 rijen geschreven (Bitvavo+DB-fallback faalden)')
