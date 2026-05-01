@@ -2526,9 +2526,17 @@ def main_loop():
                                 "stop_mult":  _shadow_mult,
                                 "prebuy_id":  str(sid or ""),
                             }
-                            sqty  = round(float(skelly or 7) / max(sentry_f, 0.0001), 6)
+                            # Trade-size: optioneel flat sizing via bot_state
+                            # shadow_sizing_mode='FLAT' + shadow_trade_size_eur=10 -> flat €10
+                            # anders: kelly-waarde uit pending_approvals (legacy)
+                            _sizing_mode = safe_str(get_bot_state(conn, "shadow_sizing_mode", "KELLY")).upper()
+                            if _sizing_mode == "FLAT":
+                                _trade_eur = _bs_float("shadow_trade_size_eur", 10.0)
+                            else:
+                                _trade_eur = float(skelly or 7)
+                            sqty  = round(_trade_eur / max(sentry_f, 0.0001), 6)
                             shadow_buy(ssymbol, sentry_f, sqty,
-                                       float(skelly or 7), smeta)
+                                       _trade_eur, smeta)
                             cur.execute(
                                 "UPDATE pending_approvals SET status='SHADOW' WHERE id=%s",
                                 (sid,),
