@@ -22,7 +22,17 @@ TWILIO_WHATSAPP_TO   = os.getenv('TWILIO_WHATSAPP_TO', '')
 
 # Services die in bot_health staan maar geen eigen Render-cron (meer) hebben.
 # Het script schrijft dan nooit een heartbeat; overslaan voorkomt false-positives.
-IGNORED_SERVICES = {'monte_carlo'}
+IGNORED_SERVICES = {
+    'monte_carlo',         # cron suspended
+    'history_fetcher',     # service verwijderd (Binance geo-block)
+    'bot_brain',           # cron suspended (cost-cut, was daily AI-analyse)
+    'ai_coach',            # cron suspended (cost-cut)
+    'market_simulator',    # cron suspended (cost-cut, alleen analyse)
+    'signal_replay',       # cron suspended (cost-cut, alleen analyse)
+    'strategy_sim',        # cron suspended (cost-cut, alleen analyse)
+    'history_simulator',   # cron suspended (cost-cut)
+    'regime_labeler',      # cron suspended (cost-cut, trader gebruikt btc_regime_4h direct)
+}
 
 def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] [WATCHDOG] {msg}", flush=True)
