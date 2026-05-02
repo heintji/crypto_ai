@@ -1700,13 +1700,16 @@ def detect_setup_type(candles_4h: List[Dict],
     div = detecteer_divergentie(closes_4h, candles_4h, 10)
     if div == "BULLISH" and current > vorige:
         return "BULLISH_DIVERGENCE", f"bull_div|RSI={rsi_4h:.0f}"
-    # ── TREND_PULLBACK v4.2: Keltner Channel + bounce-bevestiging ──
-    # Verbeterd: detecteert echte pullback naar support + bounce,
-    # i.p.v. alleen "dicht bij SMA20".
+    # ── TREND_PULLBACK v4.2 STRIKT: Keltner Channel + bounce-bevestiging ──
+    # Detecteert echte pullback naar support + bounce.
+    # De loose-fallback (sma20-pb zonder bounce) is verplaatst naar onderaan
+    # zodat VWAP_BOUNCE / VOLUME_ZONE_BOUNCE / BOUNCE / OVERSOLD_RECLAIM /
+    # MOMENTUM hun signalen ook kunnen registreren (data-spreiding).
+    dist_sma20_for_fallback = None
     if sma20_4h > sma50_4h and current > sma50_4h:
         kc_mid, kc_lower, kc_upper = keltner_bands(candles_4h, 20, 2.0)
         dist_sma20 = abs(current - sma20_4h) / max(sma20_4h, 1e-10)
-        # Keltner pullback: prijs in onderste zone (onder EMA of bij lower band)
+        dist_sma20_for_fallback = dist_sma20  # bewaar voor fallback onderaan
         in_keltner_zone = (kc_lower > 0 and current <= kc_mid * 1.005)
         bounce = is_bounce_confirmed(candles_4h)
         gain = recent_gain_pct(closes_4h, 5)
@@ -1715,9 +1718,6 @@ def detect_setup_type(candles_4h: List[Dict],
                 f"keltner_pb|dist_sma20={dist_sma20*100:.1f}%"
                 f"|bounce=OK|gain5={gain:.1f}%|RSI={rsi_4h:.0f}"
             )
-        # Fallback: oude detectie (bredere filter voor meer shadow data)
-        elif dist_sma20 < 0.025 and RSI_MIN <= rsi_4h <= 58:
-            return "TREND_PULLBACK", f"sma20_pb({dist_sma20*100:.1f}%)|RSI={rsi_4h:.0f}|NO_BOUNCE"
     vwap_val = vwap(candles_4h, 20)
     if vwap_val and current > vwap_val and vorige < vwap_val and rsi_4h < 55:
         return "VWAP_BOUNCE", f"vwap_cross({vwap_val:.4f})|RSI={rsi_4h:.0f}"
@@ -1739,6 +1739,15 @@ def detect_setup_type(candles_4h: List[Dict],
     mom = detecteer_momentum(closes_4h, 10)
     if 52 <= rsi_4h <= RSI_MAX and current > sma20_4h > sma50_4h and mom > 3:
         return "MOMENTUM", f"momentum({mom:.1f}%)|RSI={rsi_4h:.0f}"
+    # ── TREND_PULLBACK FALLBACK (laatste vangnet vóór UNKNOWN) ──
+    # Deze loose detectie was eerst inline na de Keltner-check, maar at
+    # andere setups op. Nu draait hij pas als geen ander setup vuurde.
+    if (dist_sma20_for_fallback is not None
+            and dist_sma20_for_fallback < 0.025
+            and RSI_MIN <= rsi_4h <= 58):
+        return "TREND_PULLBACK", (
+            f"sma20_pb({dist_sma20_for_fallback*100:.1f}%)|RSI={rsi_4h:.0f}|NO_BOUNCE"
+        )
     return "UNKNOWN", f"geen_setup|RSI={rsi_4h:.0f}"
 
 
