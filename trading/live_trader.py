@@ -2463,6 +2463,15 @@ def main_loop():
                     shadow_only_query = True  # marker
                     shadow_rows = cur.fetchall()
                     _opened = 0
+                    # Bepaal sizing-config 1x per scan
+                    _sizing_mode = safe_str(get_bot_state(conn, "shadow_sizing_mode", "KELLY")).upper()
+                    _sizing_balance_eur = None
+                    if _sizing_mode == "BALANCE_PCT" and shadow_rows:
+                        try:
+                            _sizing_balance_eur = get_eur_balance()
+                        except Exception as _be:
+                            log(f"Sizing: balance-fetch fout: {_be}, fallback FLAT")
+                            _sizing_mode = "FLAT"
                     for srow in shadow_rows:
                         try:
                             (sid, ssymbol, smarket, sscore, sentry, sstop, starget,
@@ -2526,12 +2535,18 @@ def main_loop():
                                 "stop_mult":  _shadow_mult,
                                 "prebuy_id":  str(sid or ""),
                             }
-                            # Trade-size: optioneel flat sizing via bot_state
-                            # shadow_sizing_mode='FLAT' + shadow_trade_size_eur=10 -> flat €10
-                            # anders: kelly-waarde uit pending_approvals (legacy)
-                            _sizing_mode = safe_str(get_bot_state(conn, "shadow_sizing_mode", "KELLY")).upper()
+                            # Trade-size: 3 modi via bot_state.shadow_sizing_mode
+                            #   FLAT         -> shadow_trade_size_eur (default 10)
+                            #   BALANCE_PCT  -> Bitvavo EUR-balance * shadow_sizing_pct,
+                            #                   geclamped tussen shadow_sizing_min/max
+                            #   KELLY (default) -> kelly-waarde uit pending_approvals (legacy)
                             if _sizing_mode == "FLAT":
                                 _trade_eur = _bs_float("shadow_trade_size_eur", 10.0)
+                            elif _sizing_mode == "BALANCE_PCT" and _sizing_balance_eur is not None:
+                                _pct  = _bs_float("shadow_sizing_pct", 0.12)
+                                _smin = _bs_float("shadow_sizing_min", 5.0)
+                                _smax = _bs_float("shadow_sizing_max", 15.0)
+                                _trade_eur = max(_smin, min(_smax, _sizing_balance_eur * _pct))
                             else:
                                 _trade_eur = float(skelly or 7)
                             sqty  = round(_trade_eur / max(sentry_f, 0.0001), 6)
