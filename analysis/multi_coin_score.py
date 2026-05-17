@@ -2900,7 +2900,22 @@ def scan_universe(conn, drempels: Dict) -> int:
             claude_txt = ""
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
-            live_toegestaan = (score >= score_drempel)  # live: score >= 85 (uit bot_state)
+
+            # ── Plan G filter (data 2026-04-30 t/m 2026-05-14, 408 shadow trades) ──
+            # Baseline:               20.1% win-rate over alle trades
+            # Score >= 85 + stop 2-5%: 67.7% win-rate (31 trades, +€6.53 PnL)
+            # Te krappe stops (<2%) raken intraday-noise; te wijde stops (>5%) hebben slechte R/R.
+            PLAN_G_MIN_SCORE = 85
+            PLAN_G_STOP_MIN = 0.02
+            PLAN_G_STOP_MAX = 0.05
+            stop_dist_pct = (current - stop) / current if current > 0 else 0.0
+            plan_g_stop_ok = PLAN_G_STOP_MIN <= stop_dist_pct <= PLAN_G_STOP_MAX
+            score_ok = (score >= max(score_drempel, PLAN_G_MIN_SCORE))
+            live_toegestaan = score_ok and plan_g_stop_ok
+
+            if score_ok and not plan_g_stop_ok:
+                log(f"PLAN_G filter {symbol_usdt}: score={score} OK maar "
+                    f"stop_dist={stop_dist_pct*100:.2f}% buiten 2-5% range — geen live")
 
             prebuy = {
                 "id":               str(uuid.uuid4()),
