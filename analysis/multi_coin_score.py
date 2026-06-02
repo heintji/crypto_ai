@@ -165,9 +165,21 @@ TRADING_HOURS_END       = int(os.getenv("TRADING_HOURS_END") or "24")
 BOT_STATE_TABLE         = "public.bot_state"
 
 # Score & filter instellingen
-MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "85")
+# 60d shadow data (2026-06-02): score 80-89 sweet spot (+262% sum_pct),
+# >=90 catastrofaal (-1690% sum_pct). Dus min=80, max=89.
+MIN_SCORE_TO_TRADE  = int(os.getenv("MIN_SCORE_TO_TRADE") or "80")
+MAX_SCORE_TO_TRADE  = int(os.getenv("MAX_SCORE_TO_TRADE") or "89")
 MIN_CHANCE          = int(os.getenv("MIN_CHANCE") or "75")
 MIN_CONFIDENCE      = int(os.getenv("MIN_CONFIDENCE") or "75")
+
+# Static blacklist — 8 coins met 0% win-rate over 60d (n>=10 elk,
+# samen -38% sum_pct). Kan via env-var overruled worden voor experimenten.
+STATIC_BLACKLIST = set(
+    s.strip().upper()
+    for s in (os.getenv("STATIC_BLACKLIST")
+              or "CROSS,CTC,GLMR,CSPR,CTSI,CTK,SOLV,BEAM").split(",")
+    if s.strip()
+)
 MAX_PREBUY_PER_DAY  = int(os.getenv("MAX_PREBUY_PER_DAY") or "200")
 PREBUY_EXPIRY_HOURS = int(os.getenv("PREBUY_EXPIRY_HOURS") or "2")
 
@@ -2739,6 +2751,10 @@ def scan_universe(conn, drempels: Dict) -> int:
 
         try:
             # ── Coin filters ───────────────────────────────
+            # Static blacklist (8 ramp-coins uit 60d data — instant, geen DB-call)
+            _sym_base = symbol_usdt.upper().replace("USDT", "").replace("BUSD", "").replace("EUR", "")
+            if _sym_base in STATIC_BLACKLIST:
+                tel_filter("static_blacklist"); update_sessie(symbol_usdt, 0, "static_blacklist"); continue
             if is_coin_blacklisted(conn, symbol_usdt):
                 tel_filter("blacklist"); update_sessie(symbol_usdt, 0, "blacklist"); continue
             if is_coin_on_cooldown(conn, symbol_usdt):
@@ -2901,16 +2917,18 @@ def scan_universe(conn, drempels: Dict) -> int:
 
             coin_stats = get_coin_statistieken(conn, symbol_usdt)
 
-            # ── Plan G filter (data 2026-04-30 t/m 2026-05-14, 408 shadow trades) ──
-            # Baseline:               20.1% win-rate over alle trades
-            # Score >= 85 + stop 2-5%: 67.7% win-rate (31 trades, +€6.53 PnL)
-            # Te krappe stops (<2%) raken intraday-noise; te wijde stops (>5%) hebben slechte R/R.
-            PLAN_G_MIN_SCORE = 85
+            # ── Plan G filter — REVISED 2026-06-02 op basis van 60d shadow data ──
+            # Eerste Plan G (apr-mei): score>=85 → 67.7% wr op 31 trades (te kleine n)
+            # Forward 60d (apr-jun): score 95+ → 11% wr, 90-94 → 6.7% wr (catastrofaal!)
+            #                        score 85-89 → 23% wr (+186% sum), 80-84 → 22% wr (+76% sum)
+            # Conclusie: score IS inverse boven 90. Houd 80-89 sweet spot.
+            PLAN_G_MIN_SCORE = MIN_SCORE_TO_TRADE  # 80
             PLAN_G_STOP_MIN = 0.02
             PLAN_G_STOP_MAX = 0.05
             stop_dist_pct = (current - stop) / current if current > 0 else 0.0
             plan_g_stop_ok = PLAN_G_STOP_MIN <= stop_dist_pct <= PLAN_G_STOP_MAX
-            score_ok = (score >= max(score_drempel, PLAN_G_MIN_SCORE))
+            _min_thr = max(score_drempel, PLAN_G_MIN_SCORE)
+            score_ok = (_min_thr <= score <= MAX_SCORE_TO_TRADE)
             live_toegestaan = score_ok and plan_g_stop_ok
 
             if score_ok and not plan_g_stop_ok:
