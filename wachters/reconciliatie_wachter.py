@@ -36,6 +36,16 @@ TIMEOUT = 15
 DB_RETRIES = 3
 DREMPEL = float(os.environ.get("AFWIJKING_DREMPEL_PCT", "1.0"))
 MIN_EUR = float(os.environ.get("ONBEKEND_ASSET_MIN_EUR", "5"))
+# Bekende restposities (besluit Hein 2026-06-06: niet verkopen, registreren).
+# Formaat: "ASSET:HOEVEELHEID,ASSET:HOEVEELHEID" — 5% tolerantie.
+BEKEND = {}
+for _deel in os.environ.get("BEKENDE_RESTPOSITIES", "").split(","):
+    if ":" in _deel:
+        _a, _q = _deel.split(":", 1)
+        try:
+            BEKEND[_a.strip().upper()] = float(_q)
+        except ValueError:
+            pass
 WACHTER = "reconciliatie-wachter"
 KOLOM = "crypto"
 
@@ -219,6 +229,9 @@ def main() -> None:
                 )
         for asset, werkelijk in echt.items():
             if asset not in verwacht:
+                bekend_qty = BEKEND.get(asset.upper())
+                if bekend_qty and abs(werkelijk - bekend_qty) / bekend_qty < 0.05:
+                    continue  # geregistreerde restpositie — bewust geaccepteerd
                 waarde = asset_waarde_eur(asset, werkelijk)
                 if waarde >= MIN_EUR:
                     afwijkingen.append(
