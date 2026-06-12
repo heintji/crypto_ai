@@ -1,1 +1,6 @@
 obsidian_vault/
+
+# Secrets — nooit committen (Mac-audit 12 juni 2026)
+.env
+.env.*
+*.key
