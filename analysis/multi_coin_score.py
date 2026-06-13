@@ -2893,14 +2893,27 @@ def scan_universe(conn, drempels: Dict) -> int:
             stop = max(stop, current * 0.94)
 
             support, weerstand = detecteer_support_weerstand(candles_4h, 20)
-            if support > 0 and stop < support * 0.98:
+            # FIX: alleen naar support snappen als die ÓNDER de huidige prijs ligt.
+            # Een gedetecteerde "support" boven de prijs is geen geldige long-stop —
+            # zonder deze guard duwde 'support * 0.99' de stop bóven de entry, waardoor
+            # de exit-check (prijs <= stop) direct op de eerste tik een STOP_LOSS gaf
+            # (death-by-fees: trades sloten binnen seconden op break-even-min-kosten).
+            if 0 < support < current and stop < support * 0.98:
                 stop = support * 0.99
-            if weerstand > 0 and target > weerstand * 1.05:
+            # Target alleen naar weerstand snappen als die BOVEN de prijs ligt.
+            if weerstand > current and target > weerstand * 1.05:
                 target = weerstand * 0.99
 
             vol_zone_low, vol_zone_high = bereken_volume_zone(candles_4h, 10)
-            if vol_zone_low > 0 and stop < vol_zone_low:
+            if 0 < vol_zone_low < current and stop < vol_zone_low:
                 stop = max(stop, vol_zone_low * 0.995)
+
+            # Vangnet: een long-stop MOET onder de instapprijs liggen. Mocht een override
+            # 'm tóch erboven hebben gezet, val terug op de ATR-stop (of -2%) i.p.v. een
+            # onmiddellijke stop-out te veroorzaken.
+            if stop >= current:
+                stop = (current - atr_val * atr_eff) if (atr_val and atr_val > 0) else current * 0.98
+                stop = max(stop, current * 0.94)
 
             kelly_eur = bereken_kelly_grootte(
                 win_rate      = exp_win_rate if exp_n >= 10 else 0.50,
