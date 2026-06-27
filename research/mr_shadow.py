@@ -18,8 +18,11 @@ Logt naar nieuwe tabel `mr_shadow_trades`. Bedoeld als Render-cron (elk uur).
 Env: DATABASE_URL.  Dependencies: psycopg2-binary.
 """
 import os
+from datetime import datetime, timezone
+
 import psycopg2
 
+INTERVAL_S = 4 * 3600  # 4h-candle in seconden (voor 'afgesloten?'-check)
 ATR_MULT = 3.0      # stop = entry - 3 x ATR
 TARGET_R = 0.5      # doel = 0,5 x risico  (=> 1,5 x ATR boven entry)
 RSI_DREMPEL = 25.0
@@ -126,23 +129,30 @@ def resolve_open(cur, candles):
     return closed, len(open_rows)
 
 
-def scan_signals(cur, candles):
-    """Zoek nieuwe RSI<25-signalen op de laatste gesloten candle per munt."""
-    # munten die al een open trade hebben -> overslaan
+def scan_signals(cur, candles, now):
+    """Zoek nieuwe RSI<25-signalen op de laatste AFGESLOTEN 4h-candle per munt.
+
+    Belangrijk: de nieuwste candle in de DB is meestal de nog-VORMENDE bar
+    (open_time tot +4u). Die sluiten we uit — anders is RSI/entry op halve data
+    en wijken we af van de backtest (die op afgesloten candles werkte)."""
     cur.execute("SELECT coin FROM mr_shadow_trades WHERE status='OPEN'")
     open_coins = {r[0] for r in cur.fetchall()}
     nieuw = 0
     for coin, rows in candles.items():
-        if coin in open_coins or len(rows) < ATR_PERIOD + 2:
+        if coin in open_coins:
             continue
-        closes = [r[4] for r in rows]
+        # alleen afgesloten candles (now >= open_time + 4u)
+        closed = [r for r in rows if (now - r[0]).total_seconds() >= INTERVAL_S]
+        if len(closed) < ATR_PERIOD + 2:
+            continue
+        closes = [r[4] for r in closed]
         r = rsi(closes)
         if r is None or r >= RSI_DREMPEL:
             continue
-        a = atr(rows)
+        a = atr(closed)
         if not a or a <= 0:
             continue
-        last = rows[-1]
+        last = closed[-1]
         entry = last[4]
         stop = entry - ATR_MULT * a
         risk = entry - stop
@@ -169,10 +179,11 @@ def main():
         with conn.cursor() as cur:
             ensure_table(cur)
             conn.commit()
+            now = datetime.now(timezone.utc)
             candles = load_candles(cur, days=20)
             closed, open_n = resolve_open(cur, candles)
             conn.commit()
-            nieuw = scan_signals(cur, candles)
+            nieuw = scan_signals(cur, candles, now)
             conn.commit()
             cur.execute("""SELECT
                 COUNT(*) FILTER (WHERE status='OPEN'),
