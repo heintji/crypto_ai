@@ -2942,7 +2942,13 @@ def scan_universe(conn, drempels: Dict) -> int:
             plan_g_stop_ok = PLAN_G_STOP_MIN <= stop_dist_pct <= PLAN_G_STOP_MAX
             _min_thr = max(score_drempel, PLAN_G_MIN_SCORE)
             score_ok = (_min_thr <= score <= MAX_SCORE_TO_TRADE)
-            live_toegestaan = score_ok and plan_g_stop_ok
+            # P0-2 + P1-5: neem de bot-brede hardlimieten (live_ok) EN de
+            # ZOMBIE-classificatie mee — voorheen hing live_toegestaan alleen
+            # op score+stopafstand, waardoor pauze/daily-stop/max-open en
+            # verliesgevende coins de live-gate omzeilden.
+            live_toegestaan = bepaal_live_toegestaan(
+                score_ok, plan_g_stop_ok, live_ok, coin_cluster
+            )
 
             if score_ok and not plan_g_stop_ok:
                 log(f"PLAN_G filter {symbol_usdt}: score={score} OK maar "
@@ -3168,6 +3174,18 @@ if __name__ == "__main__":
         except Exception as _e:
             log(f"scanner_last_run fout: {_e}")
         _schrijf_heartbeat('OK', f'scan klaar: {_SESSIE.get("gescand", 0)} coins')
+        # --- Mean-reversion shadow-test (RSI<25) meeliften op deze 15-min cron ---
+        # Volledig geïsoleerd: eigen DB-verbinding + try/except, kan de live-scan
+        # NOOIT breken. Logt naar mr_shadow_trades (apart). Geen nieuwe cron nodig.
+        try:
+            import os as _os
+            _root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+            from research.mr_shadow import main as _mr_shadow_main
+            _mr_shadow_main()
+        except Exception as _mr_e:
+            log(f"[mr-shadow] overgeslagen (scan niet geraakt): {_mr_e}")
         sys.exit(0)
 
     except KeyboardInterrupt:
