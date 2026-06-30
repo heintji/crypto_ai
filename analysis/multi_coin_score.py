@@ -3186,6 +3186,14 @@ if __name__ == "__main__":
             _mr_shadow_main()
         except Exception as _mr_e:
             log(f"[mr-shadow] overgeslagen (scan niet geraakt): {_mr_e}")
+        # --- MR-Trail: verbeterde variant (stop -2% + trailing 1xATR), PARALLEL ---
+        # Spiegelt mr_shadow-entries -> mr_trail_trades. Eigen try/except, kan niets
+        # breken. Draait NA mr_shadow (gebruikt z'n entries). Doel: vergelijken.
+        try:
+            from research.mr_trail import main as _mr_trail_main
+            _mr_trail_main()
+        except Exception as _mt_e:
+            log(f"[mr-trail] overgeslagen: {_mt_e}")
         sys.exit(0)
 
     except KeyboardInterrupt:
