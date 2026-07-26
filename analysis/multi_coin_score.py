@@ -3194,6 +3194,14 @@ if __name__ == "__main__":
             _mr_trail_main()
         except Exception as _mt_e:
             log(f"[mr-trail] overgeslagen: {_mt_e}")
+        # --- MR-Ultimate: data-verzoende variant (RSI-band [15,25) + vola-filter,
+        # stop -2%, doel +3,5%), PARALLEL. Eigen tabel mr_ultimate_trades + eigen
+        # try/except, kan de scan NOOIT breken. Doel: 1 week vergelijken. ---
+        try:
+            from research.mr_ultimate import main as _mr_ult_main
+            _mr_ult_main()
+        except Exception as _mu_e:
+            log(f"[mr-ultimate] overgeslagen: {_mu_e}")
         sys.exit(0)
 
     except KeyboardInterrupt:
