@@ -13,6 +13,7 @@ Stuurt een duidelijk WhatsApp bericht als iets mis is:
 
 import os, psycopg2, time, urllib.request, urllib.parse, base64
 from datetime import datetime, timezone, timedelta
+from bot_invarianten import beoordeel_heartbeat
 
 DATABASE_URL         = os.getenv('DATABASE_URL', '')
 TWILIO_ACCOUNT_SID   = os.getenv('TWILIO_ACCOUNT_SID', '')
@@ -32,6 +33,11 @@ IGNORED_SERVICES = {
     'strategy_sim',        # cron suspended (cost-cut, alleen analyse)
     'history_simulator',   # cron suspended (cost-cut)
     'regime_labeler',      # cron suspended (cost-cut, trader gebruikt btc_regime_4h direct)
+    # 2026-08-06 kostenbesparing: crypto draait alleen nog schaduw, deze zijn gesuspendeerd.
+    'live_trader',         # live handel; live-pad stond al geblokkeerd (bot_running=false)
+    'trade_monitor',       # bewaakte open trades; er staat niets levends open
+    'build_btc_regime',    # schreef sinds 4-7-2026 niets meer naar btc_regime_4h
+    'webhook',             # web service crypto_ai (WhatsApp START/STOP + rapporten)
 }
 
 def log(msg):
@@ -89,27 +95,29 @@ def run():
             if svc in IGNORED_SERVICES:
                 log(f"SKIP [{svc}]: in IGNORED_SERVICES")
                 continue
-            sec_oud = int(sec_oud or 0)
-            min_oud = sec_oud // 60
-            uur_oud = min_oud // 60
-            tolerantie = hb_sec * 2  # Geef dubbele tijd als tolerantie
+            # sec_oud is None als laatste_run NULL is (service NOOIT gedraaid).
+            # Niet naar 0 coercen — dat verborg juist de stilstand (13-dagen-bug).
+            sec_oud = int(sec_oud) if sec_oud is not None else None
+            probleem_hb, ernst_hb, tolerantie = beoordeel_heartbeat(sec_oud, hb_sec)
 
             # Label hoe lang geleden
-            if sec_oud < 60:
+            if sec_oud is None:
+                tijdlabel = "NOOIT GEDRAAID"
+            elif sec_oud < 60:
                 tijdlabel = f"{sec_oud}s geleden"
-            elif min_oud < 60:
-                tijdlabel = f"{min_oud}m geleden"
+            elif sec_oud // 60 < 60:
+                tijdlabel = f"{sec_oud // 60}m geleden"
             else:
-                tijdlabel = f"{uur_oud}u {min_oud % 60}m geleden"
+                tijdlabel = f"{sec_oud // 3600}u {(sec_oud // 60) % 60}m geleden"
 
-            # Check 1: Heartbeat te oud?
-            if sec_oud > tolerantie:
+            # Check 1: Heartbeat ontbreekt / te oud?
+            if probleem_hb:
                 problemen.append({
                     'service':   svc,
                     'type':      'GEEN HEARTBEAT',
                     'detail':    f"Laatste run: {tijdlabel} (max: {tolerantie//60}m)",
                     'render':    render_url or '',
-                    'ernst':     'KRITIEK' if sec_oud > tolerantie * 3 else 'HOOG',
+                    'ernst':     ernst_hb,
                 })
                 log(f"PROBLEEM [{svc}]: geen heartbeat — {tijdlabel}")
             else:
