@@ -95,6 +95,16 @@ import psycopg2
 import psycopg2.extras
 import requests
 
+# bot_invarianten staat in de repo-root. Dit script wordt gestart als
+# `python analysis/multi_coin_score.py`, waardoor alleen analysis/ in sys.path
+# staat — voeg de root expliciet toe. Zonder deze import gaf regel ~2950 sinds
+# 27 juni een NameError op bepaal_live_toegestaan voor elke signaal-coin in het
+# live-gate-pad (de schaduwregistratie zit daar vóór en had er geen last van).
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from bot_invarianten import bepaal_live_toegestaan
+
 def _schrijf_heartbeat(status='OK', details=''):
     try:
         import psycopg2, os as _os2
