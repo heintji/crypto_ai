@@ -421,6 +421,12 @@ def fetch_btc_candles_bitvavo(limit: int = 500) -> List[Dict[str, Any]]:
                     "close":     safe_float(c[4]),
                     "volume":    safe_float(c[5]),
                 })
+            # Bitvavo levert candles NIEUWSTE-eerst; de EMA-berekening en de
+            # insert-lus verwachten OUDSTE-eerst. Zonder deze sort verwerkte de
+            # lus (start_idx=EMA_PERIOD) juist de oudste candles en berekende de
+            # EMA200 op omgekeerde data → nieuwste rij liep ~33 dagen achter en
+            # het regime-label klopte niet (fix 10-8). plan_u_shadow sorteert al zo.
+            candles.sort(key=lambda c: c["open_time"])
             log(f"✅ {len(candles)} BTC candles opgehaald van Bitvavo")
             return candles
         except Exception as e:

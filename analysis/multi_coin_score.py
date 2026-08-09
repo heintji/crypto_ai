@@ -3212,6 +3212,40 @@ if __name__ == "__main__":
             _mr_ult_main()
         except Exception as _mu_e:
             log(f"[mr-ultimate] overgeslagen: {_mu_e}")
+        # --- BTC-regime verversen als het stilstaat (was 5+ weken oud) ---
+        # build_btc_regime.py draaide in de gesuspendeerde worker-suite en heeft
+        # geen eigen cron. Guard: alleen draaien als data > 4h oud; subprocess
+        # zodat sys.exit() in dat script deze scan nooit kan raken.
+        try:
+            _regime_vers = False
+            _rc = db_connect()
+            with _rc.cursor() as _cur:
+                _cur.execute("SELECT MAX(open_time) FROM public.btc_regime_4h")
+                _row = _cur.fetchone()
+                if _row and _row[0]:
+                    _lt = _row[0]
+                    if _lt.tzinfo is None:
+                        _lt = _lt.replace(tzinfo=timezone.utc)
+                    _regime_vers = (now_utc() - _lt).total_seconds() < 4 * 3600
+            _rc.close()
+            if not _regime_vers:
+                import subprocess as _sp
+                log("[btc-regime] data >4u oud — build_btc_regime bijwerken")
+                _sp.run([sys.executable,
+                         os.path.join(_REPO_ROOT, "research", "build_btc_regime.py")],
+                        timeout=180)
+        except Exception as _br_e:
+            log(f"[btc-regime] verversen overgeslagen: {_br_e}")
+        # --- Plan G v2 schaduw-consumer: herstelt de GROENE shadow-helft ---
+        # live_trader (worker) staat gesuspendeerd op Render, waardoor pendings
+        # sinds 26-6 verliepen zonder shadow-trade. Dit voert exact hetzelfde
+        # shadow-only block + shadow-exits uit als one-pass. Eigen DB-verbinding
+        # + try/except: kan de scan NOOIT breken. Geen nieuwe cron nodig.
+        try:
+            from research.plan_g_shadow import main as _pg_main
+            _pg_main()
+        except Exception as _pg_e:
+            log(f"[plan-g-shadow] overgeslagen (scan niet geraakt): {_pg_e}")
         sys.exit(0)
 
     except KeyboardInterrupt:
