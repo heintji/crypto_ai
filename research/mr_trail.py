@@ -127,6 +127,27 @@ def main():
             candles = load_candles(cur, days=20)
             closed = resolve_open(cur, candles)
             conn.commit()
+        # --- MEETLAAG: netto-PnL met kosten (fees+spread) op gesloten trades.
+        # Eigen try/except: kan de strategie/scan NOOIT breken. Raakt entries/
+        # exits/trailing NIET aan; vult alleen fee_pct/spread_pct/pnl_net_pct
+        # waar die nog NULL zijn (idempotent). Zie research/mr_trail_cost.py.
+        try:
+            try:
+                from research.mr_trail_cost import apply_costs
+            except ImportError:
+                from mr_trail_cost import apply_costs
+            n_cost = apply_costs(conn)
+            if n_cost:
+                print(f"[mr-trail] kosten berekend voor {n_cost} gesloten trades",
+                      flush=True)
+        except Exception as _ce:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            print(f"[mr-trail] kostenlaag overgeslagen (strategie niet geraakt): {_ce}",
+                  flush=True)
+        with conn.cursor() as cur:
             cur.execute("""SELECT COUNT(*) FILTER (WHERE status='OPEN'),
                 COUNT(*) FILTER (WHERE status IN('WIN','LOSS','TIME')),
                 COUNT(*) FILTER (WHERE status='WIN'),
