@@ -3204,6 +3204,14 @@ if __name__ == "__main__":
             _mr_trail_main()
         except Exception as _mt_e:
             log(f"[mr-trail] overgeslagen: {_mt_e}")
+        # --- Regime-watcher: legt 1x/dag vast of de bot de marktsoort betrouwbaar
+        # herkent (versheid + consistentie tussen de regime-bronnen), zodat we later
+        # kunnen terugkijken. Puur meten, eigen try/except, kan de scan niet breken.
+        try:
+            from research.regime_watch import main as _regime_watch_main
+            _regime_watch_main()
+        except Exception as _rw_e:
+            log(f"[regime-watch] overgeslagen: {_rw_e}")
         # --- MR-Ultimate: data-verzoende variant (RSI-band [15,25) + vola-filter,
         # stop -2%, doel +3,5%), PARALLEL. Eigen tabel mr_ultimate_trades + eigen
         # try/except, kan de scan NOOIT breken. Doel: 1 week vergelijken. ---
