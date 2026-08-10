@@ -4,8 +4,12 @@ Fake-DB (geen netwerk, geen echte database): bewijst dat
   1. een geldig PENDING signaal (score 80-89, RR >= min_rr) het INSERT-pad
      naar experience_trades bereikt en de pending op status SHADOW zet;
   2. de gates (blocklist / lage RR) correct blokkeren;
-  3. de close-pass een open shadow bij stop-hit als CLOSED/LOSS wegschrijft
-     en bij target-hit als CLOSED/WIN.
+  3. de close-pass een open shadow candle-based (uit de `candles`-tabel,
+     zelfde Bitvavo-EUR-bron als de entry) bij stop-hit als CLOSED/LOSS
+     wegschrijft en bij target-hit als CLOSED/WIN — op de STOP/TARGET-prijs
+     zelf, nooit op een losse ticker uit een andere munt;
+  4. de sanity-guard een schaal/munt-mismatch (|pnl| boven plafond, zoals
+     de -98%/+15,6% van de Binance-USDT-bug van 10-8) NIET wegschrijft.
 """
 import datetime as dt
 from datetime import timezone
@@ -41,6 +45,9 @@ class FakeCursor:
             self._result = [(self.db.monitor_last_run,)]
         elif "FROM experience_trades WHERE status='OPEN' AND is_shadow=TRUE" in s:
             self._result = list(self.db.open_shadow_rows)
+        elif "FROM candles" in s:
+            sym, since = params[0], params[1]
+            self._result = [r for r in self.db.candles.get(sym, []) if r[0] > since]
         self.rowcount = 1
 
     def fetchone(self):
@@ -78,6 +85,7 @@ class FakeConn:
         }
         self.pending_rows = []
         self.open_shadow_rows = []
+        self.candles = {}             # symbol -> [(open_time, high, low, close)]
         self.monitor_last_run = None  # trade_monitor NIET actief
 
     def cursor(self):
@@ -165,53 +173,88 @@ def test_open_pass_slaat_over_als_live_trader_actief():
 
 
 # ────────────────────────────────────────────────────────────
-# CLOSE-PASS
+# CLOSE-PASS (candle-based, zelfde EUR-bron als entry)
 # ────────────────────────────────────────────────────────────
-def _open_shadow_row(entry=1.0, stop=0.95, target=1.10, minutes_open=60):
+def _open_shadow_row(entry=1.0, stop=0.95, target=1.10, minutes_open=600):
     et = dt.datetime.now(timezone.utc) - dt.timedelta(minutes=minutes_open)
     # (trade_key, symbol, entry, stop, target, qty, amount_eur, entry_time, max_seen, min_seen)
     return ("SHADOW|TSTUSDT|1", "TSTUSDT", entry, stop, target, 10.0, 10.0, et, None, None)
 
 
-def test_close_pass_stop_hit_wordt_loss(monkeypatch):
+def _candle(hours_ago, high, low, close):
+    """Volledig afgesloten 4h-candle (open_time = hours_ago uur terug)."""
+    t = dt.datetime.now(timezone.utc) - dt.timedelta(hours=hours_ago)
+    return (t, high, low, close)
+
+
+def test_close_pass_stop_hit_wordt_loss_op_stopprijs():
     conn = FakeConn()
     conn.open_shadow_rows = [_open_shadow_row()]
-    monkeypatch.setattr(pg, "get_binance_price", lambda s: 0.94)  # onder stop
+    conn.candles["TSTUSDT"] = [_candle(8, 1.02, 0.94, 0.96)]  # low onder stop
     assert pg.close_pass(conn) == 1
     sql, params = _sqls(conn, "status='CLOSED'")[0]
     outcome, exit_reden = params[0], params[-2]
     assert outcome == "LOSS" and exit_reden == "STOP_LOSS"
+    assert params[4] == 0.95          # exit_price == STOP zelf, geen ticker
+    assert abs(params[2] - (-5.0)) < 0.01  # pnl_pct ~ -5%
 
 
-def test_close_pass_target_hit_wordt_win(monkeypatch):
+def test_close_pass_target_hit_wordt_win_op_targetprijs():
     conn = FakeConn()
     conn.open_shadow_rows = [_open_shadow_row()]
-    monkeypatch.setattr(pg, "get_binance_price", lambda s: 1.11)  # boven target
+    conn.candles["TSTUSDT"] = [_candle(8, 1.11, 0.99, 1.08)]  # high boven target
     assert pg.close_pass(conn) == 1
     sql, params = _sqls(conn, "status='CLOSED'")[0]
     assert params[0] == "WIN" and params[-2] == "TARGET_HIT"
+    assert params[4] == 1.10          # exit_price == TARGET zelf
+    assert abs(params[2] - 10.0) < 0.01  # pnl_pct ~ +10%
 
 
-def test_close_pass_max_hold_sluit_na_48u(monkeypatch):
+def test_close_pass_max_hold_sluit_na_48u_op_candleclose():
     conn = FakeConn()
     conn.open_shadow_rows = [_open_shadow_row(minutes_open=49 * 60)]
-    monkeypatch.setattr(pg, "get_binance_price", lambda s: 1.0)  # tussenin
+    conn.candles["TSTUSDT"] = [_candle(5, 1.03, 0.98, 1.01)]  # tussenin, na deadline
     assert pg.close_pass(conn) == 1
-    assert _sqls(conn, "status='CLOSED'")[0][1][-2] == "MAX_HOLD_TIME"
+    sql, params = _sqls(conn, "status='CLOSED'")[0]
+    assert params[-2] == "MAX_HOLD_TIME"
+    assert params[4] == 1.01          # exit op candle-close
 
 
-def test_close_pass_geen_exit_update_alleen_extremen(monkeypatch):
+def test_close_pass_geen_exit_update_alleen_extremen():
     conn = FakeConn()
     conn.open_shadow_rows = [_open_shadow_row()]
-    monkeypatch.setattr(pg, "get_binance_price", lambda s: 1.02)
+    conn.candles["TSTUSDT"] = [_candle(8, 1.05, 0.99, 1.02)]  # binnen band
     assert pg.close_pass(conn) == 0
     assert not _sqls(conn, "status='CLOSED'")
     assert _sqls(conn, "SET max_price_seen")
 
 
-def test_close_pass_slaat_over_als_monitor_actief(monkeypatch):
+def test_close_pass_zonder_candles_doet_niets():
+    """Geen (afgesloten) candles na entry -> rij blijft ongemoeid OPEN."""
+    conn = FakeConn()
+    conn.open_shadow_rows = [_open_shadow_row(minutes_open=30)]
+    assert pg.close_pass(conn) == 0
+    assert not _sqls(conn, "status='CLOSED'")
+    assert not _sqls(conn, "SET max_price_seen")
+
+
+def test_close_pass_slaat_over_als_monitor_actief():
     conn = FakeConn()
     conn.monitor_last_run = pg.now_utc()
     conn.open_shadow_rows = [_open_shadow_row()]
-    monkeypatch.setattr(pg, "get_binance_price", lambda s: 0.5)
+    conn.candles["TSTUSDT"] = [_candle(8, 1.02, 0.50, 0.60)]
     assert pg.close_pass(conn) == 0
+
+
+def test_close_pass_sanity_guard_blokkeert_schaal_mismatch():
+    """Regressietest voor de 10-8-bug: een exit-prijs uit een verkeerde
+    munt/schaal (FUN: 0.017x entry -> -98%) mag NOOIT worden weggeschreven.
+    Zonder stop simuleert de MAX_HOLD-exit op zo'n kapotte koers de bug."""
+    conn = FakeConn()
+    conn.open_shadow_rows = [
+        ("SHADOW|FUNUSDT|1", "FUNUSDT", 0.019391, 0.0, 0.0, 10.0, 10.0,
+         dt.datetime.now(timezone.utc) - dt.timedelta(hours=49), None, None),
+    ]
+    conn.candles["FUNUSDT"] = [_candle(5, 0.00035, 0.00033, 0.000342)]
+    assert pg.close_pass(conn) == 0
+    assert not _sqls(conn, "status='CLOSED'")  # -98% -> SANITY-SKIP, blijft OPEN

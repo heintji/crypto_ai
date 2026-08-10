@@ -48,6 +48,8 @@ from typing import Any, Dict, Optional
 import psycopg2
 import requests
 
+from datetime import timedelta
+
 DATABASE_URL       = (os.getenv("DATABASE_URL") or "").strip()
 BITVAVO_API_KEY    = (os.getenv("BITVAVO_API_KEY") or "").strip()
 BITVAVO_API_SECRET = (os.getenv("BITVAVO_API_SECRET") or "").strip()
@@ -65,7 +67,17 @@ MAX_HOLD_HOURS = int(os.getenv("MAX_HOLD_HOURS") or "24")
 # dekt de 15-min cron-cadans af zonder stale entries.
 MAX_PENDING_AGE_MIN = int(os.getenv("PLAN_G_MAX_PENDING_AGE_MIN") or "20")
 
-BINANCE_BASE = "https://api.binance.com/api/v3"
+# Sanity-plafond (bugfix 10-8): een shadow-close met |pnl_pct| boven dit
+# plafond is vrijwel zeker een prijs/schaal-fout (verkeerde munt of ander
+# asset), geen echte trade-uitkomst. Zulke rijen worden GELOGD en NIET
+# weggeschreven, zodat een toekomstige bron-mismatch de meting nooit meer
+# stilletjes kan vergiftigen. Stops zitten op 2-5% x mult(1.5) en targets
+# in dezelfde orde; 30% is dus ruim boven elk legitiem exit-percentage.
+MAX_ABS_PNL_PCT = float(os.getenv("PLAN_G_MAX_ABS_PNL_PCT") or "30")
+
+# 4h-candle in seconden — voor de 'is deze candle afgesloten?'-check
+CANDLE_INTERVAL_S = 4 * 3600
+
 BITVAVO_BASE = "https://api.bitvavo.com"
 
 
@@ -152,15 +164,31 @@ def get_eur_balance() -> Optional[float]:
     return None
 
 
-def get_binance_price(symbol_usdt: str) -> Optional[float]:
-    """Publieke Binance-koers (zelfde bron als de scanner-entries)."""
+def load_closed_candles_4h(conn, symbol: str, since) -> list:
+    """Volledig AFGESLOTEN 4h-candles voor `symbol` met open_time > since.
+
+    De `candles`-tabel wordt door history_fetcher gevuld met Bitvavo
+    {COIN}-EUR data, opgeslagen onder de {COIN}USDT-symbolnaam — exact
+    dezelfde bron én munt (EUR) als de entry die de scanner in
+    pending_approvals schrijft. Entry en exit komen zo altijd uit
+    dezelfde reeks. De nog-vormende candle wordt uitgesloten.
+    Retourneert [(open_time, high, low, close), ...] oplopend.
+    """
     try:
-        r = requests.get(BINANCE_BASE + "/ticker/price",
-                         params={"symbol": symbol_usdt}, timeout=10)
-        r.raise_for_status()
-        return safe_float(r.json().get("price"))
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT open_time, high, low, close FROM candles
+                WHERE symbol=%s AND timeframe='4h' AND open_time > %s
+                ORDER BY open_time ASC
+            """, (symbol, since))
+            rows = cur.fetchall()
     except Exception:
-        return None
+        conn.rollback()
+        return []
+    _now = now_utc()
+    return [(t, safe_float(h), safe_float(lo), safe_float(c))
+            for (t, h, lo, c) in rows
+            if (_now - t).total_seconds() >= CANDLE_INTERVAL_S]
 
 
 # ============================================================
@@ -369,8 +397,21 @@ def open_pass(conn, forceer_tijdgates: bool = False) -> int:
 
 
 # ============================================================
-# CLOSE-PASS — zelfde exits als trade_monitor.evaluate_shadow_for_symbol
-# (stop / target / 48u max-hold; outcome herberekend uit pnl_eur)
+# CLOSE-PASS — zelfde exits als trade_monitor (stop / target / 48u
+# max-hold), maar candle-based uit de `candles`-tabel, zoals de
+# geverifieerde consumers mr_shadow/mr_trail (candle-low vs stop,
+# candle-high vs target).
+#
+# PRIJS/SCHAAL-BUGFIX 10-8: de entry uit pending_approvals is de Bitvavo
+# {COIN}-EUR-koers (de scanner haalt zijn candles bij Bitvavo; zie
+# multi_coin_score.fetch_candles / usdt_to_bitvavo_market). De oude
+# close-pass haalde de exit-koers echter live bij Binance ({COIN}USDT,
+# in USDT). EUR vs USDT scheelt ~15% (EURUSD), waardoor vrijwel elke
+# trade direct als nep-TARGET_HIT (+15,6% gem.) sloot; bij coins waar
+# Binance' USDT-notering een ander geschaald asset is (bv. FUN:
+# Binance 0.000342 vs Bitvavo 0.0194) ontstond een nep-STOP_LOSS van
+# -98%. De `candles`-tabel bevat dezelfde Bitvavo-EUR-reeks als de
+# entry, dus entry en exit komen nu gegarandeerd uit dezelfde munt.
 # ============================================================
 def close_pass(conn) -> int:
     # Guard: als trade_monitor zelf draait (verse heartbeat) niets doen
@@ -412,24 +453,38 @@ def close_pass(conn) -> int:
             target     = safe_float(target)
             qty        = safe_float(qty)
             amount_eur = safe_float(amount_eur, 10.0)
-            current    = get_binance_price(symbol)
-            if not current or current <= 0:
+            if not entry_time or entry <= 0:
                 continue
 
-            hold_min = ((now_utc() - entry_time).total_seconds() / 60) if entry_time else 0.0
-            max_seen = max(safe_float(max_seen, current), current)
-            min_seen = min(safe_float(min_seen, current) or current, current)
+            # Alleen candles die volledig NA de entry vallen (open_time >
+            # entry_time): de candle waarin de entry viel bevat ook
+            # pre-entry-beweging — meenemen zou lookahead zijn (zelfde
+            # keuze als mr_shadow/mr_trail: fut = rows met t > entry_ts).
+            candles = load_closed_candles_4h(conn, symbol, entry_time)
+            if not candles:
+                continue
 
+            deadline   = entry_time + timedelta(minutes=max_hold_min)
+            max_seen   = safe_float(max_seen, entry) or entry
+            min_seen   = safe_float(min_seen, entry) or entry
             exit_reden = None
-            if hold_min >= max_hold_min:
-                exit_reden = "MAX_HOLD_TIME"
-            elif stop > 0 and current <= stop:
-                exit_reden = "STOP_LOSS"
-            elif target > 0 and current >= target:
-                exit_reden = "TARGET_HIT"
+            exit_price = None
+            exit_ts    = None
+            for (t, h, lo, c) in candles:
+                max_seen = max(max_seen, h)
+                min_seen = min(min_seen, lo)
+                if stop > 0 and lo <= stop:
+                    exit_reden, exit_price, exit_ts = "STOP_LOSS", stop, t
+                    break
+                if target > 0 and h >= target:
+                    exit_reden, exit_price, exit_ts = "TARGET_HIT", target, t
+                    break
+                if t + timedelta(seconds=CANDLE_INTERVAL_S) >= deadline:
+                    exit_reden, exit_price, exit_ts = "MAX_HOLD_TIME", c, t
+                    break
 
             with conn.cursor() as cur:
-                if not exit_reden:
+                if not exit_reden or not exit_price or exit_price <= 0:
                     cur.execute("""
                         UPDATE experience_trades
                         SET max_price_seen=%s, min_price_seen=%s, monitor_updated_at=NOW()
@@ -441,29 +496,46 @@ def close_pass(conn) -> int:
                 if qty <= 0 and entry > 0:
                     qty = amount_eur / entry
                 fee_entry = amount_eur * (BITVAVO_FEE_PCT + SLIPPAGE_PCT)
-                fee_exit  = current * qty * (BITVAVO_FEE_PCT + SLIPPAGE_PCT) if qty > 0 else 0.0
-                gross_pnl = (current - entry) * qty if entry > 0 and qty > 0 else 0.0
+                fee_exit  = exit_price * qty * (BITVAVO_FEE_PCT + SLIPPAGE_PCT) if qty > 0 else 0.0
+                gross_pnl = (exit_price - entry) * qty if entry > 0 and qty > 0 else 0.0
                 pnl_eur   = gross_pnl - fee_entry - fee_exit
-                pnl_pct   = round(((current - entry) / entry) * 100, 4) if entry > 0 else 0.0
+                pnl_pct   = round(((exit_price - entry) / entry) * 100, 4) if entry > 0 else 0.0
                 outcome   = "WIN" if pnl_eur > 0 else "LOSS"
                 risk      = abs(entry - stop) if stop > 0 and entry > 0 else 0.0
-                exit_r    = round((current - entry) / risk, 3) if risk > 0 else 0.0
+                exit_r    = round((exit_price - entry) / risk, 3) if risk > 0 else 0.0
                 mfe_r     = round((max_seen - entry) / risk, 3) if risk > 0 else 0.0
                 mae_r     = round((entry - min_seen) / risk, 3) if risk > 0 else 0.0
+
+                # Sanity-guards (bugfix 10-8): een schaal/munt-mismatch had
+                # deze pnl's gevangen (+15,6% boven target-band / -98,2%
+                # boven plafond). Log + NIET wegschrijven; rij blijft OPEN
+                # zodat een gefixte pass hem alsnog correct kan sluiten.
+                if abs(pnl_pct) > MAX_ABS_PNL_PCT:
+                    log(f"SANITY-SKIP {symbol}: |pnl_pct|={pnl_pct} > "
+                        f"plafond {MAX_ABS_PNL_PCT} — schaal-mismatch? niet weggeschreven")
+                    continue
+                if exit_reden == "TARGET_HIT" and target > 0 and exit_price > target * 1.05:
+                    log(f"SANITY-SKIP {symbol}: exit {exit_price} > 105% van "
+                        f"target {target} — prijsbron verdacht, niet weggeschreven")
+                    continue
+                if exit_reden == "STOP_LOSS" and stop > 0 and exit_price < stop * 0.95:
+                    log(f"SANITY-SKIP {symbol}: exit {exit_price} < 95% van "
+                        f"stop {stop} — prijsbron verdacht, niet weggeschreven")
+                    continue
 
                 cur.execute("""
                     UPDATE experience_trades SET
                         outcome=%s, pnl_eur=%s, pnl_pct=%s, result_r=%s, exit_price=%s,
-                        status='CLOSED', closed_at=NOW(), exit_time=NOW(),
+                        status='CLOSED', closed_at=NOW(), exit_time=%s,
                         mfe_r=%s, mae_r=%s,
                         max_price_seen=%s, min_price_seen=%s, exit_reden=%s
                     WHERE trade_key=%s AND status='OPEN'
-                """, (outcome, round(pnl_eur, 4), pnl_pct, exit_r, current,
-                      mfe_r, mae_r, max_seen, min_seen, exit_reden, tk))
+                """, (outcome, round(pnl_eur, 4), pnl_pct, exit_r, exit_price,
+                      exit_ts, mfe_r, mae_r, max_seen, min_seen, exit_reden, tk))
                 if cur.rowcount > 0:
                     _closed += 1
                     log(f"shadow CLOSE: {symbol} {outcome} pnl={pnl_eur:.4f} "
-                        f"R={exit_r:.2f} ({exit_reden})")
+                        f"R={exit_r:.2f} ({exit_reden}) exit={exit_price}")
         except Exception as e:
             log(f"close-pass fout ({row[1] if len(row) > 1 else '?'}): {e}")
             try:
