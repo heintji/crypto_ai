@@ -4,6 +4,8 @@ Toont: (1) overzicht per strategie (winrate + netto winst), (2) de OPEN trades
 die nu lopen met live Bitvavo-koers + onrealised %, (3) per trade te volgen
 (filterbaar per strategie). Puur read-only op de bestaande strategie-tabellen.
 """
+from datetime import datetime, timezone
+
 import streamlit as st
 import pandas as pd
 import requests
@@ -27,7 +29,7 @@ UNION ALL SELECT strategie, markt, entry_ts, entry_prijs, initial_stop, initial_
 CLOSED = ("WIN", "LOSS", "TIME")
 
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=20)
 def _load():
     df = run_query(UNION_SQL)
     if not df.empty:
@@ -35,7 +37,7 @@ def _load():
     return df
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def _prices():
     try:
         data = requests.get("https://api.bitvavo.com/v2/ticker/price", timeout=10).json()
@@ -55,8 +57,15 @@ def _market(coin):
 
 
 def render():
-    st.header("🏁 Strategie-race — shadow")
-    st.caption("Alle shadow-strategieen naast elkaar · open trades live · per trade te volgen")
+    c1, c2 = st.columns([5, 1])
+    c1.header("🏁 Strategie-race — shadow")
+    if c2.button("🔄 Ververs", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
+    st.caption(
+        "Alle shadow-strategieen naast elkaar · open trades live · per trade te volgen · "
+        f"laatst ververst {datetime.now(timezone.utc):%H:%M:%S UTC} (data max 20s oud)"
+    )
 
     df = _load()
     if df.empty:
@@ -70,27 +79,37 @@ def render():
     st.subheader("Overzicht per strategie")
     if not closed.empty:
         agg = closed.groupby("strategie").agg(
-            dicht=("pnl", "size"),
+            win=("pnl", lambda s: int((s > 0).sum())),
+            los=("pnl", lambda s: int((s <= 0).sum())),
             winrate=("pnl", lambda s: round(100 * (s > 0).mean(), 1)),
-            som_pct=("pnl", lambda s: round(s.sum(), 1)),
-            gem_pct=("pnl", lambda s: round(s.mean(), 3)),
+            winst_pct=("pnl", lambda s: round(s.sum(), 1)),
+            per_trade=("pnl", lambda s: round(s.mean(), 3)),
         )
     else:
-        agg = pd.DataFrame(columns=["dicht", "winrate", "som_pct", "gem_pct"])
+        agg = pd.DataFrame(columns=["win", "los", "winrate", "winst_pct", "per_trade"])
     opn = opens.groupby("strategie").size().rename("open")
     tab = agg.join(opn, how="outer")
     for s in STRATS_NIEUW:
         if s not in tab.index:
-            tab.loc[s] = {"dicht": 0, "winrate": None, "som_pct": None, "gem_pct": None, "open": 0}
-    tab["open"] = tab["open"].fillna(0).astype(int)
-    tab["dicht"] = tab["dicht"].fillna(0).astype(int)
-    tab = tab.sort_values("som_pct", ascending=False, na_position="last").reset_index()
+            tab.loc[s] = {"win": 0, "los": 0, "winrate": None, "winst_pct": None, "per_trade": None, "open": 0}
+    for col in ("open", "win", "los"):
+        tab[col] = tab[col].fillna(0).astype(int)
+    tab = tab.sort_values("winst_pct", ascending=False, na_position="last").reset_index()
     tab = tab.rename(columns={"index": "strategie"})
     st.dataframe(
-        tab[["strategie", "open", "dicht", "winrate", "som_pct", "gem_pct"]],
+        tab[["strategie", "open", "win", "los", "winrate", "winst_pct", "per_trade"]],
         use_container_width=True, hide_index=True,
+        column_config={
+            "open": "Open",
+            "win": "Wins",
+            "los": "Losses",
+            "winrate": st.column_config.NumberColumn("Winrate %", format="%.1f"),
+            "winst_pct": st.column_config.NumberColumn("Winst % (netto)", format="%.1f"),
+            "per_trade": st.column_config.NumberColumn("Per trade %", format="%.3f"),
+        },
     )
-    st.caption("som/gem = netto waar beschikbaar (fees+spread), anders bruto. "
+    st.caption("Winst/per-trade = netto waar beschikbaar (fees+spread), anders bruto. "
+               "Winst % = optelsom van de netto trade-percentages (relatieve maat; bij €100/trade ≈ dat bedrag in €). "
                "FABER/ROTATIE/DONCHIAN draaien mee maar wachten op BTC > 200d-SMA (bear = cash).")
 
     # ---- 2. Open trades — lopend, live ----
