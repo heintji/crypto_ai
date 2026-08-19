@@ -29,6 +29,9 @@ import requests
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+PROJECT_ROOT = os.path.dirname(HERE)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 import mr_trail_cost as costmod  # fees + spread-tier, herbruikt
 
 BITVAVO = "https://api.bitvavo.com/v2"
@@ -43,7 +46,7 @@ VOL_MULT = 1.5              # volume-filter breakout
 ROT_LOOKBACK_BARS = 168    # 28 dagen x 6 (4h-candles)
 ROT_TOP = 4
 ROT_TREND_MA_BARS = 360    # ~60d trendfilter per coin
-MAX_DAYS = 45              # candles-venster uit de DB
+MAX_DAYS = 70              # candles-venster: 70d zodat de 360-bar (60d) trend-MA echt data heeft
 FOUR_H = timedelta(hours=4)
 
 
@@ -270,12 +273,13 @@ def run_faber(cur, cfg):
 
 
 # ------------------------------------------------------------------ DONCHIAN
-def run_donchian(cur, cfg, regime_ok, candles):
-    # 1) open trades bijwerken
+def run_donchian(cur, cfg, regime_ok, candles, exit_candles=None):
+    # 1) open trades bijwerken (exit_candles bevat óók coins die uit de top-40 vielen)
+    ex = exit_candles if exit_candles is not None else candles
     cur.execute("SELECT id, coin, entry_ts, entry, stop FROM strat_shadow_trades WHERE strategie='DONCHIAN' AND status='OPEN'")
     dicht = 0
     for tid, coin, ets, entry, stop in cur.fetchall():
-        rows = candles.get(coin)
+        rows = ex.get(coin)
         if not rows:
             continue
         atr_e = (entry - stop) / ATR_MULT if stop and entry > stop else None
@@ -285,14 +289,18 @@ def run_donchian(cur, cfg, regime_ok, candles):
             if r[0] <= ets:
                 continue
             t, o, h, l, c = r[0], r[1], r[2], r[3], r[4]
+            # 1) EERST stop-check tegen de trail van VÓÓR deze candle
+            #    (geen aanname dat de high vóór de low kwam)
+            if l <= trail:
+                exit_p = o if o < trail else trail  # gap-down onder trail -> exit op open
+                close_trade(cur, tid, "DONCHIAN", coin, entry, exit_p, t, "TRAIL_STOP", vol24(rows, i), cfg)
+                dicht += 1
+                break
+            # 2) PAS DAARNA highest/trail bijwerken met de high van deze candle
             highest = max(highest, h)
             if atr_e:
                 trail = max(trail, highest - ATR_MULT * atr_e)
             low_n = min(x[3] for x in rows[max(0, i - DONCHIAN_EXIT_N):i]) if i >= 1 else None
-            if l <= trail:
-                close_trade(cur, tid, "DONCHIAN", coin, entry, trail, t, "TRAIL_STOP", vol24(rows, i), cfg)
-                dicht += 1
-                break
             if low_n is not None and c < low_n:
                 close_trade(cur, tid, "DONCHIAN", coin, entry, c, t, "ONDER_20LOW", vol24(rows, i), cfg)
                 dicht += 1
@@ -327,7 +335,10 @@ def run_donchian(cur, cfg, regime_ok, candles):
 
 
 # ------------------------------------------------------------------ ROTATIE
-def run_rotatie(cur, cfg, regime_ok, candles):
+def run_rotatie(cur, cfg, regime_ok, candles, exit_candles=None):
+    if not candles:
+        return 0, 0  # lege/gefaalde universe-fetch mag de weekly slot niet verbranden
+    ex = exit_candles if exit_candles is not None else candles
     last = state_get(cur, "rotatie_last_rebalance")
     if last:
         try:
@@ -357,10 +368,10 @@ def run_rotatie(cur, cfg, regime_ok, candles):
     cur.execute("SELECT id, coin, entry FROM strat_shadow_trades WHERE strategie='ROTATIE' AND status='OPEN'")
     opens = {r[1]: (r[0], r[2]) for r in cur.fetchall()}
     dicht = nieuw = 0
-    # sluit posities die niet meer in de top-4 staan
+    # sluit posities die niet meer in de top-4 staan (ook als de coin uit de top-40 viel)
     for coin, (tid, entry) in opens.items():
         if coin not in target_coins:
-            rows = candles.get(coin)
+            rows = ex.get(coin)
             if not rows:
                 continue
             i = len(rows) - 1
@@ -386,15 +397,29 @@ def main():
         with conn.cursor() as cur:
             ensure_table(cur)
             cfg = costmod.load_cfg(cur)
+            # M1: majors matchen op zowel 'BTC' als 'BTCUSDT' (universum gebruikt base-symbolen)
+            cfg["majors"] = set(cfg["majors"]) | {m.replace("USDT", "") for m in cfg["majors"]}
             conn.commit()
             universe = liquid_universe()   # top-liquide Bitvavo-EUR-markten (vers)
             regime = btc_regime()
             regime_ok = bool(regime)
             log(f"{len(universe)} liquide coins | BTC>200d-SMA: {regime} | DRY={dry}")
 
+            # H2: coins met OPEN trades die uit de top-40 vielen apart bijhalen,
+            # zodat hun exits altijd kunnen resolven (entries blijven op universe)
+            exit_universe = dict(universe)
+            cur.execute("""SELECT DISTINCT coin FROM strat_shadow_trades
+                           WHERE strategie IN ('DONCHIAN','ROTATIE') AND status='OPEN'""")
+            for (coin,) in cur.fetchall():
+                if coin not in exit_universe:
+                    rows = fetch_4h(coin + "-EUR")
+                    if rows:
+                        exit_universe[coin] = rows
+                        log(f"exit-universe: {coin} apart bijgehaald ({len(rows)} candles)")
+
             fn, fd = run_faber(cur, cfg)
-            dn, dd = run_donchian(cur, cfg, regime_ok, universe)
-            rn, rd = run_rotatie(cur, cfg, regime_ok, universe)
+            dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
+            rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
 
             if dry:
                 conn.rollback()
@@ -402,6 +427,13 @@ def main():
             else:
                 conn.commit()
             log(f"FABER  nieuw {fn} dicht {fd} | DONCHIAN nieuw {dn} dicht {dd} | ROTATIE nieuw {rn} dicht {rd}")
+            if not dry:
+                try:
+                    from bot_health_helper import health_update
+                    health_update("strat_shadow", "OK",
+                                  f"FABER {fn}n/{fd}d DONCHIAN {dn}n/{dd}d ROTATIE {rn}n/{rd}d")
+                except Exception as e:
+                    log(f"health_update fout (genegeerd): {e}")
     finally:
         conn.close()
 

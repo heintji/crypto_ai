@@ -118,7 +118,8 @@ def save_candles(conn, symbol, timeframe, candles):
                                     volume, close_time, trades, quote_volume, taker_buy_base, taker_buy_quote)
                 VALUES ('bitvavo', %s, %s, to_timestamp(%s/1000.0), %s, %s, %s, %s,
                         %s, to_timestamp(%s/1000.0), %s, %s, %s, %s)
-                ON CONFLICT (exchange, symbol, timeframe, open_time) DO UPDATE SET
+                ON CONFLICT (symbol, timeframe, open_time) DO UPDATE SET
+                    exchange=EXCLUDED.exchange,
                     open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close,
                     volume=EXCLUDED.volume, close_time=EXCLUDED.close_time, trades=EXCLUDED.trades,
                     quote_volume=EXCLUDED.quote_volume, taker_buy_base=EXCLUDED.taker_buy_base,
