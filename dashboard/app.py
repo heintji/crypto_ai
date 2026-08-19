@@ -8,7 +8,7 @@ st.set_page_config(page_title="Crypto AI Terminal", page_icon="⚡", layout="wid
 from dashboard.styles import inject_css
 inject_css()
 
-from dashboard import page_overview, page_trades, page_signals, page_performance, page_health, page_controls, page_analyse, page_brain, page_forecast
+from dashboard import page_overview, page_trades, page_signals, page_performance, page_health, page_controls, page_analyse, page_brain, page_forecast, page_strategieen
 
 if "page" not in st.session_state:
     st.session_state.page = "overview"
@@ -21,6 +21,7 @@ with st.sidebar:
 
     nav = [
         ("overview",    "📊  Overview"),
+        ("strategieen", "🏁  Strategie-race"),
         ("live",        "💰  Live Trades"),
         ("shadow",      "👻  Shadow Trades"),
         ("replay",      "🔄  Signal Replay"),
@@ -44,6 +45,7 @@ with st.sidebar:
 # Routing
 p = st.session_state.page
 if p == "overview":     page_overview.render()
+elif p == "strategieen":page_strategieen.render()
 elif p == "live":       page_trades.render("LIVE", "Live Trades")
 elif p == "shadow":     page_trades.render("SHADOW", "Shadow Trades")
 elif p == "replay":     page_trades.render("REPLAY", "Signal Replay")
