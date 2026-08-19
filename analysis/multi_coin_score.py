@@ -3220,6 +3220,15 @@ if __name__ == "__main__":
             _mr_ult_main()
         except Exception as _mu_e:
             log(f"[mr-ultimate] overgeslagen: {_mu_e}")
+        # --- Nieuwe shadow-strategieen (FABER/ROTATIE/DONCHIAN) MEELIFTEN, PARALLEL ---
+        # Eigen tabel strat_shadow_trades + eigen try/except, kan de scan NOOIT breken.
+        # Ingebouwde uurlijkse throttle (bot_state) zodat het niet elke 15 min de
+        # Bitvavo-API's bevraagt. GEEN nieuwe cron nodig -> geen extra kosten.
+        try:
+            from research.strat_shadow import main as _strat_shadow_main
+            _strat_shadow_main()
+        except Exception as _ss_e:
+            log(f"[strat-shadow] overgeslagen: {_ss_e}")
         # --- BTC-regime verversen als het stilstaat (was 5+ weken oud) ---
         # build_btc_regime.py draaide in de gesuspendeerde worker-suite en heeft
         # geen eigen cron. Guard: alleen draaien als data > 4h oud; subprocess

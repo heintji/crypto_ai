@@ -396,6 +396,18 @@ def main():
     try:
         with conn.cursor() as cur:
             ensure_table(cur)
+            # Throttle: dit lift mee op de bestaande 15-min cron maar doet max ~1x/uur
+            # echt werk (bespaart Bitvavo-API-calls; geen aparte cron -> geen extra kosten).
+            if not dry:
+                _last = state_get(cur, "strat_shadow_last_run")
+                if _last:
+                    try:
+                        if (now_utc() - datetime.fromisoformat(_last)).total_seconds() < 55 * 60:
+                            log("throttle: <1u sinds vorige run — overslaan")
+                            conn.rollback()
+                            return
+                    except Exception:
+                        pass
             cfg = costmod.load_cfg(cur)
             # M1: majors matchen op zowel 'BTC' als 'BTCUSDT' (universum gebruikt base-symbolen)
             cfg["majors"] = set(cfg["majors"]) | {m.replace("USDT", "") for m in cfg["majors"]}
@@ -425,6 +437,7 @@ def main():
                 conn.rollback()
                 log("DRY: rollback (niets weggeschreven)")
             else:
+                state_set(cur, "strat_shadow_last_run", now_utc().isoformat())
                 conn.commit()
             log(f"FABER  nieuw {fn} dicht {fd} | DONCHIAN nieuw {dn} dicht {dd} | ROTATIE nieuw {rn} dicht {rd}")
             if not dry:
