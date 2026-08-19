@@ -13,15 +13,26 @@ if PROJECT_ROOT not in sys.path:
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 BITVAVO_BASE = "https://api.bitvavo.com/v2"
 
+# Interval -> milliseconden (voor correcte close_time en 'is candle afgesloten?'-check)
+INTERVAL_MS = {"1h": 3_600_000, "4h": 14_400_000}
+
 def log(msg):
     print(f"[FETCH {datetime.now(timezone.utc):%H:%M:%S}] {msg}", flush=True)
 
 def db_connect():
     return psycopg2.connect(DATABASE_URL, sslmode="require", connect_timeout=10)
 
-def get_coins_needing_candles(conn):
-    """Coins uit signalen die candle gaps hebben."""
+def get_coins_needing_candles(conn, full=False):
+    """Coins waarvoor candles opgehaald moeten worden.
+
+    full=True (herbouw): alle munten die al candles in de DB hebben — dat is exact
+    de verzameling met mogelijk corrupte historie die overschreven moet worden.
+    Anders: coins uit score>=80-signalen die nog geen replay-trade hebben (gaps).
+    """
     cur = conn.cursor()
+    if full:
+        cur.execute("SELECT DISTINCT symbol FROM candles ORDER BY symbol")
+        return [r[0] for r in cur.fetchall()]
     cur.execute("""
         SELECT DISTINCT pa.symbol
         FROM pending_approvals pa
@@ -56,22 +67,25 @@ def fetch_bitvavo_candles(symbol_usdt, timeframe="1h", start_ms=None, limit=1000
             return []  # market doesn't exist
         resp.raise_for_status()
         data = resp.json()
+        interval_ms = INTERVAL_MS.get(timeframe, 3_600_000)
         # Bitvavo returns: [[timestamp, open, high, low, close, volume], ...]
-        # Convert to Binance-like format for save_candles compatibility
+        # (volume = BASE-volume). Convert to Binance-like format voor save_candles.
         result = []
         for c in data:
+            close = float(c[4])
+            base_vol = float(c[5])
             result.append([
-                c[0],           # open time ms
-                c[1],           # open
-                c[2],           # high
-                c[3],           # low
-                c[4],           # close
-                c[5],           # volume
-                c[0] + 3600000, # close time (approx)
-                0,              # quote volume
-                0,              # trades
-                0,              # taker buy base
-                0,              # taker buy quote
+                c[0],                 # open time ms
+                c[1],                 # open
+                c[2],                 # high
+                c[3],                 # low
+                c[4],                 # close
+                c[5],                 # volume (base)
+                c[0] + interval_ms,   # close time (correct per interval, was hard 1h)
+                base_vol * close,     # quote volume ~= base-volume x close (was hardcoded 0!)
+                0,                    # trades
+                0,                    # taker buy base
+                0,                    # taker buy quote
             ])
         return result
     except Exception as e:
@@ -79,19 +93,36 @@ def fetch_bitvavo_candles(symbol_usdt, timeframe="1h", start_ms=None, limit=1000
         return []
 
 def save_candles(conn, symbol, timeframe, candles):
-    """Sla candles op in DB."""
+    """Sla candles op in DB.
+
+    Twee correcties t.o.v. de oude versie die de data corrumpeerden:
+    - Nog-VORMENDE candles (open_time + interval nog niet voorbij) worden NIET
+      opgeslagen. Anders werd een halve momentopname bevroren.
+    - ON CONFLICT DO UPDATE i.p.v. DO NOTHING: een eerder (fout/half) opgeslagen
+      candle wordt bij een volgende fetch alsnog met de definitieve waarden
+      overschreven i.p.v. voor altijd bevroren te blijven.
+    """
     if not candles:
         return 0
+    interval_ms = INTERVAL_MS.get(timeframe, 3_600_000)
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     cur = conn.cursor()
     saved = 0
     for c in candles:
+        # sla de nog-vormende candle niet op (pas na afsluiten definitief)
+        if c[0] + interval_ms > now_ms:
+            continue
         try:
             cur.execute("""
                 INSERT INTO candles (exchange, symbol, timeframe, open_time, open, high, low, close,
                                     volume, close_time, trades, quote_volume, taker_buy_base, taker_buy_quote)
                 VALUES ('bitvavo', %s, %s, to_timestamp(%s/1000.0), %s, %s, %s, %s,
                         %s, to_timestamp(%s/1000.0), %s, %s, %s, %s)
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (exchange, symbol, timeframe, open_time) DO UPDATE SET
+                    open=EXCLUDED.open, high=EXCLUDED.high, low=EXCLUDED.low, close=EXCLUDED.close,
+                    volume=EXCLUDED.volume, close_time=EXCLUDED.close_time, trades=EXCLUDED.trades,
+                    quote_volume=EXCLUDED.quote_volume, taker_buy_base=EXCLUDED.taker_buy_base,
+                    taker_buy_quote=EXCLUDED.taker_buy_quote
             """, (symbol, timeframe,
                   c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4]),
                   float(c[5]), c[6], int(c[8]) if len(c) > 8 else 0,
@@ -104,18 +135,28 @@ def save_candles(conn, symbol, timeframe, candles):
     conn.commit()
     return saved
 
-def fetch_coin(conn, symbol, timeframe="1h"):
-    """Fetch alle ontbrekende candles voor een coin."""
-    last = get_last_candle_time(conn, symbol, timeframe)
-    if last:
-        last = last.replace(tzinfo=timezone.utc) if last.tzinfo is None else last
-        start_ms = int(last.timestamp() * 1000) + 1
-        gap_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
-        if gap_hours < 2:
-            return 0  # al up to date
+def fetch_coin(conn, symbol, timeframe="1h", full=False):
+    """Fetch ontbrekende candles voor een coin.
+
+    full=True: herbouw-modus — haal 40 dagen opnieuw op en overschrijf (DO UPDATE)
+    de bestaande, mogelijk corrupte historie. Gebruik dit eenmalig na de fix.
+    """
+    if full:
+        start_ms = int((datetime.now(timezone.utc) - timedelta(days=40)).timestamp() * 1000)
     else:
-        # Geen candles — haal laatste 30 dagen op
-        start_ms = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp() * 1000)
+        last = get_last_candle_time(conn, symbol, timeframe)
+        if last:
+            last = last.replace(tzinfo=timezone.utc) if last.tzinfo is None else last
+            # Overlap: herstart OP de laatste candle (niet +1ms) zodat een eerder
+            # als 'vormend' opgeslagen candle nu met de definitieve waarden wordt
+            # overschreven via ON CONFLICT DO UPDATE.
+            start_ms = int(last.timestamp() * 1000)
+            gap_hours = (datetime.now(timezone.utc) - last).total_seconds() / 3600
+            if gap_hours < 2:
+                return 0  # al up to date
+        else:
+            # Geen candles — haal laatste 30 dagen op
+            start_ms = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp() * 1000)
 
     total_saved = 0
     while True:
@@ -139,8 +180,12 @@ def main():
         log("FOUT: DATABASE_URL niet ingesteld")
         return
 
+    full = bool(os.environ.get("MR_REBUILD"))
+    if full:
+        log("HERBOUW-MODUS (MR_REBUILD): 40 dagen opnieuw ophalen + overschrijven")
+
     conn = db_connect()
-    coins = get_coins_needing_candles(conn)
+    coins = get_coins_needing_candles(conn, full=full)
     conn.close()
     log(f"Coins met ontbrekende replay data: {len(coins)}")
 
@@ -158,8 +203,8 @@ def main():
             continue
 
         try:
-            saved_1h = fetch_coin(conn, symbol, "1h")
-            saved_4h = fetch_coin(conn, symbol, "4h")
+            saved_1h = fetch_coin(conn, symbol, "1h", full=full)
+            saved_4h = fetch_coin(conn, symbol, "4h", full=full)
             total = saved_1h + saved_4h
 
             if total > 0:
