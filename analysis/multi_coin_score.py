@@ -3229,6 +3229,14 @@ if __name__ == "__main__":
             _strat_shadow_main()
         except Exception as _ss_e:
             log(f"[strat-shadow] overgeslagen: {_ss_e}")
+        # --- Plan U (C1 Rotatie + C2 Bounce) MEELIFTEN: crash-/rotatie-strategie die
+        # alleen in ROOD/STORM-regime trades opent. Lag stil (geen cron) -> nu weer
+        # continu meedraaien. Eigen DB-conn + try/except -> kan de scan niet breken. ---
+        try:
+            from research.plan_u_shadow import main as _plan_u_main
+            _plan_u_main()
+        except Exception as _pu_e:
+            log(f"[plan-u] overgeslagen: {_pu_e}")
         # --- BTC-regime verversen als het stilstaat (was 5+ weken oud) ---
         # build_btc_regime.py draaide in de gesuspendeerde worker-suite en heeft
         # geen eigen cron. Guard: alleen draaien als data > 4h oud; subprocess
