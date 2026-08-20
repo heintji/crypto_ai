@@ -49,6 +49,18 @@ ROT_TREND_MA_BARS = 360    # ~60d trendfilter per coin
 MAX_DAYS = 70              # candles-venster: 70d zodat de 360-bar (60d) trend-MA echt data heeft
 FOUR_H = timedelta(hours=4)
 
+# --- C2V: verbeterde crash-bounce (Kimi P1+P2+P3) ---
+C2V_LIQ = 2_000_000.0       # P1: alleen liquide coins (>=2M 24h-volume)
+C2V_COST_RT = 0.60          # P1: limit-maker + smalle spread (aanname; valideren)
+C2V_CLIMAX_VOL = 3.0        # P2: volume-climax >= 3x mediaan(20)
+C2V_WICK_MIN = 0.60         # P2: herstel-wick (close in bovenste 40% van range)
+C2V_BTC_FLOOR = -0.02       # P2: geen entry als BTC 4u-return < -2% (freefall)
+C2V_DROP = -0.10            # crash: -10% in 48u (12x4h)
+C2V_RSI = 30.0
+C2V_ATR_STOP = 1.2          # P3: stop = 1.2xATR
+C2V_RR = 1.5                # P3: target = 1.5R
+C2V_MAX_HOLD = 12           # P3: 48u (12x4h)
+
 
 def log(m):
     print(f"[STRAT {datetime.now(timezone.utc):%H:%M:%S}] {m}", flush=True)
@@ -76,6 +88,23 @@ def atr(rows, p=14):
         h, lo, pc = rows[k][2], rows[k][3], rows[k - 1][4]
         s += max(h - lo, abs(h - pc), abs(lo - pc))
     return s / p
+
+
+def rsi(closes, p=14):
+    if len(closes) < p + 1:
+        return None
+    g = l = 0.0
+    for k in range(-p, 0):
+        d = closes[k] - closes[k - 1]
+        g += max(d, 0)
+        l += max(-d, 0)
+    return 100 - 100 / (1 + g / l) if l > 0 else 100.0
+
+
+def median(xs):
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
 
 
 # ------------------------------------------------------------------ db + data
@@ -389,6 +418,66 @@ def run_rotatie(cur, cfg, regime_ok, candles, exit_candles=None):
 
 
 # ------------------------------------------------------------------ main
+def _close_c2v(cur, tid, entry, exit_p, exit_ts, reden):
+    pnl = (exit_p - entry) / entry * 100
+    net = round(pnl - C2V_COST_RT, 4)
+    cur.execute("""UPDATE strat_shadow_trades SET status=%s, exit_prijs=%s, exit_ts=%s,
+        exit_reden=%s, pnl_pct=%s, fee_pct=%s, spread_pct=%s, pnl_net_pct=%s WHERE id=%s""",
+                ("WIN" if net > 0 else "LOSS", exit_p, exit_ts, reden, round(pnl, 4), 0.30, 0.30, net, tid))
+
+
+def run_c2v(cur, regime, btc_last_ret, universe, exit_candles):
+    """C2-verbeterd: crash-bounce met kapitulatie-bevestiging + ATR-exits op liquide
+    coins. Entries alleen in bevestigde bear (regime is False) + BTC niet in freefall.
+    Kosten C2V_COST_RT (limit-maker-aanname). Vervangt de oude plan_u-C2."""
+    cur.execute("SELECT id, coin, entry_ts, entry, stop, target FROM strat_shadow_trades WHERE strategie='C2V' AND status='OPEN'")
+    dicht = 0
+    for tid, coin, ets, entry, stop, target in cur.fetchall():
+        rows = exit_candles.get(coin)
+        if not rows:
+            continue
+        n = 0
+        for r in rows:
+            if r[0] <= ets:
+                continue
+            n += 1
+            t, o, h, l, c = r[0], r[1], r[2], r[3], r[4]
+            if l <= stop:
+                _close_c2v(cur, tid, entry, stop, t, "STOP"); dicht += 1; break
+            if h >= target:
+                _close_c2v(cur, tid, entry, target, t, "TARGET"); dicht += 1; break
+            if n >= C2V_MAX_HOLD:
+                _close_c2v(cur, tid, entry, c, t, "TIME"); dicht += 1; break
+    nieuw = 0
+    if regime is not False:              # entries alleen als BTC ZEKER < 200d (bear)
+        return nieuw, dicht
+    if btc_last_ret is not None and btc_last_ret < C2V_BTC_FLOOR:
+        return nieuw, dicht              # BTC in freefall -> geen mes vangen
+    cur.execute("SELECT coin FROM strat_shadow_trades WHERE strategie='C2V' AND status='OPEN'")
+    open_coins = {r[0] for r in cur.fetchall()}
+    for coin, rows in universe.items():
+        if coin == "BTC" or coin in open_coins or len(rows) < 25:
+            continue
+        i = len(rows) - 1
+        closes = [r[4] for r in rows]
+        drop = closes[i] / closes[i - 12] - 1 if i >= 12 else 0
+        r = rsi(closes)
+        a = atr(rows, 14)
+        v24 = vol24(rows, i)
+        vmed = median([rows[k][5] for k in range(i - 20, i)])
+        hi, lo, cl = rows[i][2], rows[i][3], closes[i]
+        wick = (cl - lo) / (hi - lo) if hi > lo else 0
+        climax = rows[i][5] >= C2V_CLIMAX_VOL * vmed and wick >= C2V_WICK_MIN
+        if (drop <= C2V_DROP and r is not None and r < C2V_RSI and a and a > 0
+                and v24 >= C2V_LIQ and climax):
+            stopd = C2V_ATR_STOP * a
+            cur.execute("""INSERT INTO strat_shadow_trades (strategie,coin,entry_ts,entry,stop,target,vol24_eur)
+                VALUES ('C2V',%s,%s,%s,%s,%s,%s) ON CONFLICT (strategie,coin,entry_ts) DO NOTHING""",
+                        (coin, rows[i][0], cl, cl - stopd, cl + C2V_RR * stopd, v24))
+            nieuw += cur.rowcount
+    return nieuw, dicht
+
+
 def main():
     dry = bool(os.environ.get("DRY"))
     conn = db()
@@ -421,7 +510,7 @@ def main():
             # zodat hun exits altijd kunnen resolven (entries blijven op universe)
             exit_universe = dict(universe)
             cur.execute("""SELECT DISTINCT coin FROM strat_shadow_trades
-                           WHERE strategie IN ('DONCHIAN','ROTATIE') AND status='OPEN'""")
+                           WHERE strategie IN ('DONCHIAN','ROTATIE','C2V') AND status='OPEN'""")
             for (coin,) in cur.fetchall():
                 if coin not in exit_universe:
                     rows = fetch_4h(coin + "-EUR")
@@ -429,9 +518,14 @@ def main():
                         exit_universe[coin] = rows
                         log(f"exit-universe: {coin} apart bijgehaald ({len(rows)} candles)")
 
+            # BTC 4u-return voor de C2V-stabiliteitsfilter
+            btc = universe.get("BTC") or fetch_4h("BTC-EUR")
+            btc_last_ret = (btc[-1][4] / btc[-2][4] - 1) if btc and len(btc) >= 2 else None
+
             fn, fd = run_faber(cur, cfg)
             dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
             rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
+            cn, cd = run_c2v(cur, regime, btc_last_ret, universe, exit_universe)
 
             if dry:
                 conn.rollback()
@@ -439,12 +533,12 @@ def main():
             else:
                 state_set(cur, "strat_shadow_last_run", now_utc().isoformat())
                 conn.commit()
-            log(f"FABER  nieuw {fn} dicht {fd} | DONCHIAN nieuw {dn} dicht {dd} | ROTATIE nieuw {rn} dicht {rd}")
+            log(f"FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} | C2V {cn}/{cd}")
             if not dry:
                 try:
                     from bot_health_helper import health_update
                     health_update("strat_shadow", "OK",
-                                  f"FABER {fn}n/{fd}d DONCHIAN {dn}n/{dd}d ROTATIE {rn}n/{rd}d")
+                                  f"FABER {fn}n/{fd}d DONCHIAN {dn}n/{dd}d ROTATIE {rn}n/{rd}d C2V {cn}n/{cd}d")
                 except Exception as e:
                     log(f"health_update fout (genegeerd): {e}")
     finally:

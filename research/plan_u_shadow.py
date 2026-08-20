@@ -192,25 +192,9 @@ def zoek_signalen(cur, regime):
             if cur.rowcount:
                 print(f"[C1] rotatie-signaal {markt} @ {prijs:.6g}", flush=True)
 
-        # ── C2 BOUNCE: -10% in 48u + RSI(1u) < 25 ──
-        p48 = next((c[4] for c in uur if c[0] >= int((nu - timedelta(hours=48)).timestamp() * 1000)), None)
-        if p48 is None:
-            continue
-        val48 = (prijs - p48) / p48 * 100
-        rsi = rsi14([c[4] for c in uur])
-        if val48 <= -10.0 and rsi is not None and rsi < 25:
-            sid = f"C2|{markt}|{uur[-1][0]}"  # max 1 per markt per uur-candle
-            cur.execute(
-                """INSERT INTO plan_u_trades (strategie, markt, regime, signaal_id, candle_ts,
-                       entry_prijs, initial_stop, initial_target, notitie)
-                   VALUES ('C2_BOUNCE', %s, %s, %s, %s, %s, %s, %s, %s)
-                   ON CONFLICT (signaal_id) DO NOTHING""",
-                (markt, regime, sid, datetime.fromtimestamp(uur[-1][0] / 1000, tz=timezone.utc),
-                 prijs, prijs * (1 - C2_STOP / 100), prijs * (1 + C2_TARGET / 100),
-                 f"48u {val48:.1f}%, RSI1u {rsi:.0f}"),
-            )
-            if cur.rowcount:
-                print(f"[C2] bounce-signaal {markt} @ {prijs:.6g} (RSI {rsi:.0f})", flush=True)
+        # ── C2 BOUNCE: VERVANGEN door de verbeterde variant "C2V" in
+        # research/strat_shadow.py (liquide coins + kapitulatie-bevestiging +
+        # ATR-exits). Hier worden geen nieuwe oude-C2-signalen meer gegenereerd.
 
 
 def main():
