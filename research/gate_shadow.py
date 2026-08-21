@@ -71,6 +71,14 @@ C2V_ATR_STOP = 1.2
 C2V_RR = 1.5
 C2V_MAX_HOLD = 12
 
+# --- VBREAK: volatility-breakout (Larry Williams / Koreaans K=0,5), regime-gated ---
+# Backtest Gate 1h ~240d: 73,7% wr, +5,68%/trade op 38 trades (klein sample +
+# survivorship -> shadow-test moet het bevestigen). Beste daytrade-kandidaat uit
+# het Fable-onderzoek (West+Azie convergeren). Long-only, 1h-timing op dag-grid.
+VBREAK_K = 0.5              # koopniveau = day_open + 0,5 x vorige-dag-range
+VBREAK_STOP = 0.03         # harde stop -3%
+VBREAK_COST_RT = 0.60      # taker + slippage (momentum-breakout, conservatief)
+
 _SKIP_BASE = {"USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "EURC", "USDE",
               "USDD", "GUSD", "USDP", "BUSD", "EUR"}
 # Gate hefboom-/ETF-tokens (BASE + 2L/3L/5L/3S/5S ...): geen echte coins, decay +
@@ -107,7 +115,7 @@ def gate_candles(pair, interval, days):
     """Gate 4h/1d-candles -> (ts_dt, o, h, l, c, base_vol, quote_usdt), oplopend.
     Gate-formaat: [ts_s, quote_vol, close, high, low, open, base_vol, closed].
     De nog-vormende laatste candle (closed='false') wordt weggelaten."""
-    per = 6 if interval == "4h" else 1
+    per = {"1h": 24, "4h": 6, "1d": 1}.get(interval, 6)
     limit = min(1000, days * per + 20)
     data = gate_get("/spot/candlesticks",
                     {"currency_pair": pair, "interval": interval, "limit": limit})
@@ -427,6 +435,71 @@ def run_c2v(cur, regime, btc_last_ret, universe, exit_candles):
     return nieuw, dicht
 
 
+def _close_vbreak(cur, tid, entry, exit_p, exit_ts, reden):
+    pnl = (exit_p - entry) / entry * 100
+    net = round(pnl - VBREAK_COST_RT, 4)
+    cur.execute(f"""UPDATE {TABLE} SET status=%s, exit_prijs=%s, exit_ts=%s,
+        exit_reden=%s, pnl_pct=%s, fee_pct=%s, spread_pct=%s, pnl_net_pct=%s WHERE id=%s""",
+                ("WIN" if net > 0 else "LOSS", exit_p, exit_ts, reden, round(pnl, 4),
+                 0.40, 0.20, net, tid))
+
+
+def run_vbreak(cur, regime_ok, universe_bases):
+    """Volatility-breakout (Williams/Koreaans): koop day_open + 0,5x vorige-dag-range,
+    alleen in bull-regime; exit op stop -3%, close<day_open, of volgende dag 00:00."""
+    # 1) open trades resolven (target-kolom = day_open = intraday-vloer)
+    cur.execute(f"SELECT id,coin,entry_ts,entry,stop,target FROM {TABLE} WHERE strategie='VBREAK' AND status='OPEN'")
+    dicht = 0
+    for tid, coin, ets, entry, stop, day_open in cur.fetchall():
+        rows = gate_candles(f"{coin}_USDT", "1h", 4)
+        for r in rows:
+            if r[0] <= ets:
+                continue
+            t, o, h, l, c = r[0], r[1], r[2], r[3], r[4]
+            if t.date() > ets.date() and t.hour == 0:
+                _close_vbreak(cur, tid, entry, o, t, "TIME_DAG"); dicht += 1; break
+            if l <= stop:
+                _close_vbreak(cur, tid, entry, stop, t, "STOP"); dicht += 1; break
+            if c < day_open:
+                _close_vbreak(cur, tid, entry, c, t, "ONDER_OPEN"); dicht += 1; break
+    # 2) nieuwe entries (alleen bull-regime)
+    nieuw = 0
+    if not regime_ok:
+        return nieuw, dicht
+    cur.execute(f"SELECT coin FROM {TABLE} WHERE strategie='VBREAK' AND status='OPEN'")
+    open_coins = {r[0] for r in cur.fetchall()}
+    for coin in universe_bases:
+        if coin in open_coins:
+            continue
+        d = fetch_daily(coin, 40)               # closed daily-candles
+        if len(d) < 31:
+            continue
+        h1 = gate_candles(f"{coin}_USDT", "1h", 3)
+        if not h1:
+            continue
+        today = h1[-1][0].date()
+        opens = [r for r in h1 if r[0].date() == today and r[0].hour == 0]
+        if not opens:
+            continue                            # geen 00:00-bar -> geen day_open
+        day_open = opens[0][1]
+        prev_range = d[-1][2] - d[-1][3]
+        if prev_range <= 0:
+            continue
+        ma5 = sum(x[4] for x in d[-5:]) / 5
+        vmed = median([x[6] for x in d[-31:-1]])
+        if not (day_open > ma5 and d[-1][6] > vmed):
+            continue
+        level = day_open + VBREAK_K * prev_range
+        trig = next((r for r in h1 if r[0].date() == today and r[0].hour <= 20 and r[2] >= level), None)
+        if not trig:
+            continue
+        cur.execute(f"""INSERT INTO {TABLE} (strategie,coin,entry_ts,entry,stop,target,vol24_usdt)
+            VALUES ('VBREAK',%s,%s,%s,%s,%s,%s) ON CONFLICT (strategie,coin,entry_ts) DO NOTHING""",
+                    (coin, trig[0], level, level * (1 - VBREAK_STOP), day_open, d[-1][6]))
+        nieuw += cur.rowcount
+    return nieuw, dicht
+
+
 # ── zelftest zonder DB (valideert datalaag + filters + signalen) ─────────────
 def selftest():
     log("ZELFTEST (NODB) — Gate-universum ophalen...")
@@ -532,7 +605,9 @@ def main(c2v_only=False):
                 fn, fd = run_faber(cur, cfg)
                 dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
                 rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
+            # De twee GEKOZEN shadow-strategieen (bewezen/kandidaat): C2V + VBREAK
             cn, cd = run_c2v(cur, regime, btc_last_ret, universe, exit_universe)
+            vn, vd = run_vbreak(cur, regime_ok, list(universe.keys()))
 
             if dry:
                 conn.rollback()
@@ -540,8 +615,9 @@ def main(c2v_only=False):
             else:
                 state_set(cur, "gate_shadow_last_run", now_utc().isoformat())
                 conn.commit()
-            mode = "C2V-only" if c2v_only else "alle"
-            log(f"[{mode}] FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} | C2V {cn}/{cd}")
+            mode = "C2V+VBREAK" if c2v_only else "alle"
+            log(f"[{mode}] FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} "
+                f"| C2V {cn}/{cd} | VBREAK {vn}/{vd}")
     finally:
         conn.close()
 
