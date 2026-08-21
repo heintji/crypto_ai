@@ -482,10 +482,13 @@ def selftest():
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
-def main():
+def main(c2v_only=False):
+    """c2v_only=True: alleen de C2V-strategie draaien (enige met bewezen edge in de
+    Gate-backtest). FABER/DONCHIAN/ROTATIE werden afgevoerd (negatief/survivorship)."""
     if os.environ.get("NODB"):
         selftest()
         return
+    c2v_only = c2v_only or bool(os.environ.get("GATE_C2V_ONLY"))
     dry = bool(os.environ.get("DRY"))
     conn = db()
     conn.autocommit = False
@@ -523,9 +526,12 @@ def main():
             btc = universe.get("BTC") or gate_candles("BTC_USDT", "4h", MAX_DAYS)
             btc_last_ret = (btc[-1][4] / btc[-2][4] - 1) if btc and len(btc) >= 2 else None
 
-            fn, fd = run_faber(cur, cfg)
-            dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
-            rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
+            if c2v_only:
+                fn = fd = dn = dd = rn = rd = 0
+            else:
+                fn, fd = run_faber(cur, cfg)
+                dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
+                rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
             cn, cd = run_c2v(cur, regime, btc_last_ret, universe, exit_universe)
 
             if dry:
@@ -534,7 +540,8 @@ def main():
             else:
                 state_set(cur, "gate_shadow_last_run", now_utc().isoformat())
                 conn.commit()
-            log(f"FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} | C2V {cn}/{cd}")
+            mode = "C2V-only" if c2v_only else "alle"
+            log(f"[{mode}] FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} | C2V {cn}/{cd}")
     finally:
         conn.close()
 
