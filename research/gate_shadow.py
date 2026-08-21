@@ -26,6 +26,7 @@ Draaien:
 
 Env: DATABASE_URL (niet nodig bij NODB). Deps: requests, psycopg2-binary.
 """
+import json
 import os
 import sys
 import time
@@ -43,9 +44,10 @@ GATE = "https://api.gateio.ws/api/v4"
 TABLE = "gate_shadow_trades"
 
 # ── filters ──────────────────────────────────────────────────────────────────
-MIN_AGE_DAYS = 30            # coin moet >= 30d genoteerd zijn (geen net-uit-sniping)
-TOP_N = 60                   # breder universum dan Bitvavo (40); Gate heeft er ~2200
-LIQ_MIN = 100_000.0          # algemene 24h-quotevolume-ondergrens (USDT ~ EUR)
+MIN_AGE_DAYS = 14            # min. leeftijd; onder ~14d te weinig candle-historie voor indicatoren
+TOP_N = 200                  # zo breed als betrouwbaar kan (Hein: alle coins meenemen);
+                             # ~2200 coins/uur knalt tegen Gate rate-limits vanaf Render-IP
+LIQ_MIN = 25_000.0           # lage drempel: ook kleine coins mee (24h-quotevolume, USDT ~ EUR)
 ROT_LIQ_MIN = 250_000.0      # strengere grens voor rotatie (grotere posities)
 C2V_LIQ = 2_000_000.0        # C2V koopt alleen echt liquide coins
 
@@ -75,9 +77,22 @@ C2V_MAX_HOLD = 12
 # Backtest Gate 1h ~240d: 73,7% wr, +5,68%/trade op 38 trades (klein sample +
 # survivorship -> shadow-test moet het bevestigen). Beste daytrade-kandidaat uit
 # het Fable-onderzoek (West+Azie convergeren). Long-only, 1h-timing op dag-grid.
-VBREAK_K = 0.5              # koopniveau = day_open + 0,5 x vorige-dag-range
-VBREAK_STOP = 0.03         # harde stop -3%
-VBREAK_COST_RT = 0.60      # taker + slippage (momentum-breakout, conservatief)
+VBREAK_K = 0.5             # koopniveau = day_open + 0,5 x vorige-dag-range
+VBREAK_STOP = 0.03        # harde stop -3%
+VBREAK_COST_RT = 0.60     # taker + slippage (momentum-breakout, conservatief)
+
+# --- VOLLEDIGE-MARKT prescreen (alle ~2200 coins, rate-limit-veilig) ---
+# Ontwerp Fable5: 2 goedkope calls (/tickers + /currency_pairs) screenen ALLE coins;
+# alleen kandidaten krijgen dure candles. Regimes sluiten elkaar uit (C2V=bear,
+# VBREAK=bull) -> max 1 strategie fetcht entries per run.
+SCAN_BUDGET = 60          # max candle-calls per run (gedeeld Render-IP -> conservatief)
+PACE_S = 0.30             # pauze tussen candle-calls (~3 req/s, ver onder de limiet)
+SPREAD_MAX = 0.02         # ticker-spread-sanity (bid/ask)
+C2V_PRE_QV = 1_600_000.0  # C2V-prescreen volume (0,8x de 2M exacte eis, marge)
+C2V_PRE_DROP = -6.0       # C2V-prescreen: min(24h%, last/high_24h) <= -6%
+VB_PRE_QV = 25_000.0      # VBREAK-prescreen volume-vloer (Hein: ook kleine coins mee)
+VB_MIN_AGE_D = 35         # VBREAK heeft >=31 daily bars nodig
+VB_EPS = 0.15             # marge op de 0,5x-range-term (snapshot-offset rond 00:00)
 
 _SKIP_BASE = {"USDT", "USDC", "DAI", "TUSD", "FDUSD", "PYUSD", "EURC", "USDE",
               "USDD", "GUSD", "USDP", "BUSD", "EUR"}
@@ -97,11 +112,16 @@ def log(m):
 # ── Gate publieke datalaag (geen key) ────────────────────────────────────────
 def gate_get(path, params=None):
     last = None
-    for _ in range(3):
+    for attempt in range(3):
         try:
             r = requests.get(f"{GATE}{path}", params=params, timeout=20)
             if r.status_code in (400, 404):
                 return None
+            if r.status_code == 429:                       # rate-limit -> backoff
+                wait = float(r.headers.get("Retry-After", 0)) or (2 ** attempt * 2)
+                log(f"429 op {path} — backoff {wait}s")
+                time.sleep(wait)
+                continue
             r.raise_for_status()
             return r.json()
         except Exception as e:
@@ -500,6 +520,151 @@ def run_vbreak(cur, regime_ok, universe_bases):
     return nieuw, dicht
 
 
+# ── VOLLEDIGE-MARKT scanner (prescreen alle coins -> gerichte candle-fetch) ──
+class _Budget:
+    def __init__(self, n):
+        self.left = n
+
+    def take(self):
+        if self.left <= 0:
+            return False
+        self.left -= 1
+        time.sleep(PACE_S)
+        return True
+
+
+def load_market():
+    """2 calls -> {base: dict} voor ALLE verhandelbare USDT-paren (goedkoop, geen candles)."""
+    tick = gate_get("/spot/tickers") or []
+    meta = {m["id"]: m for m in (gate_get("/spot/currency_pairs") or [])}
+    now_s, out = now_utc().timestamp(), {}
+    for t in tick:
+        pair = t.get("currency_pair", "")
+        if not pair.endswith("_USDT"):
+            continue
+        base = pair[:-5]
+        if base in _SKIP_BASE or _is_derivative(base):
+            continue
+        m = meta.get(pair)
+        if not m or m.get("trade_status") != "tradable" or m.get("st_tag"):
+            continue
+        try:
+            last, hi, lo = float(t["last"]), float(t["high_24h"]), float(t["low_24h"])
+            qv = float(t.get("quote_volume") or 0)
+            chg = float(t.get("change_percentage") or 0)
+            bid, ask = float(t.get("highest_bid") or 0), float(t.get("lowest_ask") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        bs = int(m.get("buy_start") or 0)
+        age_d = (now_s - bs) / 86400 if bs > 0 else 9999
+        if age_d < MIN_AGE_DAYS or last <= 0:
+            continue
+        spread = (ask - bid) / last if (bid > 0 and ask > bid) else 9.9
+        out[base] = dict(last=last, hi=hi, lo=lo, qv=qv, chg=chg, spread=spread, age=age_d)
+    return out
+
+
+def maybe_snapshot(cur, market):
+    """Sla 1x per dag (rond 00:00 UTC) een ticker-snapshot op zodat VBREAK day_open +
+    gisteren-range goedkoop kan reconstrueren."""
+    if now_utc().hour == 0 and state_get(cur, "gate_snap_date") != str(now_utc().date()):
+        snap = {b: {"o": m["last"], "yh": m["hi"], "yl": m["lo"]} for b, m in market.items()}
+        state_set(cur, "gate_dayopen_snapshot", json.dumps(snap))
+        state_set(cur, "gate_snap_date", str(now_utc().date()))
+
+
+def prescreen_c2v(market, open_coins):
+    out = []
+    for b, m in market.items():
+        if b == "BTC" or b in open_coins:
+            continue
+        if m["qv"] < C2V_PRE_QV or m["spread"] > SPREAD_MAX:
+            continue
+        dp = min(m["chg"], (m["last"] / m["hi"] - 1) * 100 if m["hi"] > 0 else 0)
+        if dp <= C2V_PRE_DROP:
+            out.append((dp, b))
+    return [b for _, b in sorted(out)]              # zwaarste crash eerst
+
+
+def prescreen_vbreak(market, snap, open_coins):
+    out = []
+    for b, m in market.items():
+        if b in open_coins or m["qv"] < VB_PRE_QV or m["spread"] > SPREAD_MAX:
+            continue
+        if m["age"] < VB_MIN_AGE_D:
+            continue
+        s = (snap or {}).get(b)
+        if s and s["yl"] > 0 and s["yh"] > s["yl"]:
+            level = s["o"] + 0.5 * (s["yh"] - s["yl"])
+            hit = max(m["hi"], m["last"])
+            marge = VB_EPS * 0.5 * (s["yh"] - s["yl"])
+            if hit >= level - marge:
+                out.append((-(hit / level - 1), b))  # grootste overshoot eerst
+        elif m["chg"] >= 2.0 or (m["hi"] > 0 and m["last"] >= 0.97 * m["hi"] and m["chg"] >= -1.0):
+            out.append((-m["chg"], b))               # fallback (snapshot mist)
+    return [b for _, b in sorted(out)]
+
+
+def _carryover(cur, key, shortlist):
+    prev = json.loads(state_get(cur, key) or "[]")
+    sset = set(shortlist)
+    keep = [b for b in prev if b in sset]
+    return keep + [b for b in shortlist if b not in set(keep)]
+
+
+def _cut(cur, key, lst, maxn, naam):
+    keep, rest = lst[:max(maxn, 0)], lst[max(maxn, 0):]
+    if rest:
+        log(f"AFKAP {naam} ({len(rest)}): {', '.join(rest[:15])}...")
+    state_set(cur, key, json.dumps(rest))
+    return keep
+
+
+def scan_fullmarket(cur):
+    """Volledige-markt shadow-scan: screent ALLE coins, fetcht candles alleen voor de
+    shortlist + open trades, en voedt run_c2v/run_vbreak. Retourneert (cn,cd,vn,vd)."""
+    market = load_market()                               # 2 calls
+    maybe_snapshot(cur, market)
+    regime = btc_regime()                                # 1 call
+    btc4 = gate_candles("BTC_USDT", "4h", 10)            # 1 call
+    btc_ret = (btc4[-1][4] / btc4[-2][4] - 1) if btc4 and len(btc4) >= 2 else None
+    bud = _Budget(SCAN_BUDGET - 4)
+
+    cur.execute(f"SELECT DISTINCT coin FROM {TABLE} WHERE strategie='C2V' AND status='OPEN'")
+    open_c2v = {r[0] for r in cur.fetchall()}
+    cur.execute(f"SELECT DISTINCT coin FROM {TABLE} WHERE strategie='VBREAK' AND status='OPEN'")
+    open_vb = {r[0] for r in cur.fetchall()}
+
+    # open C2V-trades: exit-candles altijd eerst (los van prescreen)
+    exit_candles = {}
+    for c in open_c2v:
+        if bud.take():
+            rows = gate_candles(f"{c}_USDT", "4h", 10)
+            if rows:
+                exit_candles[c] = rows
+    bud.left -= len(open_vb)                              # run_vbreak fetcht zelf 1h/open trade
+
+    universe, vb_bases = {}, []
+    if regime is False and (btc_ret is None or btc_ret >= C2V_BTC_FLOOR):
+        short = _carryover(cur, "gate_co_c2v", prescreen_c2v(market, open_c2v))
+        for b in _cut(cur, "gate_co_c2v", short, bud.left, "C2V"):
+            if not bud.take():
+                break
+            rows = gate_candles(f"{b}_USDT", "4h", 10)
+            if len(rows) >= 25:
+                universe[b] = rows
+    elif regime is True:
+        snap = json.loads(state_get(cur, "gate_dayopen_snapshot") or "null")
+        short = _carryover(cur, "gate_co_vb", prescreen_vbreak(market, snap, open_vb))
+        vb_bases = _cut(cur, "gate_co_vb", short, bud.left // 2, "VBREAK")
+
+    log(f"prescreen: {len(market)} paren -> C2V-shortlist {len(universe)} / "
+        f"VBREAK-shortlist {len(vb_bases)} | regime {regime} | budget-rest {bud.left}")
+    cn, cd = run_c2v(cur, regime, btc_ret, universe, exit_candles)
+    vn, vd = run_vbreak(cur, regime is True, vb_bases)
+    return cn, cd, vn, vd
+
+
 # ── zelftest zonder DB (valideert datalaag + filters + signalen) ─────────────
 def selftest():
     log("ZELFTEST (NODB) — Gate-universum ophalen...")
@@ -577,37 +742,34 @@ def main(c2v_only=False):
                             conn.rollback(); return
                     except ValueError:
                         pass
-            cfg = costmod.load_cfg(cur)
-            cfg["majors"] = set(cfg["majors"]) | {m.replace("USDT", "") for m in cfg["majors"]}
-            conn.commit()
-
-            universe = gate_universe()
-            regime = btc_regime()
-            regime_ok = bool(regime)
-            log(f"{len(universe)} liquide Gate-coins | BTC>200d-SMA: {regime} | DRY={dry}")
-
-            # coins met OPEN trades die uit de top-N vielen apart bijhalen voor exits
-            exit_universe = dict(universe)
-            cur.execute(f"""SELECT DISTINCT coin FROM {TABLE}
-                           WHERE strategie IN ('DONCHIAN','ROTATIE','C2V') AND status='OPEN'""")
-            for (coin,) in cur.fetchall():
-                if coin not in exit_universe:
-                    rows = gate_candles(f"{coin}_USDT", "4h", MAX_DAYS)
-                    if rows:
-                        exit_universe[coin] = rows
-
-            btc = universe.get("BTC") or gate_candles("BTC_USDT", "4h", MAX_DAYS)
-            btc_last_ret = (btc[-1][4] / btc[-2][4] - 1) if btc and len(btc) >= 2 else None
-
+            fn = fd = dn = dd = rn = rd = 0
             if c2v_only:
-                fn = fd = dn = dd = rn = rd = 0
+                # LIVE-modus: volledige-markt prescreen (alle ~2200 coins) -> C2V + VBREAK
+                cn, cd, vn, vd = scan_fullmarket(cur)
             else:
+                # legacy test-modus: top-N universum + alle 5 strategieen
+                cfg = costmod.load_cfg(cur)
+                cfg["majors"] = set(cfg["majors"]) | {m.replace("USDT", "") for m in cfg["majors"]}
+                conn.commit()
+                universe = gate_universe()
+                regime = btc_regime()
+                regime_ok = bool(regime)
+                log(f"{len(universe)} liquide Gate-coins | BTC>200d-SMA: {regime} | DRY={dry}")
+                exit_universe = dict(universe)
+                cur.execute(f"""SELECT DISTINCT coin FROM {TABLE}
+                               WHERE strategie IN ('DONCHIAN','ROTATIE','C2V') AND status='OPEN'""")
+                for (coin,) in cur.fetchall():
+                    if coin not in exit_universe:
+                        rows = gate_candles(f"{coin}_USDT", "4h", MAX_DAYS)
+                        if rows:
+                            exit_universe[coin] = rows
+                btc = universe.get("BTC") or gate_candles("BTC_USDT", "4h", MAX_DAYS)
+                btc_last_ret = (btc[-1][4] / btc[-2][4] - 1) if btc and len(btc) >= 2 else None
                 fn, fd = run_faber(cur, cfg)
                 dn, dd = run_donchian(cur, cfg, regime_ok, universe, exit_universe)
                 rn, rd = run_rotatie(cur, cfg, regime_ok, universe, exit_universe)
-            # De twee GEKOZEN shadow-strategieen (bewezen/kandidaat): C2V + VBREAK
-            cn, cd = run_c2v(cur, regime, btc_last_ret, universe, exit_universe)
-            vn, vd = run_vbreak(cur, regime_ok, list(universe.keys()))
+                cn, cd = run_c2v(cur, regime, btc_last_ret, universe, exit_universe)
+                vn, vd = run_vbreak(cur, regime_ok, list(universe.keys()))
 
             if dry:
                 conn.rollback()
@@ -615,7 +777,7 @@ def main(c2v_only=False):
             else:
                 state_set(cur, "gate_shadow_last_run", now_utc().isoformat())
                 conn.commit()
-            mode = "C2V+VBREAK" if c2v_only else "alle"
+            mode = "volledige-markt" if c2v_only else "top-N/alle"
             log(f"[{mode}] FABER {fn}/{fd} | DONCHIAN {dn}/{dd} | ROTATIE {rn}/{rd} "
                 f"| C2V {cn}/{cd} | VBREAK {vn}/{vd}")
     finally:

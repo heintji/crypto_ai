@@ -3229,12 +3229,12 @@ if __name__ == "__main__":
             _strat_shadow_main()
         except Exception as _ss_e:
             log(f"[strat-shadow] overgeslagen: {_ss_e}")
-        # --- Gate-shadow: de 2 GEKOZEN strategieen op het bredere Gate-universum ---
-        # C2V (crash-bounce, +1,9%/52%wr/121tr) + VBREAK (volatility-breakout Williams/
-        # Koreaans, regime-gated, +5,68%/73,7%wr/38tr — kandidaat, klein sample).
-        # FABER/DONCHIAN/ROTATIE/mr_trail = afgevoerd (negatief/survivorship). Eigen
-        # tabel gate_shadow_trades + uur-throttle + eigen try/except. Publieke Gate-API,
-        # GEEN key/geld/orders. Geen nieuwe cron (c2v_only=True draait C2V+VBREAK).
+        # --- Gate-shadow: VOLLEDIGE-MARKT scan (alle ~2200 coins) -> C2V + VBREAK ---
+        # Goedkope prescreen (/tickers, 1 call) screent ALLE coins; alleen kandidaten
+        # krijgen dure candles (budget ~60/run, 429-backoff, carry-over). C2V (crash-
+        # bounce, bear-only) + VBREAK (volatility-breakout, bull-only) sluiten elkaar
+        # qua regime uit. Eigen tabel gate_shadow_trades + uur-throttle + eigen
+        # try/except. Publieke Gate-API, GEEN key/geld/orders. Geen nieuwe cron.
         try:
             from research.gate_shadow import main as _gate_shadow_main
             _gate_shadow_main(c2v_only=True)
