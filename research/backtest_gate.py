@@ -304,6 +304,53 @@ def bt_rotatie(series4, reg):
     return trades
 
 
+def bt_mrtrail(series4):
+    """MR-TRAIL: entry RSI14<25 (oversold), doel entry+1,5xATR (=0,5R op 3xATR-risk),
+    vaste stop -2%, na doel trailing 1xATR met vloer op doel; MAX_HOLD 12 (fase1),
+    MAX_TOTAL 30 (fase2). Op liquide universum + echte kosten + schone candles —
+    de eerlijke hertest van de op Bitvavo als NO-GO bestempelde variant."""
+    trades = []
+    for base, rows in series4.items():
+        if len(rows) < 20:
+            continue
+        cl = [r[4] for r in rows]
+        i = 16
+        while i < len(rows):
+            a = atr(rows, 14, i)
+            rv = rsi(cl, i)
+            if a and a > 0 and rv is not None and rv < 25:
+                entry = cl[i]
+                stop = entry * (1 - 0.02)
+                target = entry + 1.5 * a
+                target_hit = False
+                peak = target
+                res = None
+                jexit = i
+                for n, j in enumerate(range(i + 1, len(rows)), start=1):
+                    h, lo, c = rows[j][2], rows[j][3], rows[j][4]
+                    if not target_hit:
+                        if lo <= stop:
+                            res = (stop - entry) / entry * 100; jexit = j; break
+                        if h >= target:
+                            target_hit = True; peak = max(target, h); jexit = j; continue
+                        if n >= 12:
+                            res = (c - entry) / entry * 100; jexit = j; break
+                    else:
+                        peak = max(peak, h)
+                        tstop = max(target, peak - 1.0 * a)
+                        if lo <= tstop:
+                            res = (tstop - entry) / entry * 100; jexit = j; break
+                        if n >= 30:
+                            res = (c - entry) / entry * 100; jexit = j; break
+                if res is None:
+                    jexit = len(rows) - 1
+                    res = (rows[jexit][4] - entry) / entry * 100
+                trades.append({"net": res - cost_rt(base, vol24(rows, i))})
+                i = jexit                # geen overlappende trades per coin
+            i += 1
+    return trades
+
+
 def bt_c2v(series4, reg, btc4):
     """Crash-bounce, bear-only. btc4 = {ts_ms: 4u-return BTC} voor de freefall-filter."""
     trades = []
@@ -371,6 +418,7 @@ def main():
     res = {"FABER": stats(bt_faber(dseries)),
            "DONCHIAN": stats(bt_donchian(series4, reg)),
            "ROTATIE": stats(bt_rotatie(series4, reg)),
+           "MR_TRAIL": stats(bt_mrtrail(series4)),
            "C2V": stats(bt_c2v(series4, reg, btc4))}
     print(f"{'STRATEGIE':<11}{'trades':>7}{'W/L':>10}{'winrate':>9}{'gem.W':>8}{'gem.V':>8}{'som%':>9}{'/trade':>9}")
     for nm, s in res.items():
