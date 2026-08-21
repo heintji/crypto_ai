@@ -3229,6 +3229,16 @@ if __name__ == "__main__":
             _strat_shadow_main()
         except Exception as _ss_e:
             log(f"[strat-shadow] overgeslagen: {_ss_e}")
+        # --- Gate-shadow: ALLEEN C2V (crash-bounce) op het bredere Gate-universum ---
+        # Enige strategie die in de Gate-backtest een robuuste edge toonde (+1,9%/
+        # 52% wr/121 trades). FABER/DONCHIAN/ROTATIE/mr_trail = afgevoerd (negatief/
+        # survivorship). Eigen tabel gate_shadow_trades + uur-throttle + eigen
+        # try/except. Leest publieke Gate-API, GEEN key/geld/orders. Geen nieuwe cron.
+        try:
+            from research.gate_shadow import main as _gate_shadow_main
+            _gate_shadow_main(c2v_only=True)
+        except Exception as _gs_e:
+            log(f"[gate-shadow] overgeslagen: {_gs_e}")
         # --- Plan U (C1 Rotatie + C2 Bounce) MEELIFTEN: crash-/rotatie-strategie die
         # alleen in ROOD/STORM-regime trades opent. Lag stil (geen cron) -> nu weer
         # continu meedraaien. Eigen DB-conn + try/except -> kan de scan niet breken. ---
