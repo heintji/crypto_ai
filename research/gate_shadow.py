@@ -79,7 +79,13 @@ C2V_MAX_HOLD = 12
 # het Fable-onderzoek (West+Azie convergeren). Long-only, 1h-timing op dag-grid.
 VBREAK_K = 0.5             # koopniveau = day_open + 0,5 x vorige-dag-range
 VBREAK_STOP = 0.03        # harde stop -3%
-VBREAK_COST_RT = 0.60     # taker + slippage (momentum-breakout, conservatief)
+VBREAK_COST_RT = 0.60     # (legacy; v1/v2 gebruiken kosten-per-grootte via _vb_cost)
+# v2-fixes (Fable5+Opus5 consensus): close-confirm+volfilter, dag-cap, partial+trail
+VB2_PARTIAL = 0.04        # 50% afbouwen op +4%
+VB2_ATR_TRAIL = 2.5       # rest: chandelier hh - 2,5xATR, vloer break-even
+VB2_MAX_HOLD_H = 120      # 5 dagen safety time-exit
+VB2_K_PER_DAY = 8         # max nieuwe v2-entries per UTC-dag (anti-overtrading)
+VB2_VOL_CONFIRM = 1.5     # breakout-uur volume > 1,5x gem(20u)
 
 # --- VOLLEDIGE-MARKT prescreen (alle ~2200 coins, rate-limit-veilig) ---
 # Ontwerp Fable5: 2 goedkope calls (/tickers + /currency_pairs) screenen ALLE coins;
@@ -90,7 +96,8 @@ PACE_S = 0.30             # pauze tussen candle-calls (~3 req/s, ver onder de li
 SPREAD_MAX = 0.02         # ticker-spread-sanity (bid/ask)
 C2V_PRE_QV = 1_600_000.0  # C2V-prescreen volume (0,8x de 2M exacte eis, marge)
 C2V_PRE_DROP = -6.0       # C2V-prescreen: min(24h%, last/high_24h) <= -6%
-VB_PRE_QV = 25_000.0      # VBREAK-prescreen volume-vloer (Hein: ook kleine coins mee)
+VB_PRE_QV = 2_000_000.0   # VBREAK-prescreen volume-vloer ≥2M (consensus-fix: microcaps
+                          # sloopten de winrate — live 13% wr <1M vs 41% ≥1M)
 VB_MIN_AGE_D = 35         # VBREAK heeft >=31 daily bars nodig
 VB_EPS = 0.15             # marge op de 0,5x-range-term (snapshot-offset rond 00:00)
 
@@ -244,6 +251,8 @@ def ensure_table(cur):
             UNIQUE (strategie, coin, entry_ts)
         )
     """)
+    cur.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS day_open DOUBLE PRECISION")
+    cur.execute(f"ALTER TABLE {TABLE} ADD COLUMN IF NOT EXISTS atr_entry DOUBLE PRECISION")
 
 
 def state_get(cur, k):
@@ -455,53 +464,112 @@ def run_c2v(cur, regime, btc_last_ret, universe, exit_candles):
     return nieuw, dicht
 
 
-def _close_vbreak(cur, tid, entry, exit_p, exit_ts, reden):
-    pnl = (exit_p - entry) / entry * 100
-    net = round(pnl - VBREAK_COST_RT, 4)
+def _vb_cost(v24):
+    """Realistische round-trip kosten per coin-grootte (fee + spread)."""
+    return 0.5 if (v24 or 0) >= 10_000_000 else 0.9
+
+
+def _close_vb(cur, tid, strat, exit_p, exit_ts, reden, gross_pnl, v24):
+    net = round(gross_pnl - _vb_cost(v24), 4)
     cur.execute(f"""UPDATE {TABLE} SET status=%s, exit_prijs=%s, exit_ts=%s,
         exit_reden=%s, pnl_pct=%s, fee_pct=%s, spread_pct=%s, pnl_net_pct=%s WHERE id=%s""",
-                ("WIN" if net > 0 else "LOSS", exit_p, exit_ts, reden, round(pnl, 4),
-                 0.40, 0.20, net, tid))
+                ("WIN" if net > 0 else "LOSS", exit_p, exit_ts, reden, round(gross_pnl, 4),
+                 _vb_cost(v24), 0.0, net, tid))
 
 
-def run_vbreak(cur, regime_ok, universe_bases):
-    """Volatility-breakout (Williams/Koreaans): koop day_open + 0,5x vorige-dag-range,
-    alleen in bull-regime; exit op stop -3%, close<day_open, of volgende dag 00:00."""
-    # 1) open trades resolven (target-kolom = day_open = intraday-vloer)
-    cur.execute(f"SELECT id,coin,entry_ts,entry,stop,target FROM {TABLE} WHERE strategie='VBREAK' AND status='OPEN'")
-    dicht = 0
-    for tid, coin, ets, entry, stop, day_open in cur.fetchall():
-        rows = gate_candles(f"{coin}_USDT", "1h", 4)
-        for r in rows:
-            if r[0] <= ets:
-                continue
-            t, o, h, l, c = r[0], r[1], r[2], r[3], r[4]
-            if t.date() > ets.date() and t.hour == 0:
-                _close_vbreak(cur, tid, entry, o, t, "TIME_DAG"); dicht += 1; break
+def _resolve_v1(cur, rows, tid, coin, ets, entry, stop, day_open, v24):
+    """v1-exit: stop -3%, close<day_open, of volgende dag 00:00 (time)."""
+    for r in rows:
+        if r[0] <= ets:
+            continue
+        t, o, _h, l, c = r[0], r[1], r[2], r[3], r[4]
+        if t.date() > ets.date() and t.hour == 0:
+            _close_vb(cur, tid, "VBREAK_V1", o, t, "TIME_DAG", (o - entry) / entry * 100, v24); return 1
+        if l <= stop:
+            _close_vb(cur, tid, "VBREAK_V1", stop, t, "STOP", (stop - entry) / entry * 100, v24); return 1
+        if c < day_open:
+            _close_vb(cur, tid, "VBREAK_V1", c, t, "ONDER_OPEN", (c - entry) / entry * 100, v24); return 1
+    return 0
+
+
+def _resolve_v2(cur, rows, tid, coin, ets, entry, stop, target, day_open, atr_e, v24):
+    """v2-exit: stop -3%, close<day_open, 50% op +4% dan rest ATR-trailing, 5d-safety.
+    Stateless: herleidt partial-status uit de candles sinds entry."""
+    partial = False
+    hh = entry
+    n = 0
+    for r in rows:
+        if r[0] <= ets:
+            continue
+        n += 1
+        t, o, h, l, c = r[0], r[1], r[2], r[3], r[4]
+        if not partial:
             if l <= stop:
-                _close_vbreak(cur, tid, entry, stop, t, "STOP"); dicht += 1; break
+                _close_vb(cur, tid, "VBREAK_V2", stop, t, "STOP", (stop - entry) / entry * 100, v24); return 1
             if c < day_open:
-                _close_vbreak(cur, tid, entry, c, t, "ONDER_OPEN"); dicht += 1; break
-    # 2) nieuwe entries (alleen bull-regime)
+                _close_vb(cur, tid, "VBREAK_V2", c, t, "ONDER_OPEN", (c - entry) / entry * 100, v24); return 1
+            if h >= target:
+                partial = True
+                hh = max(hh, h)
+        else:
+            hh = max(hh, h)
+            trail = max(entry, hh - VB2_ATR_TRAIL * atr_e)
+            if l <= trail:
+                runner = (trail - entry) / entry * 100
+                _close_vb(cur, tid, "VBREAK_V2", trail, t, "TRAIL", 0.5 * VB2_PARTIAL * 100 + 0.5 * runner, v24); return 1
+        if n >= VB2_MAX_HOLD_H:
+            rr = (c - entry) / entry * 100
+            g = (0.5 * VB2_PARTIAL * 100 + 0.5 * rr) if partial else rr
+            _close_vb(cur, tid, "VBREAK_V2", c, t, "TIME_5D", g, v24); return 1
+    return 0
+
+
+def run_vbreak(cur, regime_ok, universe_bases, qvmap=None):
+    """Draait VBREAK v1 EN v2 NAAST elkaar op het ≥2M-universum (aparte strategie-labels
+    VBREAK_V1 / VBREAK_V2), plus resolve van legacy 'VBREAK'-open-trades met v1-logica."""
+    qvmap = qvmap or {}
+    dicht = 0
+    # --- open trades resolven (1h sinds entry per coin, hergebruikt voor v1+v2) ---
+    cur.execute(f"""SELECT id,strategie,coin,entry_ts,entry,stop,target,day_open,atr_entry,vol24_usdt
+                    FROM {TABLE} WHERE strategie IN ('VBREAK','VBREAK_V1','VBREAK_V2') AND status='OPEN'""")
+    opens = cur.fetchall()
+    cache1h = {}
+    for tid, strat, coin, ets, entry, stop, target, day_open, atr_e, v24 in opens:
+        rows = cache1h.get(coin)
+        if rows is None:
+            rows = gate_candles(f"{coin}_USDT", "1h", 6)
+            cache1h[coin] = rows
+        if not rows:
+            continue
+        do = day_open if day_open is not None else target  # legacy VBREAK: day_open zat in target
+        if strat == "VBREAK_V2" and atr_e:
+            dicht += _resolve_v2(cur, rows, tid, coin, ets, entry, stop, target, do, atr_e, v24)
+        else:
+            dicht += _resolve_v1(cur, rows, tid, coin, ets, entry, stop, do, v24)
+
     nieuw = 0
     if not regime_ok:
         return nieuw, dicht
-    cur.execute(f"SELECT coin FROM {TABLE} WHERE strategie='VBREAK' AND status='OPEN'")
-    open_coins = {r[0] for r in cur.fetchall()}
-    for coin in universe_bases:
-        if coin in open_coins:
-            continue
-        d = fetch_daily(coin, 40)               # closed daily-candles
+    # v2 dag-cap: hoeveel al vandaag geopend
+    cur.execute(f"""SELECT COUNT(*) FROM {TABLE} WHERE strategie='VBREAK_V2'
+                    AND entry_ts::date = (NOW() AT TIME ZONE 'UTC')::date""")
+    v2_today = cur.fetchone()[0]
+    cur.execute(f"SELECT strategie,coin FROM {TABLE} WHERE strategie IN ('VBREAK_V1','VBREAK_V2') AND status='OPEN'")
+    open_set = {(r[0], r[1]) for r in cur.fetchall()}
+    # ranking: hoogste volume eerst (voor de dag-cap)
+    bases = sorted(universe_bases, key=lambda b: -qvmap.get(b, 0))
+    for coin in bases:
+        d = fetch_daily(coin, 40)
         if len(d) < 31:
             continue
         h1 = gate_candles(f"{coin}_USDT", "1h", 3)
         if not h1:
             continue
         today = h1[-1][0].date()
-        opens = [r for r in h1 if r[0].date() == today and r[0].hour == 0]
-        if not opens:
-            continue                            # geen 00:00-bar -> geen day_open
-        day_open = opens[0][1]
+        opens0 = [r for r in h1 if r[0].date() == today and r[0].hour == 0]
+        if not opens0:
+            continue
+        day_open = opens0[0][1]
         prev_range = d[-1][2] - d[-1][3]
         if prev_range <= 0:
             continue
@@ -510,13 +578,36 @@ def run_vbreak(cur, regime_ok, universe_bases):
         if not (day_open > ma5 and d[-1][6] > vmed):
             continue
         level = day_open + VBREAK_K * prev_range
-        trig = next((r for r in h1 if r[0].date() == today and r[0].hour <= 20 and r[2] >= level), None)
-        if not trig:
-            continue
-        cur.execute(f"""INSERT INTO {TABLE} (strategie,coin,entry_ts,entry,stop,target,vol24_usdt)
-            VALUES ('VBREAK',%s,%s,%s,%s,%s,%s) ON CONFLICT (strategie,coin,entry_ts) DO NOTHING""",
-                    (coin, trig[0], level, level * (1 - VBREAK_STOP), day_open, d[-1][6]))
-        nieuw += cur.rowcount
+        v24 = d[-1][6]
+        today_bars = [r for r in h1 if r[0].date() == today]
+        # --- v1: eerste intrabar-touch boven level ---
+        if ("VBREAK_V1", coin) not in open_set:
+            trig = next((r for r in today_bars if r[0].hour <= 20 and r[2] >= level), None)
+            if trig:
+                cur.execute(f"""INSERT INTO {TABLE} (strategie,coin,entry_ts,entry,stop,day_open,vol24_usdt)
+                    VALUES ('VBREAK_V1',%s,%s,%s,%s,%s,%s) ON CONFLICT (strategie,coin,entry_ts) DO NOTHING""",
+                            (coin, trig[0], level, level * (1 - VBREAK_STOP), day_open, v24))
+                nieuw += cur.rowcount
+        # --- v2: close-confirm + volumebevestiging, entry op volgende bar-open, dag-cap ---
+        if ("VBREAK_V2", coin) not in open_set and v2_today < VB2_K_PER_DAY:
+            for k, r in enumerate(h1):
+                if r[0].date() != today or r[0].hour > 20 or k < 20 or k + 1 >= len(h1):
+                    continue
+                vavg = sum(h1[j][5] for j in range(k - 20, k)) / 20
+                if r[4] >= level and vavg and r[5] > VB2_VOL_CONFIRM * vavg:
+                    a = atr(h1[:k + 1], 14)
+                    if a and a > 0:
+                        e = h1[k + 1][1]
+                        cur.execute(f"""INSERT INTO {TABLE}
+                            (strategie,coin,entry_ts,entry,stop,target,day_open,atr_entry,vol24_usdt)
+                            VALUES ('VBREAK_V2',%s,%s,%s,%s,%s,%s,%s,%s)
+                            ON CONFLICT (strategie,coin,entry_ts) DO NOTHING""",
+                                    (coin, h1[k + 1][0], e, e * (1 - VBREAK_STOP), e * (1 + VB2_PARTIAL),
+                                     day_open, a, v24))
+                        if cur.rowcount:
+                            nieuw += 1
+                            v2_today += 1
+                    break
     return nieuw, dicht
 
 
@@ -661,7 +752,8 @@ def scan_fullmarket(cur):
     log(f"prescreen: {len(market)} paren -> C2V-shortlist {len(universe)} / "
         f"VBREAK-shortlist {len(vb_bases)} | regime {regime} | budget-rest {bud.left}")
     cn, cd = run_c2v(cur, regime, btc_ret, universe, exit_candles)
-    vn, vd = run_vbreak(cur, regime is True, vb_bases)
+    qvmap = {b: m.get("qv", 0) for b, m in market.items()}
+    vn, vd = run_vbreak(cur, regime is True, vb_bases, qvmap)
     return cn, cd, vn, vd
 
 
