@@ -19,7 +19,7 @@ if ROOT not in sys.path:
 
 import psycopg2
 
-from trading.gate_alert import maak_alert
+from trading.gate_alert import kanaal_gereed, maak_alert
 from trading.gate_api import GateAPI, GateError
 from trading.gate_live_engine import Engine, Limits
 from trading.gate_live_store import Store
@@ -77,6 +77,13 @@ def main():
     key, secret = os.getenv("GATE_API_KEY", ""), os.getenv("GATE_API_SECRET", "")
     live = os.getenv("GATE_V1_LIVE", "false").lower() == "true"
     confirmed = os.getenv("GATE_V1_CONFIRM", "") == "LIVE_V1"
+    # Zonder werkend meldkanaal niet handelen: de hele veiligheid van deze bot
+    # leunt erop dat een pauze of een onbeschermde positie bij Hein terechtkomt
+    # (Fable-controle 20-9).
+    meld_ok, meld_reden = kanaal_gereed()
+    if live and confirmed and not meld_ok:
+        print(f"GATE V1: safe no-op — geen meldkanaal ({meld_reden})", flush=True)
+        return 0
     if not pairs or not database or not key or not secret or (live and not confirmed):
         print("GATE V1: safe no-op (pairs/database/credentials/confirmation ontbreken)", flush=True)
         return 0
@@ -160,7 +167,7 @@ def main():
                 if signal and live and confirmed:
                     engine.open(signal, meta)
             store.heartbeat("success")
-        except (GateError, OSError, ValueError, RuntimeError) as exc:
+        except Exception as exc:  # noqa: BLE001 — elke crash moet zichtbaar zijn
             store.heartbeat("failure", type(exc).__name__)
             store.pause("Executor failed: " + type(exc).__name__)
             alert(f"Uitvoerder gestopt met {type(exc).__name__}: {exc}. "

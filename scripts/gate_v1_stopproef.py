@@ -58,7 +58,9 @@ def hoofd(argv: list[str]) -> int:
     print(f"proef: stop voor {hoeveelheid} {munt} met trigger {trigger} (saldo is 0, dus "
           "er kan niets ontstaan)", flush=True)
     try:
-        uit = api.create_stop(pair, hoeveelheid, trigger, "t-vormproef0")
+        # Zestig seconden geldig: mocht Gate hem tóch aanmaken en het annuleren
+        # mislukken, dan is het restrisico één minuut (Fable-controle 20-9).
+        uit = api.create_stop(pair, hoeveelheid, trigger, "t-vormproef0", expiration=60)
     except GateRejected as exc:
         tekst = str(exc).upper()
         if any(w in tekst for w in VORM_GOED):

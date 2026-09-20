@@ -10,6 +10,7 @@ order. Meldt via e-mail (trading/gate_alert.py).
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -49,14 +50,23 @@ def hoofd() -> int:
         paused, reden, gestart, geslaagd, gefaald, fout = rij
         nu = datetime.now(timezone.utc)
 
-        # 1. hartslag
-        laatste = max([t for t in (gestart, geslaagd) if t], default=None)
-        if laatste is None:
-            meldingen.append("De uitvoerder heeft nog nooit gedraaid.")
-        elif nu - laatste > timedelta(minutes=STIL_NA_MINUTEN):
-            stil = int((nu - laatste).total_seconds() // 60)
-            meldingen.append(f"De uitvoerder draait al {stil} minuten niet meer "
-                             f"(laatste teken van leven: {laatste:%d-%m %H:%M} UTC). "
+        # 1. hartslag — bewust op de laatste GESLAAGDE run. Een uitvoerder die
+        # elke minuut opstart en crasht schrijft wel started_at maar komt nooit
+        # bij de verkoopcontrole; op started_at kijken zou dat "in orde" noemen
+        # (Fable-controle 20-9).
+        if geslaagd is None:
+            if gestart is None:
+                meldingen.append("De uitvoerder heeft nog nooit gedraaid.")
+            else:
+                meldingen.append("De uitvoerder start wel, maar heeft nog geen enkele "
+                                 "run afgemaakt. Waarschijnlijk crasht hij telkens.")
+        elif nu - geslaagd > timedelta(minutes=STIL_NA_MINUTEN):
+            stil = int((nu - geslaagd).total_seconds() // 60)
+            extra = ""
+            if gestart and nu - gestart < timedelta(minutes=STIL_NA_MINUTEN):
+                extra = " Hij start wél op, dus hij loopt ergens vast."
+            meldingen.append(f"De uitvoerder heeft al {stil} minuten geen run afgemaakt "
+                             f"(laatste geslaagde run: {geslaagd:%d-%m %H:%M} UTC).{extra} "
                              "Een open positie wordt in die tijd niet bewaakt; "
                              "de stop bij Gate vervalt na 48 uur.")
 
@@ -104,11 +114,50 @@ def hoofd() -> int:
 
     if not meldingen:
         print("wachter: alles in orde", flush=True)
+        _onthoud(database, account, "")
         return 0
     tekst = "Bewaking Gate V1 vond het volgende:\n\n- " + "\n- ".join(meldingen)
     print(tekst, flush=True)
-    stuur(tekst, onderwerp="Gate V1 bewaking")
+    # Niet elke run dezelfde mail: bij een pauze die dagen duurt wil je één
+    # melding, geen stroom (Fable-controle 20-9). Verandert het beeld, dan
+    # meldt hij opnieuw.
+    vinger = "|".join(sorted(meldingen))
+    if _vorige(database, account) == vinger:
+        print("wachter: zelfde melding als vorige keer, niet opnieuw gemaild", flush=True)
+        return 0
+    if stuur(tekst, onderwerp="Gate V1 bewaking"):
+        _onthoud(database, account, vinger)
     return 0
+
+
+def _vorige(database, account) -> str:
+    conn = psycopg2.connect(database, sslmode="require", connect_timeout=10)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT data FROM gate_v1_cache WHERE account=%s AND key='wachter_laatste'",
+                        (account,))
+            rij = cur.fetchone()
+        return ((rij[0] or {}).get("vinger", "") if rij else "")
+    except Exception:  # noqa: BLE001 — bewaking mag nooit zelf omvallen
+        return ""
+    finally:
+        conn.close()
+
+
+def _onthoud(database, account, vinger) -> None:
+    conn = psycopg2.connect(database, sslmode="require", connect_timeout=10)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO gate_v1_cache(account,key,data)
+                           VALUES(%s,'wachter_laatste',%s::jsonb)
+                           ON CONFLICT(account,key) DO UPDATE SET data=EXCLUDED.data,
+                                                                  updated_at=now()""",
+                        (account, json.dumps({"vinger": vinger})))
+        conn.commit()
+    except Exception as exc:  # noqa: BLE001
+        print(f"wachter: kon melding niet onthouden ({type(exc).__name__})", flush=True)
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":

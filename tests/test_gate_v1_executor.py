@@ -14,7 +14,8 @@ import pytest
 def _uitvoerder(monkeypatch, **env):
     """Laadt de uitvoerder met een schone omgeving."""
     for naam in ("GATE_V1_PAIRS", "DATABASE_URL", "GATE_API_KEY", "GATE_API_SECRET",
-                 "GATE_V1_LIVE", "GATE_V1_CONFIRM"):
+                 "GATE_V1_LIVE", "GATE_V1_CONFIRM",
+                 "RESEND_API_KEY", "RESEND_FROM", "ALERT_EMAIL"):
         monkeypatch.delenv(naam, raising=False)
     for naam, waarde in env.items():
         monkeypatch.setenv(naam, waarde)
@@ -24,7 +25,8 @@ def _uitvoerder(monkeypatch, **env):
 
 def _alles_gezet():
     return dict(GATE_V1_PAIRS="TEST_USDT", DATABASE_URL="postgres://x",
-                GATE_API_KEY="k", GATE_API_SECRET="s")
+                GATE_API_KEY="k", GATE_API_SECRET="s",
+                RESEND_API_KEY="r", RESEND_FROM="bot@koa-ai.nl", ALERT_EMAIL="hein@example.com")
 
 
 def test_zonder_bevestiging_raakt_de_uitvoerder_niets_aan(monkeypatch):
@@ -197,3 +199,16 @@ def test_verkoopcontrole_draait_ook_zonder_uurcandle_en_buiten_de_kooplijst(monk
     assert mod.main() == 0
     assert gesloten, "de positie is niet gecontroleerd op verkoop"
     assert gesloten[0][1] == "TIME_DAG", gesloten
+
+
+def test_zonder_meldkanaal_wordt_er_niet_gehandeld(monkeypatch):
+    """De veiligheid leunt op meldingen: staat dat kanaal niet, dan hoort de bot
+    niets te doen in plaats van blind door te draaien (Fable-controle 20-9)."""
+    env = _alles_gezet()
+    for naam in ("RESEND_API_KEY", "RESEND_FROM", "ALERT_EMAIL"):
+        env.pop(naam)
+    mod = _uitvoerder(monkeypatch, **env, GATE_V1_LIVE="true", GATE_V1_CONFIRM="LIVE_V1")
+    monkeypatch.setattr(mod.psycopg2, "connect",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            AssertionError("mag niet handelen zonder meldkanaal")))
+    assert mod.main() == 0

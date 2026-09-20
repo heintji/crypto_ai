@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from trading.gate_api import GateRejected, GateUnknownOutcome
+from trading.gate_api import GateError, GateRejected, GateUnknownOutcome
 
 
 def dec(value):
@@ -244,7 +244,7 @@ class Engine:
         data = position["data"]
         try:
             stops = self.api.list_stops(status="open", pair=position["pair"])
-        except (GateRejected, GateUnknownOutcome):
+        except GateError:
             self.halt("Stop onzeker en lijst niet op te vragen; controleer Gate handmatig", position)
             return
         trigger = dec(data.get("stop_trigger", "0"))
@@ -270,7 +270,7 @@ class Engine:
         beschermd = dec(data.get("protected_amount", "0"))
         try:
             saldo = self._available(base_currency)
-        except (GateRejected, GateUnknownOutcome):
+        except GateError:
             self.halt("Stop onzeker en saldo niet op te vragen; controleer Gate handmatig", position)
             return
         if beschermd and saldo >= beschermd:
@@ -377,6 +377,8 @@ class Engine:
             self.store.update(position, "EXIT_REJECTED")
             self.halt("Exit has zero fill; inventory still open", position)
             return
+        if fill.get("fee_note"):
+            self.alert("Opbrengst onzeker bij verkoop: " + fill["fee_note"])
         remaining = dec(position["data"]["remaining"]) - fill["base"]
         if remaining < 0:
             raise RuntimeError("sold more than strategy-owned inventory")
