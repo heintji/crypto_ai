@@ -77,8 +77,12 @@ def validate_minimums(pair_info, *, base_amount=None, quote_amount=None, side="b
 
 
 def _pair(pair):
-    if not isinstance(pair, str) or not re.fullmatch(r"[A-Z0-9]+_USDT", pair):
-        raise ValueError("Only USDT spot pairs supported")
+    # Eén onderstreep, beide kanten hoofdletters/cijfers. Stond hier eerder
+    # hardgecodeerd op _USDT, waardoor ELKE aanroep met een EU-paar (XRP_USDC,
+    # BTC_EUR) al bij de validatie omviel — nog vóór het netwerk. Gecontroleerd
+    # tegen alle 376 paren van Gate EU (Fable-controle 20-9).
+    if not isinstance(pair, str) or not re.fullmatch(r"[A-Z0-9]+_[A-Z0-9]+", pair):
+        raise ValueError("Invalid spot pair")
     return pair
 
 

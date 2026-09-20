@@ -13,7 +13,7 @@ alleen WELKE fout Gate teruggeeft:
   - een fout over parameters/velden  -> de vorm klopt NIET; eerst repareren
 
 Gebruik:
-    GATE_API_KEY=... GATE_API_SECRET=... python3 scripts/gate_v1_stopproef.py BTC_USDT
+    GATE_API_KEY=... GATE_API_SECRET=... python3 scripts/gate_v1_stopproef.py BTC_USDC
 """
 from __future__ import annotations
 
@@ -24,13 +24,14 @@ from decimal import Decimal
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from trading.gate_api import GateAPI, GateError, GateRejected, GateUnknownOutcome
+from trading.gate_live_engine import munten
 
 VORM_GOED = ("BALANCE_NOT_ENOUGH", "INSUFFICIENT", "BALANCE", "TOO_SMALL", "AMOUNT")
 VORM_FOUT = ("INVALID_PARAM", "INVALID_REQUEST_BODY", "MISSING", "PARAMETER", "NOT_SUPPORTED")
 
 
 def hoofd(argv: list[str]) -> int:
-    pair = (argv[0] if argv else "BTC_USDT").upper()
+    pair = (argv[0] if argv else "BTC_USDC").upper()
     sleutel, geheim = os.getenv("GATE_API_KEY", ""), os.getenv("GATE_API_SECRET", "")
     if not sleutel or not geheim:
         print("zet GATE_API_KEY en GATE_API_SECRET", flush=True)
@@ -39,7 +40,7 @@ def hoofd(argv: list[str]) -> int:
     api = GateAPI(sleutel, geheim,
                   base_url=os.getenv("GATE_API_BASE", "https://api.gateeu.com"),
                   trading_enabled=True)
-    munt = pair.removesuffix("_USDT")
+    munt, _tegen = munten(pair)      # niet aannemen dat het USDT is
     saldo = Decimal("0")
     try:
         for rij in api.accounts():

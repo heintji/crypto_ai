@@ -31,7 +31,7 @@ class Limits:
     daily_loss_quote: Decimal = Decimal("1")
     max_positions: int = 1
     allow_entries: bool = False
-    quote_currency: str = "USDT"
+    quote_currency: str = "USDC"   # Gate EU; de uitvoerder zet hem expliciet
 
     def __post_init__(self):
         for value in (self.order_quote, self.capital_quote, self.daily_loss_quote):

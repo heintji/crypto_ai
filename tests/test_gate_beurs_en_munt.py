@@ -94,3 +94,43 @@ def test_een_paar_in_een_andere_tegenmunt_wordt_niet_gekocht():
                                 "amount_precision": 6, "precision": 4})
     assert uit is None
     assert store.paused and "EUR" in store.paused
+
+
+def test_de_api_accepteert_de_paren_die_gate_eu_echt_heeft():
+    """De paarvalidatie stond hardgecodeerd op _USDT. Daardoor viel élke
+    aanroep met een EU-paar al om vóór het netwerk: geen koers, geen order,
+    geen stop (Fable-controle 20-9)."""
+    from trading.gate_api import _pair
+    for geldig in ("XRP_USDC", "BTC_EUR", "1000SATS_USDC", "BTC_USDT"):
+        assert _pair(geldig) == geldig
+    for ongeldig in ("XRP", "xrp_usdc", "XRP_USDC_EXTRA", "XRP-USDC", ""):
+        with pytest.raises(ValueError):
+            _pair(ongeldig)
+
+
+def test_de_api_kan_een_eu_paar_opvragen_zonder_netwerk():
+    """Niet alleen de regex: de hele aanroepketen moet een USDC-paar aankunnen."""
+    class NepSessie:
+        def __init__(self):
+            self.laatste = None
+
+        def mount(self, *a, **kw):
+            pass
+
+        def request(self, method, url, **kw):
+            self.laatste = url
+
+            class Antwoord:
+                status_code = 200
+
+                @staticmethod
+                def json():
+                    return {"id": "XRP_USDC", "base": "XRP", "quote": "USDC",
+                            "trade_status": "tradable"}
+            return Antwoord()
+
+    sessie = NepSessie()
+    api = GateAPI("k", "s", session=sessie, base_url="https://api.gateeu.com")
+    uit = api.pair("XRP_USDC")
+    assert uit["quote"] == "USDC"
+    assert "XRP_USDC" in sessie.laatste and "api.gateeu.com" in sessie.laatste
