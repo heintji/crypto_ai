@@ -4,3 +4,6 @@ obsidian_vault/
 .env
 .env.*
 *.key
+
+__pycache__/
+*.pyc
