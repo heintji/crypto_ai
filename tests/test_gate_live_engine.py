@@ -85,14 +85,43 @@ def test_filled_order_requires_terminal_actual_fill():
 
 
 def test_external_fee_currency_is_not_silently_valued():
+    """Kosten in een vreemde munt worden NIET meegerekend, maar ze mogen de
+    afhandeling ook niet stoppen: dan blijft een gekochte positie onbeschermd
+    staan. Vandaar een markering in plaats van een fout (Astra + Fable, 20-9)."""
     order = {"currency_pair": "TEST_USDT", "side": "sell", "status": "closed",
              "filled_amount": "1", "filled_total": "100", "fee": "1", "fee_currency": "KOIN"}
-    try:
-        filled_order(order, "TEST_USDT", "sell")
-    except ValueError as exc:
-        assert "fee currency" in str(exc)
-    else:
-        raise AssertionError("external fee must stop reconciliation")
+    fill = filled_order(order, "TEST_USDT", "sell")
+    assert fill["base"] == Decimal("1") and fill["quote"] == Decimal("100")
+    assert "KOIN" in fill["fee_note"]
+
+
+def test_gt_korting_stopt_de_afhandeling_niet():
+    """Met GT-korting aan gooide filled_order een ValueError, VOOR het plaatsen
+    van de stop. Resultaat: gekocht, onbeschermd, en elke run dezelfde fout."""
+    order = {"currency_pair": "TEST_USDT", "side": "buy", "status": "closed",
+             "filled_amount": "1", "filled_total": "100", "fee": "0", "gt_fee": "0.01"}
+    fill = filled_order(order, "TEST_USDT", "buy")
+    assert fill["base"] == Decimal("1") and fill["quote"] == Decimal("100")
+    assert "GT" in fill["fee_note"]
+
+
+def test_een_koop_met_gt_korting_wordt_alsnog_beschermd():
+    """Het hele pad: gevulde koop met GT-kosten moet eindigen in een geplaatste
+    stop, met een melding over de onzekere kostprijs."""
+    store, api = Store(), StopAPI()
+    api.order = {"id": "1", "currency_pair": "TEST_USDT", "side": "buy", "status": "closed",
+                 "filled_amount": "1", "filled_total": "100", "fee": "0", "gt_fee": "0.01"}
+    meldingen = []
+    engine = Engine(api, store, Limits(order_usdt=Decimal("10"), capital_usdt=Decimal("10"),
+                                       daily_loss_usdt=Decimal("1"), allow_entries=True),
+                    clock=lambda: datetime(2026, 9, 20, 12, 0, 1, tzinfo=UTC),
+                    alert=meldingen.append)
+    positie = store.create("TEST_USDT", "2026-09-20", {"metadata": metadata()})
+    store.update(positie, "BUY_SUBMITTED", buy_id="1", buy_tag="t-x")
+    engine.reconcile(positie)
+    assert positie["state"] == "PROTECTED", positie["state"]
+    assert api.stops, "geen stop geplaatst bij een koop met GT-kosten"
+    assert any("kostprijs" in m.lower() for m in meldingen), meldingen
 
 
 # ── beschermen: een gevulde koop mag nooit zonder stop blijven staan ───────
@@ -108,6 +137,16 @@ class StopAPI(API):
         super().__init__()
         self.weiger = weiger
         self.stops = []
+        self.order = None
+
+    def get_order(self, pair, order_id):
+        return self.order
+
+    def list_orders(self, *a, **kw):
+        return [self.order] if self.order else []
+
+    def accounts(self):
+        return [{"currency": "USDT", "available": "100"}, {"currency": "TEST", "available": "1"}]
 
     def create_stop(self, pair, base_amount, trigger, client_id, expiration=172800):
         from trading.gate_api import _client_id
@@ -170,4 +209,81 @@ def test_weigert_gate_de_stop_dan_gaat_de_positie_dicht():
     engine.protect(positie)
     assert positie["state"] == "UNPROTECTED", positie["state"]
     assert verkocht, "een onbeschermde positie moet gesloten worden"
+    assert store.paused
+
+
+# ── herstel na een onzekere stop ──────────────────────────────────────────
+# Eerder stond hier alleen een pauze: de positie bleef onbeschermd staan tot
+# iemand het toevallig zag (Astra + Fable, 20-9).
+
+class HerstelAPI(StopAPI):
+    def __init__(self, open_stops=None, saldo="1", lijst_fout=None):
+        super().__init__()
+        self.open_stops = open_stops if open_stops is not None else []
+        self.saldo = saldo
+        self.lijst_fout = lijst_fout
+
+    def accounts(self):
+        return [{"currency": "USDT", "available": "100"},
+                {"currency": "TEST", "available": self.saldo}]
+
+    def list_stops(self, status="open", pair=None, **kw):
+        if self.lijst_fout:
+            raise self.lijst_fout
+        return self.open_stops
+
+    def get_stop(self, stop_id):
+        return {"id": stop_id, "status": "open"}
+
+
+def _onzekere_positie(store):
+    positie = store.create("TEST_USDT", "2026-09-20", {"metadata": metadata()})
+    store.update(positie, "UNKNOWN_STOP", remaining="1", bought_base="1", cost="100",
+                 proceeds="0", entry_price="100", stop_trigger="97", protected_amount="1")
+    return positie
+
+
+def test_een_teruggevonden_stop_maakt_de_positie_weer_beschermd():
+    store = Store()
+    api = HerstelAPI(open_stops=[{"id": "stop-9", "market": "TEST_USDT",
+                                  "trigger": {"price": "97"}}])
+    engine = _engine(api, store)
+    positie = _onzekere_positie(store)
+    engine.reconcile(positie)
+    assert positie["state"] == "PROTECTED", positie["state"]
+    assert positie["data"]["stop_id"] == "stop-9"
+
+
+def test_geen_stop_maar_wel_de_munt_dan_wordt_hij_opnieuw_geplaatst():
+    """Dit is herstel, geen blinde tweede order: we hebben eerst vastgesteld
+    dat er géén stop openstaat en dat de positie er nog is."""
+    store = Store()
+    api = HerstelAPI(open_stops=[], saldo="1")
+    engine = _engine(api, store)
+    positie = _onzekere_positie(store)
+    engine.reconcile(positie)
+    assert api.stops, "er is geen nieuwe stop geplaatst"
+    assert positie["state"] == "PROTECTED", positie["state"]
+
+
+def test_geen_stop_en_geen_munt_dan_alleen_melden():
+    """De stop is waarschijnlijk al gevuurd. Nooit een nieuwe stop of verkoop
+    op goed geluk."""
+    store = Store()
+    api = HerstelAPI(open_stops=[], saldo="0")
+    engine = _engine(api, store)
+    positie = _onzekere_positie(store)
+    engine.reconcile(positie)
+    assert not api.stops
+    assert store.paused and "handmatig" in store.paused.lower()
+
+
+def test_kan_de_lijst_niet_opgevraagd_worden_dan_pauzeren_we():
+    from trading.gate_api import GateUnknownOutcome
+    store = Store()
+    api = HerstelAPI(lijst_fout=GateUnknownOutcome("TRANSPORT_ERROR"))
+    engine = _engine(api, store)
+    positie = _onzekere_positie(store)
+    engine.reconcile(positie)
+    assert not api.stops
     assert store.paused

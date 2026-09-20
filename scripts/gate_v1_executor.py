@@ -19,6 +19,7 @@ if ROOT not in sys.path:
 
 import psycopg2
 
+from trading.gate_alert import maak_alert
 from trading.gate_api import GateAPI, GateError
 from trading.gate_live_engine import Engine, Limits
 from trading.gate_live_store import Store
@@ -91,7 +92,8 @@ def main():
         max_positions=int(os.getenv("GATE_V1_MAX_POSITIONS", "1")),
         allow_entries=live and confirmed,
     )
-    engine = Engine(api, store, limits)
+    alert = maak_alert()
+    engine = Engine(api, store, limits, alert=alert)
     current = now()
     with store.run_lock() as locked:
         if not locked:
@@ -102,6 +104,32 @@ def main():
             # Recover every nonterminal position before considering an entry.
             for position in store.positions():
                 engine.reconcile(position)
+            active = store.positions()
+            # VERKOPEN EERST, en voor ELKE open positie — los van de kooplijst,
+            # los van de handelsstatus en los van de vraag of er al een gesloten
+            # uurcandle van vandaag is. Die drie dingen zaten eerder in één
+            # `continue` boven de verkooplus: vlak na middernacht bleef de
+            # dagwissel-verkoop daardoor liggen, een munt die "alleen
+            # verkoopbaar" werd verloor zijn verkoopcontrole juist op het moment
+            # dat je eruit wilt, en een munt die uit de lijst gehaald werd kreeg
+            # helemaal geen controle meer (Astra + Fable, 20-9).
+            for position in active:
+                if position["state"] != "PROTECTED":
+                    continue
+                pair = position["pair"]
+                data = position["data"]
+                try:
+                    quote = quote_from(api.ticker(pair), current)
+                    hourly = candle_rows(api.candles(pair, "1h", 30), 1)
+                except GateError as exc:
+                    # Eén hapering mag niet alle andere posities meesleuren.
+                    alert(f"Verkoopcontrole {pair} mislukt: {type(exc).__name__}")
+                    continue
+                decision = exit_signal(Position(datetime.fromisoformat(data["entry_at"]),
+                                                float(data["entry_price"]), float(data["day_open"])),
+                                        quote, hourly, current)
+                if decision:
+                    engine.close(position, decision.reason)
             btc = candle_rows(api.candles("BTC_USDT", "1d", 220), 24)
             if not btc:
                 raise RuntimeError("BTC daily data ontbreekt")
@@ -117,15 +145,6 @@ def main():
                 if not today:
                     continue
                 day_open = today[0].open
-                for position in active:
-                    if position["pair"] != pair or position["state"] != "PROTECTED":
-                        continue
-                    data = position["data"]
-                    decision = exit_signal(Position(datetime.fromisoformat(data["entry_at"]),
-                                                    float(data["entry_price"]), float(data["day_open"])),
-                                            quote, hourly, current)
-                    if decision:
-                        engine.close(position, decision.reason)
                 prev = store.cache_get("quote:" + pair)
                 previous = None
                 if prev:
@@ -144,6 +163,8 @@ def main():
         except (GateError, OSError, ValueError, RuntimeError) as exc:
             store.heartbeat("failure", type(exc).__name__)
             store.pause("Executor failed: " + type(exc).__name__)
+            alert(f"Uitvoerder gestopt met {type(exc).__name__}: {exc}. "
+                  "Het account staat op pauze tot je het vrijgeeft.")
             raise
     return 0
 

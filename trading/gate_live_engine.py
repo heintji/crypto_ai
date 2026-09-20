@@ -46,15 +46,26 @@ def filled_order(order, pair, side):
         raise ValueError("negative fill")
     fee_currency = order.get("fee_currency", "")
     base_currency = pair.removesuffix("_USDT")
+    # Kosten in GT of punten worden van een ANDER saldo afgeschreven; de
+    # verhandelde hoeveelheden kloppen dus gewoon. Vroeger gooide dit een
+    # ValueError en strandde de hele afhandeling VOOR het plaatsen van de stop:
+    # gekocht, onbeschermd, en elke volgende run dezelfde fout. Bescherming mag
+    # nooit afhangen van een kostenpost die we niet kunnen omrekenen — we
+    # markeren de kostprijs als onzeker en gaan door (Astra + Fable, 20-9).
+    onzeker = ""
     if dec(order.get("gt_fee", "0")) or dec(order.get("point_fee", "0")):
-        raise ValueError("unpriced external fee; reconcile before continuing")
-    if fee and fee_currency not in (base_currency, "USDT"):
-        raise ValueError("unpriced fee currency")
+        onzeker = "kosten betaald in GT of punten; kostprijs is een ondergrens"
+    elif fee and fee_currency not in (base_currency, "USDT"):
+        onzeker = f"kosten in {fee_currency}; niet om te rekenen, kostprijs is een ondergrens"
+    verrekenbaar = fee if fee_currency in (base_currency, "USDT") else Decimal(0)
     if side == "buy":
-        return {"base": base - (fee if fee_currency == base_currency else 0),
-                "quote": quote + (fee if fee_currency == "USDT" else 0)}
-    return {"base": base + (fee if fee_currency == base_currency else 0),
-            "quote": quote - (fee if fee_currency == "USDT" else 0)}
+        uit = {"base": base - (verrekenbaar if fee_currency == base_currency else 0),
+               "quote": quote + (verrekenbaar if fee_currency == "USDT" else 0)}
+    else:
+        uit = {"base": base + (verrekenbaar if fee_currency == base_currency else 0),
+               "quote": quote - (verrekenbaar if fee_currency == "USDT" else 0)}
+    uit["fee_note"] = onzeker
+    return uit
 
 
 class Engine:
@@ -188,12 +199,16 @@ class Engine:
             if fill["quote"] <= 0:
                 raise RuntimeError("base fill without cost")
             self.store.update(position, "BOUGHT", remaining=fill["base"], bought_base=fill["base"],
-                              cost=fill["quote"], proceeds="0", entry_price=fill["quote"] / fill["base"])
+                              cost=fill["quote"], proceeds="0", entry_price=fill["quote"] / fill["base"],
+                              fee_note=fill.get("fee_note", ""))
+            if fill.get("fee_note"):
+                # Melden, niet stoppen: de positie moet eerst beschermd worden.
+                self.alert("Kostprijs onzeker: " + fill["fee_note"])
             self.protect(position)
         elif state == "BOUGHT":
             self.protect(position)
         elif state in ("STOP_SUBMITTED", "UNKNOWN_STOP"):
-            self.halt("Stop submission outcome unknown; inspect Gate before sell or retry", position)
+            self.recover_stop(position)
         elif state in ("PROTECTED", "CANCEL_STOP"):
             stop = self.api.get_stop(position["data"]["stop_id"])
             status = stop.get("status")
@@ -215,6 +230,56 @@ class Engine:
             self.sell(position)
         elif state in ("SELL_SUBMITTED", "UNKNOWN_SELL"):
             self.settle_sell(position)
+
+    def recover_stop(self, position):
+        """Is die stop er nu wel of niet?
+
+        Vroeger stond hier alleen een pauze. Dat voorkomt een dubbele order,
+        maar laat een gekochte positie onbeschermd staan tot iemand het toevallig
+        ziet. We kijken nu bij Gate zelf: staat de stop in de lijst, dan nemen we
+        hem over; staat hij er niet én hebben we de munt nog, dan plaatsen we hem
+        alsnog (dat is herstel, geen blinde tweede order); kunnen we het niet
+        vaststellen, dan pas pauzeren mét melding (Astra + Fable, 20-9).
+        """
+        data = position["data"]
+        try:
+            stops = self.api.list_stops(status="open", pair=position["pair"])
+        except (GateRejected, GateUnknownOutcome):
+            self.halt("Stop onzeker en lijst niet op te vragen; controleer Gate handmatig", position)
+            return
+        trigger = dec(data.get("stop_trigger", "0"))
+        gevonden = None
+        for stop in stops or []:
+            if stop.get("market") not in (None, position["pair"]):
+                continue
+            try:
+                prijs = dec((stop.get("trigger") or {}).get("price", "0"))
+            except Exception:
+                continue
+            if trigger and prijs == trigger:
+                gevonden = stop
+                break
+        if gevonden:
+            self.store.update(position, "PROTECTED", stop_id=str(gevonden["id"]))
+            self.alert("Stop teruggevonden bij Gate na onzekere uitkomst; positie is beschermd")
+            self.reconcile(position)
+            return
+        # Geen stop gevonden. Hebben we de munt nog? Zo niet, dan is hij
+        # waarschijnlijk al gevuurd en mogen we er zeker geen nieuwe zetten.
+        base_currency = position["pair"].removesuffix("_USDT")
+        beschermd = dec(data.get("protected_amount", "0"))
+        try:
+            saldo = self._available(base_currency)
+        except (GateRejected, GateUnknownOutcome):
+            self.halt("Stop onzeker en saldo niet op te vragen; controleer Gate handmatig", position)
+            return
+        if beschermd and saldo >= beschermd:
+            self.alert("Geen stop bij Gate gevonden terwijl de positie er nog staat; stop wordt opnieuw geplaatst")
+            self.store.update(position, "BOUGHT")
+            self.protect(position)
+            return
+        self.halt("Stop niet gevonden en saldo klopt niet met de positie; controleer Gate handmatig",
+                  position)
 
     def quantity(self, position):
         quantum = Decimal(1).scaleb(-int(position["data"]["metadata"]["amount_precision"]))

@@ -66,7 +66,7 @@ def test_de_handelslaag_staat_alleen_aan_bij_live_en_bevestiging(monkeypatch):
         monkeypatch.setattr(mod, "GateAPI", NepAPI)
         monkeypatch.setattr(mod.psycopg2, "connect", lambda *a, **kw: _NepConn())
         monkeypatch.setattr(mod, "Store", lambda conn, account: _NepStore())
-        monkeypatch.setattr(mod, "Engine", lambda api, store, limits: object())
+        monkeypatch.setattr(mod, "Engine", lambda api, store, limits, alert=None: object())
         mod.main()
         if verwacht is None:
             assert not gemaakt, f"GateAPI aangemaakt bij live={live} confirm={confirm}"
@@ -97,3 +97,103 @@ class _NepStore:
 
     def pause(self, *a, **kw):
         pass
+
+
+# ── verkoopcontrole mag nooit overgeslagen worden ─────────────────────────
+# Eerder zat die achter drie `continue`s: geen gesloten uurcandle van vandaag
+# (vlak na middernacht), munt niet meer "tradable" (delisting) of munt uit de
+# kooplijst gehaald. Juist dan wil je eruit (Astra + Fable, 20-9).
+
+class _API:
+    """Nep-Gate zonder gesloten uurcandle van vandaag."""
+
+    def __init__(self):
+        self.gevraagd = []
+
+    def candles(self, pair, interval, limit):
+        self.gevraagd.append((pair, interval))
+        if pair == "BTC_USDT":
+            # BTC-dagdata is er wél; die is alleen voor KOPEN nodig.
+            return [[str(1758326400 - i * 86400), "1", "100", "101", "99", "100", "0", "true"]
+                    for i in range(30)]
+        # Voor de munt zelf: geen gesloten uurcandle van vandaag (net na
+        # middernacht). De verkoopcontrole moet dan tóch draaien.
+        return [["1758326400", "1", "100", "101", "99", "100", "0", "false"]]
+
+    def ticker(self, pair):
+        return {"lowest_ask": "100", "highest_bid": "99", "quote_volume": "1000000"}
+
+    def pair(self, pair):
+        return {"trade_status": "untradable"}
+
+    def accounts(self):
+        return [{"currency": "USDT", "available": "100"}]
+
+
+class _Store:
+    def __init__(self, positie):
+        self.positie = positie
+
+    def install(self):
+        pass
+
+    def run_lock(self):
+        class Lock:
+            def __enter__(self_inner):
+                return True
+
+            def __exit__(self_inner, *a):
+                return False
+        return Lock()
+
+    def positions(self):
+        return [self.positie]
+
+    def heartbeat(self, *a, **kw):
+        pass
+
+    def pause(self, *a, **kw):
+        pass
+
+    def cache_get(self, key):
+        return None
+
+    def cache_set(self, *a, **kw):
+        pass
+
+    def account_state(self):
+        return {"paused": False, "reason": None}
+
+
+def test_verkoopcontrole_draait_ook_zonder_uurcandle_en_buiten_de_kooplijst(monkeypatch):
+    positie = {"id": "p1", "pair": "TEST_USDT", "state": "PROTECTED", "day": "2026-09-20",
+               "data": {"entry_at": "2026-09-20T12:00:00+00:00", "entry_price": "100",
+                        "day_open": "100", "metadata": {}}}
+    # de munt staat NIET in de kooplijst
+    mod = _uitvoerder(monkeypatch, GATE_V1_PAIRS="ANDERE_USDT", DATABASE_URL="postgres://x",
+                      GATE_API_KEY="k", GATE_API_SECRET="s", GATE_V1_LIVE="false")
+    gesloten = []
+
+    class NepEngine:
+        def __init__(self, *a, **kw):
+            pass
+
+        def reconcile(self, p):
+            pass
+
+        def close(self, p, reden):
+            gesloten.append((p["id"], reden))
+
+        def open(self, *a, **kw):
+            raise AssertionError("mag niet kopen zonder bevestiging")
+
+    monkeypatch.setattr(mod, "GateAPI", lambda *a, **kw: _API())
+    monkeypatch.setattr(mod.psycopg2, "connect", lambda *a, **kw: _NepConn())
+    monkeypatch.setattr(mod, "Store", lambda conn, account: _Store(positie))
+    monkeypatch.setattr(mod, "Engine", NepEngine)
+    # doe alsof het net na middernacht is: de dag van de instap is voorbij
+    monkeypatch.setattr(mod, "now", lambda: __import__("datetime").datetime(
+        2026, 9, 21, 0, 5, tzinfo=__import__("datetime").timezone.utc))
+    assert mod.main() == 0
+    assert gesloten, "de positie is niet gecontroleerd op verkoop"
+    assert gesloten[0][1] == "TIME_DAG", gesloten
