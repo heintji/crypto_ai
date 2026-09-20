@@ -1,0 +1,322 @@
+"""Gate execution state machine. No credentials, DB connections or orders on import.
+
+Commit intentions BEFORE exchange calls. Unknown mutation outcomes are never
+retried blindly. Session lock and durable daily uniqueness are mandatory.
+"""
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from trading.gate_api import GateRejected, GateUnknownOutcome
+
+
+def dec(value):
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise ValueError("non-finite Gate number")
+    return number
+
+
+@dataclass(frozen=True)
+class Limits:
+    order_usdt: Decimal = Decimal("10")
+    capital_usdt: Decimal = Decimal("10")
+    daily_loss_usdt: Decimal = Decimal("1")
+    max_positions: int = 1
+    allow_entries: bool = False
+
+    def __post_init__(self):
+        for value in (self.order_usdt, self.capital_usdt, self.daily_loss_usdt):
+            if not dec(value) > 0:
+                raise ValueError("Gate limits must be positive")
+        if self.order_usdt > self.capital_usdt or self.max_positions < 1:
+            raise ValueError("invalid Gate exposure limits")
+
+
+def filled_order(order, pair, side):
+    """Require terminal, actual fill totals; never treat requested size as a fill."""
+    if order.get("currency_pair") != pair or order.get("side") != side:
+        raise ValueError("order identity mismatch")
+    if order.get("status") not in ("closed", "cancelled"):
+        return None
+    base = dec(order["filled_amount"])
+    quote = dec(order["filled_total"])
+    fee = dec(order.get("fee", "0"))
+    if base < 0 or quote < 0 or fee < 0:
+        raise ValueError("negative fill")
+    fee_currency = order.get("fee_currency", "")
+    base_currency = pair.removesuffix("_USDT")
+    if dec(order.get("gt_fee", "0")) or dec(order.get("point_fee", "0")):
+        raise ValueError("unpriced external fee; reconcile before continuing")
+    if fee and fee_currency not in (base_currency, "USDT"):
+        raise ValueError("unpriced fee currency")
+    if side == "buy":
+        return {"base": base - (fee if fee_currency == base_currency else 0),
+                "quote": quote + (fee if fee_currency == "USDT" else 0)}
+    return {"base": base + (fee if fee_currency == base_currency else 0),
+            "quote": quote - (fee if fee_currency == "USDT" else 0)}
+
+
+class Engine:
+    def __init__(self, api, store, limits, clock=None, alert=None):
+        self.api, self.store, self.limits = api, store, limits
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.alert = alert or (lambda message: print("GATE ALERT: " + message, flush=True))
+
+    def halt(self, reason, position=None):
+        self.store.pause(reason, position["id"] if position else None)
+        self.alert(reason)
+
+    def order_tag(self, position, side):
+        # Gate allows at most 28 bytes AFTER t-. Position UUID stays in the DB.
+        attempt = position["data"].get("sell_attempt", 0) if side == "s" else 0
+        return "t-" + position["id"][:22] + side + str(attempt)
+
+    def lookup(self, position, side):
+        data = position["data"]
+        order_id = data.get("buy_id" if side == "buy" else "sell_id")
+        if order_id:
+            return self.api.get_order(position["pair"], order_id)
+        tag = data.get("buy_tag" if side == "buy" else "sell_tag") or self.order_tag(position, "b" if side == "buy" else "s")
+        # Gate cannot look up COMPLETED orders by custom text. Search history;
+        # absence remains UNKNOWN, never permission to repeat the mutation.
+        matches = []
+        for status in ("open", "finished"):
+            for page in range(1, 11):
+                rows = self.api.list_orders(position["pair"], status=status, page=page)
+                matches.extend(r for r in rows if r.get("text") == tag)
+                if len(rows) < 100:
+                    break
+            else:
+                raise RuntimeError("order history incomplete; manual reconciliation required")
+        unique = {str(r["id"]): r for r in matches}
+        if len(unique) > 1:
+            raise RuntimeError("duplicate exchange orders for one intent")
+        return next(iter(unique.values()), None)
+
+    def _available(self, currency):
+        matches = [r for r in self.api.accounts() if r.get("currency") == currency]
+        return dec(matches[0]["available"]) if len(matches) == 1 else Decimal(0)
+
+    def open(self, signal, metadata):
+        """signal is a freshly produced EntrySignal, not a shadow trade row."""
+        self.store.require_lock()
+        if not self.limits.allow_entries or self.store.account_state()["paused"]:
+            return None
+        now = self.clock()
+        if (now - signal.at).total_seconds() < 0 or (now - signal.at).total_seconds() > 30:
+            return None
+        if self.store.daily_pnl(now) <= -self.limits.daily_loss_usdt:
+            self.halt("Daily loss limit reached; entries remain paused until reviewed")
+            return None
+        positions = self.store.positions()
+        if len(positions) >= self.limits.max_positions:
+            return None
+        exposure = sum((dec(p["data"].get("quote_budget", "0")) for p in positions), Decimal(0))
+        # Reserve quote fees as well; do not spend the last account cent.
+        budget = self.limits.order_usdt
+        if exposure + budget * Decimal("1.01") > self.limits.capital_usdt:
+            budget = (self.limits.capital_usdt - exposure) / Decimal("1.01")
+        budget = budget.quantize(Decimal("0.00000001"), rounding="ROUND_DOWN")
+        if self._available("USDT") < budget * Decimal("1.01"):
+            return None
+        base_currency = signal.pair.removesuffix("_USDT")
+        # Do not silently mix manual holdings with strategy-owned inventory.
+        if self._available(base_currency) != 0:
+            self.halt("Existing holdings in candidate pair; ownership must be reconciled")
+            return None
+        if metadata.get("trade_status") != "tradable":
+            return None
+        if budget < dec(metadata.get("min_quote_amount", "0")):
+            return None
+        if budget / dec(signal.reference_price) < dec(metadata.get("min_base_amount", "0")):
+            return None
+        position = self.store.create(signal.pair, signal.at.date(), {
+            "quote_budget": budget * Decimal("1.01"), "day_open": signal.day_open,
+            "entry_at": signal.at, "metadata": metadata,
+        })
+        if not position:
+            return None
+        tag = self.order_tag(position, "b")
+        self.store.update(position, "BUY_SUBMITTED", buy_tag=tag)
+        try:
+            result = self.api.buy_market(signal.pair, budget, tag)
+        except GateRejected:
+            self.store.update(position, "REJECTED")
+            self.halt("Gate rejected buy; check permissions/minimums", position)
+            return position
+        except GateUnknownOutcome:
+            self.store.update(position, "UNKNOWN_BUY")
+            self.halt("Buy outcome unknown; reconciliation required before any new buy", position)
+            return position
+        self.store.update(position, "BUY_SUBMITTED", buy_id=str(result["id"]))
+        self.reconcile(position)
+        return position
+
+    def reconcile(self, position):
+        self.store.require_lock()
+        state = position["state"]
+        if state == "INTENT":
+            # The process may have died after Gate accepted the request but
+            # before BUY_SUBMITTED was persisted. Search by deterministic tag;
+            # absence is still uncertain, so keep the intent and pause rather
+            # than silently creating a second order.
+            order = self.lookup(position, "buy")
+            if order is None:
+                self.halt("Buy intent has no resolved exchange order; manual reconciliation required", position)
+                return
+            self.store.update(position, "BUY_SUBMITTED", buy_id=str(order["id"]))
+            self.reconcile(position)
+        elif state in ("BUY_SUBMITTED", "UNKNOWN_BUY"):
+            order = self.lookup(position, "buy")
+            if order is None:
+                self.halt("Buy still unknown; do not retry", position)
+                return
+            self.store.update(position, "BUY_SUBMITTED", buy_id=str(order["id"]))
+            fill = filled_order(order, position["pair"], "buy")
+            if fill is None:
+                # Market IOC should already be terminal. Cancel then wait for
+                # authoritative terminal status; no competing protective sell.
+                self.api.cancel_order(position["pair"], str(order["id"]))
+                self.halt("Nonterminal market buy; cancelled and awaiting reconciliation", position)
+                return
+            if fill["base"] <= 0:
+                if fill["quote"]:
+                    raise RuntimeError("quote spent without a base fill")
+                self.store.update(position, "REJECTED")
+                return
+            if fill["quote"] <= 0:
+                raise RuntimeError("base fill without cost")
+            self.store.update(position, "BOUGHT", remaining=fill["base"], bought_base=fill["base"],
+                              cost=fill["quote"], proceeds="0", entry_price=fill["quote"] / fill["base"])
+            self.protect(position)
+        elif state == "BOUGHT":
+            self.protect(position)
+        elif state in ("STOP_SUBMITTED", "UNKNOWN_STOP"):
+            self.halt("Stop submission outcome unknown; inspect Gate before sell or retry", position)
+        elif state in ("PROTECTED", "CANCEL_STOP"):
+            stop = self.api.get_stop(position["data"]["stop_id"])
+            status = stop.get("status")
+            fired = stop.get("fired_order_id")
+            if fired and str(fired) != "0":
+                self.store.update(position, "SELL_SUBMITTED", sell_id=str(fired),
+                                  sell_tag="native_stop", close_reason="STOP")
+                self.settle_sell(position)
+            elif status == "open":
+                if state == "CANCEL_STOP":
+                    self.cancel_then_close(position)
+            elif status in ("cancelled", "failed", "expired"):
+                self.store.update(position, "UNPROTECTED")
+                self.halt("Protective order no longer active; closing remaining inventory", position)
+                self.sell(position)
+            else:
+                self.halt("Protective order has unresolved execution state", position)
+        elif state in ("UNPROTECTED", "SELL_READY"):
+            self.sell(position)
+        elif state in ("SELL_SUBMITTED", "UNKNOWN_SELL"):
+            self.settle_sell(position)
+
+    def quantity(self, position):
+        quantum = Decimal(1).scaleb(-int(position["data"]["metadata"]["amount_precision"]))
+        return dec(position["data"]["remaining"]).quantize(quantum, rounding="ROUND_DOWN")
+
+    def protect(self, position):
+        quantity = self.quantity(position)
+        metadata = position["data"]["metadata"]
+        price_quantum = Decimal(1).scaleb(-int(metadata["precision"]))
+        trigger = (dec(position["data"]["entry_price"]) * Decimal("0.97")).quantize(price_quantum, rounding="ROUND_DOWN")
+        if quantity <= 0 or quantity < dec(metadata.get("min_base_amount", "0")):
+            self.halt("Filled quantity below minimum; manual dust reconciliation required", position)
+            return
+        self.store.update(position, "STOP_SUBMITTED", stop_trigger=trigger, protected_amount=quantity)
+        try:
+            stop = self.api.create_stop(position["pair"], quantity, trigger, "api", expiration=172800)
+        except GateRejected:
+            self.store.update(position, "UNPROTECTED")
+            self.halt("Gate rejected protective stop; closing immediately", position)
+            self.sell(position)
+            return
+        except GateUnknownOutcome:
+            self.store.update(position, "UNKNOWN_STOP")
+            self.halt("Stop may exist; paused for reconciliation, no duplicate sell", position)
+            return
+        self.store.update(position, "PROTECTED", stop_id=str(stop["id"]))
+        # Do not claim protection solely on a successful create response.
+        self.reconcile(position)
+
+    def close(self, position, reason):
+        if position["state"] != "PROTECTED":
+            return
+        self.store.update(position, "CANCEL_STOP", close_reason=reason)
+        self.cancel_then_close(position)
+
+    def cancel_then_close(self, position):
+        try:
+            self.api.cancel_stop(position["data"]["stop_id"])
+        except (GateRejected, GateUnknownOutcome):
+            # It may have fired concurrently. Never sell until status is known.
+            pass
+        stop = self.api.get_stop(position["data"]["stop_id"])
+        fired = stop.get("fired_order_id")
+        if fired and str(fired) != "0":
+            self.store.update(position, "SELL_SUBMITTED", sell_id=str(fired), sell_tag="native_stop")
+            self.settle_sell(position)
+        elif stop.get("status") in ("cancelled", "failed", "expired"):
+            self.store.update(position, "SELL_READY")
+            self.sell(position)
+        else:
+            self.halt("Stop cancellation not confirmed; sale withheld to prevent double execution", position)
+
+    def sell(self, position):
+        quantity = self.quantity(position)
+        metadata = position["data"]["metadata"]
+        if quantity <= 0 or quantity < dec(metadata.get("min_base_amount", "0")):
+            self.halt("Remaining inventory below minimum; manual dust reconciliation required", position)
+            return
+        if self._available(position["pair"].removesuffix("_USDT")) < quantity:
+            self.halt("Insufficient available inventory; reconcile locked balance before sale", position)
+            return
+        attempt = int(position["data"].get("sell_attempt", 0)) + 1
+        self.store.update(position, "SELL_READY", sell_attempt=attempt)
+        tag = self.order_tag(position, "s")
+        self.store.update(position, "SELL_SUBMITTED", sell_tag=tag, sell_id=None)
+        try:
+            result = self.api.sell_market(position["pair"], quantity, tag)
+        except GateRejected:
+            self.store.update(position, "EXIT_REJECTED")
+            self.halt("Exit rejected; inventory remains, urgent manual intervention", position)
+            return
+        except GateUnknownOutcome:
+            self.store.update(position, "UNKNOWN_SELL")
+            self.halt("Sell outcome unknown; no blind retry", position)
+            return
+        self.store.update(position, "SELL_SUBMITTED", sell_id=str(result["id"]))
+        self.settle_sell(position)
+
+    def settle_sell(self, position):
+        order = self.lookup(position, "sell")
+        if order is None:
+            self.halt("Sell remains unknown", position)
+            return
+        fill = filled_order(order, position["pair"], "sell")
+        if fill is None:
+            self.halt("Sell not terminal; awaiting final fills", position)
+            return
+        if fill["base"] <= 0:
+            self.store.update(position, "EXIT_REJECTED")
+            self.halt("Exit has zero fill; inventory still open", position)
+            return
+        remaining = dec(position["data"]["remaining"]) - fill["base"]
+        if remaining < 0:
+            raise RuntimeError("sold more than strategy-owned inventory")
+        proceeds = dec(position["data"]["proceeds"]) + fill["quote"]
+        self.store.update(position, "SELL_READY", remaining=remaining, proceeds=proceeds)
+        if remaining == 0:
+            self.store.update(position, "CLOSED", pnl_usdt=proceeds - dec(position["data"]["cost"]),
+                              closed_at=self.clock())
+        elif self.quantity(position) > 0:
+            # Separate intent next run, after terminal fill is durably accounted.
+            self.halt("Partial exit; remainder scheduled for next reconciliation", position)
+        else:
+            self.store.update(position, "DUST")
+            self.halt("Rounding dust remains; position is not silently marked closed", position)
