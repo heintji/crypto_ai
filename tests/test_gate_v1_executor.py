@@ -63,7 +63,7 @@ def test_de_handelslaag_staat_alleen_aan_bij_live_en_bevestiging(monkeypatch):
         gemaakt.clear()
 
         class NepAPI:
-            def __init__(self, key, secret, trading_enabled=False):
+            def __init__(self, key, secret, base_url=None, trading_enabled=False):
                 gemaakt.append(trading_enabled)
         monkeypatch.setattr(mod, "GateAPI", NepAPI)
         monkeypatch.setattr(mod.psycopg2, "connect", lambda *a, **kw: _NepConn())
@@ -114,7 +114,7 @@ class _API:
 
     def candles(self, pair, interval, limit):
         self.gevraagd.append((pair, interval))
-        if pair == "BTC_USDT":
+        if pair.startswith("BTC_"):
             # BTC-dagdata is er wél; die is alleen voor KOPEN nodig.
             return [[str(1758326400 - i * 86400), "1", "100", "101", "99", "100", "0", "true"]
                     for i in range(30)]
@@ -126,7 +126,7 @@ class _API:
         return {"lowest_ask": "100", "highest_bid": "99", "quote_volume": "1000000"}
 
     def pair(self, pair):
-        return {"trade_status": "untradable"}
+        return {"trade_status": "untradable", "quote": "USDC", "base": pair.rpartition("_")[0]}
 
     def accounts(self):
         return [{"currency": "USDT", "available": "100"}]

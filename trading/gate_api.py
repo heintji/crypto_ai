@@ -105,7 +105,10 @@ def _positive(value):
 class GateAPI:
     def __init__(self, api_key="", api_secret="", *, session=None, clock=time.time,
                  base_url="https://api.gateio.ws", timeout=(3.05, 10), trading_enabled=False):
-        if base_url not in ("https://api.gateio.ws", "https://api.gate.com"):
+        # api.gate.com bestaat niet (geen DNS); api.gateeu.com is de host van
+        # de Europese entiteit, waar een EU-sleutel wél werkt. Tegen
+        # api.gateio.ws geeft diezelfde sleutel INVALID_KEY (gemeten 20-9).
+        if base_url not in ("https://api.gateio.ws", "https://api.gateeu.com"):
             raise ValueError("Unapproved Gate API origin")
         if len(timeout) != 2 or any(not 0 < float(x) <= 30 for x in timeout):
             raise ValueError("Timeouts must be bounded")

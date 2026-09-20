@@ -19,21 +19,46 @@ def dec(value):
 
 @dataclass(frozen=True)
 class Limits:
-    order_usdt: Decimal = Decimal("10")
-    capital_usdt: Decimal = Decimal("10")
-    daily_loss_usdt: Decimal = Decimal("1")
+    """Bedragen zijn in de TEGENMUNT van de markt, niet per se in USDT.
+
+    Op Gate EU bestaat XRP_USDT niet; daar wordt in USDC en EUR gehandeld. Eén
+    bot handelt daarom in één tegenmunt tegelijk — anders zou "kapitaal 10"
+    betekenisloos worden zodra er zowel een USDC- als een EUR-paar meedoet
+    (gemeten op api.gateeu.com, 20-9).
+    """
+    order_quote: Decimal = Decimal("10")
+    capital_quote: Decimal = Decimal("10")
+    daily_loss_quote: Decimal = Decimal("1")
     max_positions: int = 1
     allow_entries: bool = False
+    quote_currency: str = "USDT"
 
     def __post_init__(self):
-        for value in (self.order_usdt, self.capital_usdt, self.daily_loss_usdt):
+        for value in (self.order_quote, self.capital_quote, self.daily_loss_quote):
             if not dec(value) > 0:
                 raise ValueError("Gate limits must be positive")
-        if self.order_usdt > self.capital_usdt or self.max_positions < 1:
+        if self.order_quote > self.capital_quote or self.max_positions < 1:
             raise ValueError("invalid Gate exposure limits")
 
 
-def filled_order(order, pair, side):
+def munten(pair, metadata=None):
+    """(basis, tegenmunt) van een paar.
+
+    Gate EU handelt grotendeels in USDC en EUR; `XRP_USDT` bestaat daar niet
+    eens. Aannemen dat de tegenmunt USDT is, zou op jouw beurs betekenen dat de
+    bot het verkeerde saldo controleert en de verkeerde kosten verrekent
+    (gemeten op api.gateeu.com, 20-9). Waar Gate de velden meelevert gebruiken
+    we die; anders splitsen we op de laatste underscore.
+    """
+    if metadata and metadata.get("base") and metadata.get("quote"):
+        return metadata["base"], metadata["quote"]
+    basis, _, tegen = pair.rpartition("_")
+    if not basis:
+        raise ValueError(f"onbekend paar: {pair}")
+    return basis, tegen
+
+
+def filled_order(order, pair, side, metadata=None):
     """Require terminal, actual fill totals; never treat requested size as a fill."""
     if order.get("currency_pair") != pair or order.get("side") != side:
         raise ValueError("order identity mismatch")
@@ -45,7 +70,7 @@ def filled_order(order, pair, side):
     if base < 0 or quote < 0 or fee < 0:
         raise ValueError("negative fill")
     fee_currency = order.get("fee_currency", "")
-    base_currency = pair.removesuffix("_USDT")
+    base_currency, quote_currency = munten(pair, metadata)
     # Kosten in GT of punten worden van een ANDER saldo afgeschreven; de
     # verhandelde hoeveelheden kloppen dus gewoon. Vroeger gooide dit een
     # ValueError en strandde de hele afhandeling VOOR het plaatsen van de stop:
@@ -55,15 +80,15 @@ def filled_order(order, pair, side):
     onzeker = ""
     if dec(order.get("gt_fee", "0")) or dec(order.get("point_fee", "0")):
         onzeker = "kosten betaald in GT of punten; kostprijs is een ondergrens"
-    elif fee and fee_currency not in (base_currency, "USDT"):
+    elif fee and fee_currency not in (base_currency, quote_currency):
         onzeker = f"kosten in {fee_currency}; niet om te rekenen, kostprijs is een ondergrens"
-    verrekenbaar = fee if fee_currency in (base_currency, "USDT") else Decimal(0)
+    verrekenbaar = fee if fee_currency in (base_currency, quote_currency) else Decimal(0)
     if side == "buy":
         uit = {"base": base - (verrekenbaar if fee_currency == base_currency else 0),
-               "quote": quote + (verrekenbaar if fee_currency == "USDT" else 0)}
+               "quote": quote + (verrekenbaar if fee_currency == quote_currency else 0)}
     else:
         uit = {"base": base + (verrekenbaar if fee_currency == base_currency else 0),
-               "quote": quote - (verrekenbaar if fee_currency == "USDT" else 0)}
+               "quote": quote - (verrekenbaar if fee_currency == quote_currency else 0)}
     uit["fee_note"] = onzeker
     return uit
 
@@ -117,7 +142,7 @@ class Engine:
         now = self.clock()
         if (now - signal.at).total_seconds() < 0 or (now - signal.at).total_seconds() > 30:
             return None
-        if self.store.daily_pnl(now) <= -self.limits.daily_loss_usdt:
+        if self.store.daily_pnl(now) <= -self.limits.daily_loss_quote:
             self.halt("Daily loss limit reached; entries remain paused until reviewed")
             return None
         positions = self.store.positions()
@@ -125,13 +150,19 @@ class Engine:
             return None
         exposure = sum((dec(p["data"].get("quote_budget", "0")) for p in positions), Decimal(0))
         # Reserve quote fees as well; do not spend the last account cent.
-        budget = self.limits.order_usdt
-        if exposure + budget * Decimal("1.01") > self.limits.capital_usdt:
-            budget = (self.limits.capital_usdt - exposure) / Decimal("1.01")
+        budget = self.limits.order_quote
+        if exposure + budget * Decimal("1.01") > self.limits.capital_quote:
+            budget = (self.limits.capital_quote - exposure) / Decimal("1.01")
         budget = budget.quantize(Decimal("0.00000001"), rounding="ROUND_DOWN")
-        if self._available("USDT") < budget * Decimal("1.01"):
+        base_currency, quote_currency = munten(signal.pair, metadata)
+        if quote_currency != self.limits.quote_currency:
+            # Anders koop je met een saldo dat je niet meet en reken je winst in
+            # twee munten door elkaar.
+            self.halt(f"Paar {signal.pair} handelt in {quote_currency}, de bot in "
+                      f"{self.limits.quote_currency}; niet gekocht")
             return None
-        base_currency = signal.pair.removesuffix("_USDT")
+        if self._available(quote_currency) < budget * Decimal("1.01"):
+            return None
         # Do not silently mix manual holdings with strategy-owned inventory.
         if self._available(base_currency) != 0:
             self.halt("Existing holdings in candidate pair; ownership must be reconciled")
@@ -184,7 +215,8 @@ class Engine:
                 self.halt("Buy still unknown; do not retry", position)
                 return
             self.store.update(position, "BUY_SUBMITTED", buy_id=str(order["id"]))
-            fill = filled_order(order, position["pair"], "buy")
+            fill = filled_order(order, position["pair"], "buy",
+                                position["data"].get("metadata"))
             if fill is None:
                 # Market IOC should already be terminal. Cancel then wait for
                 # authoritative terminal status; no competing protective sell.
@@ -266,7 +298,7 @@ class Engine:
             return
         # Geen stop gevonden. Hebben we de munt nog? Zo niet, dan is hij
         # waarschijnlijk al gevuurd en mogen we er zeker geen nieuwe zetten.
-        base_currency = position["pair"].removesuffix("_USDT")
+        base_currency, _ = munten(position["pair"], position["data"].get("metadata"))
         beschermd = dec(data.get("protected_amount", "0"))
         try:
             saldo = self._available(base_currency)
@@ -344,7 +376,8 @@ class Engine:
         if quantity <= 0 or quantity < dec(metadata.get("min_base_amount", "0")):
             self.halt("Remaining inventory below minimum; manual dust reconciliation required", position)
             return
-        if self._available(position["pair"].removesuffix("_USDT")) < quantity:
+        basis, _ = munten(position["pair"], position["data"].get("metadata"))
+        if self._available(basis) < quantity:
             self.halt("Insufficient available inventory; reconcile locked balance before sale", position)
             return
         attempt = int(position["data"].get("sell_attempt", 0)) + 1
@@ -369,7 +402,8 @@ class Engine:
         if order is None:
             self.halt("Sell remains unknown", position)
             return
-        fill = filled_order(order, position["pair"], "sell")
+        fill = filled_order(order, position["pair"], "sell",
+                            position["data"].get("metadata"))
         if fill is None:
             self.halt("Sell not terminal; awaiting final fills", position)
             return

@@ -36,7 +36,9 @@ def hoofd(argv: list[str]) -> int:
         print("zet GATE_API_KEY en GATE_API_SECRET", flush=True)
         return 1
 
-    api = GateAPI(sleutel, geheim, trading_enabled=True)
+    api = GateAPI(sleutel, geheim,
+                  base_url=os.getenv("GATE_API_BASE", "https://api.gateeu.com"),
+                  trading_enabled=True)
     munt = pair.removesuffix("_USDT")
     saldo = Decimal("0")
     try:

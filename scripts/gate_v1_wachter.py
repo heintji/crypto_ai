@@ -86,7 +86,9 @@ def hoofd() -> int:
             posities = cur.fetchall()
         sleutel, geheim = os.getenv("GATE_API_KEY", ""), os.getenv("GATE_API_SECRET", "")
         if posities and sleutel and geheim:
-            api = GateAPI(sleutel, geheim, trading_enabled=False)   # alleen lezen
+            api = GateAPI(sleutel, geheim,
+                          base_url=os.getenv("GATE_API_BASE", "https://api.gateeu.com"),
+                          trading_enabled=False)   # alleen lezen
             try:
                 saldi = {r["currency"]: dec(r.get("available")) for r in api.accounts()}
                 open_stops = api.list_stops(status="open")
@@ -95,7 +97,7 @@ def hoofd() -> int:
                 saldi, open_stops = None, None
             if saldi is not None:
                 for pos_id, pair, state, data in posities:
-                    munt = pair.removesuffix("_USDT")
+                    munt = pair.rpartition("_")[0] or pair
                     verwacht = dec((data or {}).get("remaining"))
                     werkelijk = saldi.get(munt, Decimal(0))
                     if verwacht and werkelijk < verwacht * Decimal("0.99"):

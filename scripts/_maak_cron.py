@@ -7,6 +7,8 @@ BRON = "crn-d8hvia8jo6nc73cnk850"          # bestaande crypto_ai-cron, alleen al
 NAAM = "gate-v1-wachter"
 NODIG = ("DATABASE_URL", "GATE_API_KEY", "GATE_API_SECRET",
          "RESEND_API_KEY", "RESEND_FROM", "ALERT_EMAIL")
+# Geen geheim, wel bepalend: zonder deze praat de wachter met de verkeerde beurs.
+EXTRA = {"GATE_API_BASE": "https://api.gateeu.com"}
 
 
 def api(key, url, data=None, methode="GET"):
@@ -22,9 +24,30 @@ def main():
     key = sys.argv[1]
     diensten = api(key, "https://api.render.com/v1/services?limit=100")
     for d in diensten:
-        if d["service"]["name"] == NAAM:
-            print(f"{NAAM} bestaat al ({d['service']['id']}) — niets gedaan.")
-            return 0
+        if d["service"]["name"] != NAAM:
+            continue
+        sid = d["service"]["id"]
+        detail = d["service"].get("serviceDetails", {})
+        aanwezig = {e["envVar"]["key"] for e in
+                    api(key, f"https://api.render.com/v1/services/{sid}/env-vars?limit=100")}
+        mist = [n for n in NODIG if n not in aanwezig]
+        start = (detail.get("startCommand")
+                 or detail.get("envSpecificDetails", {}).get("startCommand") or "")
+        klachten = []
+        if mist:
+            klachten.append("mist instellingen: " + ", ".join(mist))
+        if "gate_v1_wachter" not in start:
+            klachten.append(f"draait niet de wachter maar: {start or '(leeg)'}")
+        if detail.get("schedule") and detail["schedule"] != "*/15 * * * *":
+            klachten.append(f"ander schema: {detail['schedule']}")
+        if klachten:
+            print(f"{NAAM} bestaat al ({sid}) maar klopt niet:")
+            for k in klachten:
+                print("  -", k)
+            print("Repareer die in Render; ik raak een bestaande service niet aan.")
+            return 1
+        print(f"{NAAM} bestaat al ({sid}) en is goed ingesteld — niets gedaan.")
+        return 0
     owner = diensten[0]["service"]["ownerId"]
 
     # geheimen verzamelen uit bestaande services; nooit printen
@@ -39,8 +62,14 @@ def main():
                 waarden[naam] = e["envVar"]["value"]
     ontbreekt = [n for n in NODIG if n not in waarden]
     if ontbreekt:
-        print("Deze instellingen staan nergens op een crypto_ai-service en moet je zelf "
-              "toevoegen in Render nadat de cron is aangemaakt: " + ", ".join(ontbreekt))
+        # Nooit een betaalde bewaker aanmaken die niets kan bewaken of niets kan
+        # melden. Eerst aanvullen, dan opnieuw draaien (Astra-controle 20-9).
+        print("NIETS GEDAAN. Deze instellingen staan nergens op een crypto_ai-service:")
+        for naam in ontbreekt:
+            print("  -", naam)
+        print("Zet ze eerst op een crypto_ai-service in Render (of vul GATE_API_BASE/"
+              "RESEND-gegevens aan) en draai dit script opnieuw.")
+        return 1
 
     nieuw = api(key, "https://api.render.com/v1/services", {
         "type": "cron_job",
@@ -59,7 +88,8 @@ def main():
                 "startCommand": "python scripts/gate_v1_wachter.py",
             },
         },
-        "envVars": [{"key": k, "value": v} for k, v in waarden.items()],
+        "envVars": ([{"key": k, "value": v} for k, v in waarden.items()]
+                    + [{"key": k, "value": v} for k, v in EXTRA.items()]),
     }, "POST")
     dienst = nieuw.get("service", nieuw)
     print("aangemaakt:", dienst.get("name"), dienst.get("id"))

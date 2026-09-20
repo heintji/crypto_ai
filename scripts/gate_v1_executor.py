@@ -91,13 +91,19 @@ def main():
     conn = psycopg2.connect(database, sslmode="require", connect_timeout=10)
     store = Store(conn, os.getenv("GATE_V1_ACCOUNT", "default"))
     store.install()
-    api = GateAPI(key, secret, trading_enabled=live and confirmed)
+    # Eén beurs voor alles. Gate EU heeft een eigen host; tegen api.gateio.ws
+    # geeft een EU-sleutel INVALID_KEY (gemeten 20-9), wat er ten onrechte
+    # uitzag als een ongeldige sleutel.
+    basis = os.getenv("GATE_API_BASE", "https://api.gateeu.com").strip()
+    api = GateAPI(key, secret, base_url=basis, trading_enabled=live and confirmed)
+    quote_munt = os.getenv("GATE_V1_QUOTE", "USDC").strip().upper()
     limits = Limits(
-        order_usdt=Decimal(os.getenv("GATE_V1_ORDER_USDT", "10")),
-        capital_usdt=Decimal(os.getenv("GATE_V1_CAPITAL_USDT", "10")),
-        daily_loss_usdt=Decimal(os.getenv("GATE_V1_DAILY_LOSS_USDT", "1")),
+        order_quote=Decimal(os.getenv("GATE_V1_ORDER_USDT", "10")),
+        capital_quote=Decimal(os.getenv("GATE_V1_CAPITAL_USDT", "10")),
+        daily_loss_quote=Decimal(os.getenv("GATE_V1_DAILY_LOSS_USDT", "1")),
         max_positions=int(os.getenv("GATE_V1_MAX_POSITIONS", "1")),
         allow_entries=live and confirmed,
+        quote_currency=quote_munt,
     )
     alert = maak_alert()
     engine = Engine(api, store, limits, alert=alert)
@@ -137,12 +143,18 @@ def main():
                                         quote, hourly, current)
                 if decision:
                     engine.close(position, decision.reason)
-            btc = candle_rows(api.candles("BTC_USDT", "1d", 220), 24)
+            # Referentiemarkt in dezelfde tegenmunt: BTC_USDT bestaat niet op
+            # elke beurs (op Gate EU niet).
+            btc_paar = os.getenv("GATE_V1_BTC_PAIR", f"BTC_{quote_munt}")
+            btc = candle_rows(api.candles(btc_paar, "1d", 220), 24)
             if not btc:
-                raise RuntimeError("BTC daily data ontbreekt")
+                raise RuntimeError(f"Dagdata voor {btc_paar} ontbreekt")
             active = store.positions()
             for pair in pairs:
                 meta = api.pair(pair)
+                if (meta.get("quote") or pair.rpartition("_")[2]) != quote_munt:
+                    alert(f"{pair} handelt niet in {quote_munt} en wordt overgeslagen")
+                    continue
                 if meta.get("trade_status") not in ("tradable", "buyable"):
                     continue
                 ticker = api.ticker(pair)
