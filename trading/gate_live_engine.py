@@ -31,7 +31,7 @@ class Limits:
     daily_loss_quote: Decimal = Decimal("1")
     max_positions: int = 1
     allow_entries: bool = False
-    quote_currency: str = "USDC"   # Gate EU; de uitvoerder zet hem expliciet
+    quote_currency: str = ""
 
     def __post_init__(self):
         for value in (self.order_quote, self.capital_quote, self.daily_loss_quote):
@@ -39,6 +39,11 @@ class Limits:
                 raise ValueError("Gate limits must be positive")
         if self.order_quote > self.capital_quote or self.max_positions < 1:
             raise ValueError("invalid Gate exposure limits")
+        # Geen stille standaard: welke munt je inzet is een keuze van de
+        # aanroeper, niet van de bibliotheek. Een verkeerde aanname betekent dat
+        # de bot het verkeerde saldo meet (Fable-controle 20-9).
+        if not self.quote_currency:
+            raise ValueError("quote_currency moet expliciet gezet worden")
 
 
 def munten(pair, metadata=None):

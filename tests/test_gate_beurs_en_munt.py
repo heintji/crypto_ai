@@ -134,3 +134,13 @@ def test_de_api_kan_een_eu_paar_opvragen_zonder_netwerk():
     uit = api.pair("XRP_USDC")
     assert uit["quote"] == "USDC"
     assert "XRP_USDC" in sessie.laatste and "api.gateeu.com" in sessie.laatste
+
+
+def test_de_munt_moet_expliciet_gezet_worden():
+    """Een stille standaard betekent dat de bot het verkeerde saldo meet zodra
+    de beurs in een andere munt handelt."""
+    with pytest.raises(ValueError):
+        Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
+               daily_loss_quote=Decimal("1"))
+    Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
+           daily_loss_quote=Decimal("1"), quote_currency="USDC")

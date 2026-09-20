@@ -69,7 +69,7 @@ def test_unknown_buy_pauses_without_retrying():
     store = Store()
     api = API(GateUnknownOutcome("TRANSPORT_ERROR"))
     engine = Engine(api, store, Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
-                                       daily_loss_quote=Decimal("1"), allow_entries=True),
+                                       daily_loss_quote=Decimal("1"), allow_entries=True, quote_currency="USDT"),
                     clock=lambda: datetime(2026, 9, 20, 12, 0, 1, tzinfo=UTC))
     position = engine.open(signal(), metadata())
     assert position["state"] == "UNKNOWN_BUY"
@@ -113,7 +113,7 @@ def test_een_koop_met_gt_korting_wordt_alsnog_beschermd():
                  "filled_amount": "1", "filled_total": "100", "fee": "0", "gt_fee": "0.01"}
     meldingen = []
     engine = Engine(api, store, Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
-                                       daily_loss_quote=Decimal("1"), allow_entries=True),
+                                       daily_loss_quote=Decimal("1"), allow_entries=True, quote_currency="USDT"),
                     clock=lambda: datetime(2026, 9, 20, 12, 0, 1, tzinfo=UTC),
                     alert=meldingen.append)
     positie = store.create("TEST_USDT", "2026-09-20", {"metadata": metadata()})
@@ -170,7 +170,7 @@ def _positie_na_koop(store, engine):
 
 def _engine(api, store):
     return Engine(api, store, Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
-                                     daily_loss_quote=Decimal("1"), allow_entries=True),
+                                     daily_loss_quote=Decimal("1"), allow_entries=True, quote_currency="USDT"),
                   clock=lambda: datetime(2026, 9, 20, 12, 0, 1, tzinfo=UTC))
 
 

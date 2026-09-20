@@ -85,7 +85,7 @@ class VerkoopAPI:
 def _opzet(api, store=None):
     store = store or Store()
     engine = Engine(api, store, Limits(order_quote=Decimal("10"), capital_quote=Decimal("10"),
-                                       daily_loss_quote=Decimal("100"), allow_entries=True),
+                                       daily_loss_quote=Decimal("100"), allow_entries=True, quote_currency="USDT"),
                     clock=lambda: datetime(2026, 9, 21, 0, 5, tzinfo=UTC),
                     alert=lambda m: None)
     positie = store.create("TEST_USDT", "2026-09-20", {"metadata": metadata()})
