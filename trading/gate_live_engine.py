@@ -230,7 +230,13 @@ class Engine:
             return
         self.store.update(position, "STOP_SUBMITTED", stop_trigger=trigger, protected_amount=quantity)
         try:
-            stop = self.api.create_stop(position["pair"], quantity, trigger, "api", expiration=172800)
+            # De correlatie-id moet aan hetzelfde patroon voldoen als elke andere
+            # order-id (t-...). Met "api" gooide create_stop een ValueError VOOR
+            # er een verzoek uitging: de aankoop was dan gevuld, de stop niet
+            # geplaatst, en de positie bleef onbeschermd hangen op
+            # STOP_SUBMITTED (Fable-controle 20-9).
+            stop = self.api.create_stop(position["pair"], quantity, trigger,
+                                        self.order_tag(position, "p"), expiration=172800)
         except GateRejected:
             self.store.update(position, "UNPROTECTED")
             self.halt("Gate rejected protective stop; closing immediately", position)
