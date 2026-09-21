@@ -3240,6 +3240,16 @@ if __name__ == "__main__":
             _gate_shadow_main(c2v_only=True)
         except Exception as _gs_e:
             log(f"[gate-shadow] overgeslagen: {_gs_e}")
+        # --- COMBI-shadow: DONCHIAN (3 plekken) + MR (2 plekken) als EEN portefeuille
+        # op Bitvavo-EUR met virtueel kapitaal in euro's. Gescheiden plekken per
+        # strategie, want in een gedeelde pot verdringen MR's vele signalen precies de
+        # zeldzame DONCHIAN-winnaar (gemeten 21-9: -13% i.p.v. +76%). Eigen tabel
+        # combi_shadow_trades + uur-throttle + eigen try/except. Geen nieuwe cron. ---
+        try:
+            from research.combi_shadow import main as _combi_shadow_main
+            _combi_shadow_main()
+        except Exception as _cs_e:
+            log(f"[combi-shadow] overgeslagen: {_cs_e}")
         # --- Plan U (C1 Rotatie + C2 Bounce) MEELIFTEN: crash-/rotatie-strategie die
         # alleen in ROOD/STORM-regime trades opent. Lag stil (geen cron) -> nu weer
         # continu meedraaien. Eigen DB-conn + try/except -> kan de scan niet breken. ---
