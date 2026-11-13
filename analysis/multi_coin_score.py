@@ -2726,7 +2726,9 @@ def scan_universe(conn, drempels: Dict) -> int:
     if btc_regime == "BEAR" and BTC_SKIP_BEAR:
         log("BTC BEAR — geen trades (live + shadow geblokkeerd)")
         live_ok = False
-        return  # Stop hele scan in BEAR
+        # De aanroeper gebruikt het resultaat als een aantal. `None` liet een
+        # verder correct geblokkeerde BEAR-run alsnog crashen bij `n >= 2`.
+        return 0  # Stop hele scan in BEAR, zonder signalen.
 
     score_drempel = get_score_drempel_voor_regime(btc_regime, drempels)
     _SESSIE["score_drempel"] = score_drempel
